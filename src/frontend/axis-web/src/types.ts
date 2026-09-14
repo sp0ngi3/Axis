@@ -1,0 +1,124 @@
+export type LoadLevel = 'Low' | 'Medium' | 'High';
+export type ActivityStatus = 'Planned' | 'Completed' | 'Skipped' | 'Moved' | 'Cancelled';
+export type GoalStatus = 'Active' | 'Paused' | 'Completed' | 'Archived';
+export type GoalPriority = 'Primary' | 'Secondary' | 'Maintenance';
+export type ProgressType = 'Manual' | 'MilestoneBased' | 'CountBased' | 'MetricBased' | 'Decay' | 'Streak' | 'Maintenance';
+export type MetricValueType = 'Number' | 'Percentage' | 'Duration' | 'Currency' | 'Rating' | 'Boolean';
+
+export interface LifeArea {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  icon: string;
+  priorityWeight: number;
+  currentScore: number;
+  targetScore: number;
+  isActive: boolean;
+}
+
+export interface Goal {
+  id: string;
+  lifeAreaId: string;
+  lifeAreaName: string;
+  lifeAreaColor: string;
+  title: string;
+  description: string;
+  status: GoalStatus;
+  priority: GoalPriority;
+  progressType: ProgressType;
+  currentValue: number;
+  targetValue: number;
+  unit: string;
+  targetDate?: string;
+  milestones: Milestone[];
+}
+
+export interface Milestone {
+  id: string;
+  goalId: string;
+  title: string;
+  currentValue: number;
+  targetValue: number;
+  unit: string;
+  progress: number;
+  status: string;
+}
+
+export interface Activity {
+  id: string;
+  lifeAreaId: string;
+  lifeAreaName: string;
+  lifeAreaColor: string;
+  goalId?: string;
+  goalTitle?: string;
+  title: string;
+  description: string;
+  plannedStartAt?: string;
+  plannedEndAt?: string;
+  actualStartAt?: string;
+  actualEndAt?: string;
+  durationMinutes: number;
+  status: ActivityStatus;
+  energyCost: LoadLevel;
+  mentalLoad: LoadLevel;
+  physicalLoad: LoadLevel;
+  points: number;
+  notes: string;
+}
+
+export interface Metric {
+  id: string;
+  lifeAreaId?: string;
+  goalId?: string;
+  name: string;
+  unit: string;
+  valueType: MetricValueType;
+  targetValue?: number;
+  isActive: boolean;
+  latestEntry?: {
+    id: string;
+    value: number;
+    recordedAt: string;
+    notes: string;
+  };
+}
+
+export interface Review {
+  id: string;
+  type: 'Weekly' | 'Monthly';
+  periodStart: string;
+  periodEnd: string;
+  summary: string;
+  whatWorked: string;
+  whatDidNotWork: string;
+  nextFocus: string;
+  insights: Array<{ id: string; message: string; severity: string }>;
+}
+
+export interface TodayDashboard {
+  date: string;
+  primaryGoal?: Goal;
+  mainFocus?: Activity;
+  supportTasks: Activity[];
+  recoveryTask?: Activity;
+  timeline: Activity[];
+  suggestion: string;
+}
+
+export interface OverviewDashboard {
+  activeGoals: number;
+  completedThisWeek: number;
+  primaryGoal?: Goal;
+  message: string;
+}
+
+export interface BalanceRow {
+  lifeAreaId: string;
+  name: string;
+  color: string;
+  minutes: number;
+  hours: number;
+  count: number;
+  percent: number;
+}

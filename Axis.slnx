@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/backend/">
+    <Project Path="src/backend/Axis.Api/Axis.Api.csproj" />
+    <Project Path="src/backend/Axis.Application/Axis.Application.csproj" />
+    <Project Path="src/backend/Axis.Domain/Axis.Domain.csproj" />
+    <Project Path="src/backend/Axis.Infrastructure/Axis.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Axis.UnitTests/Axis.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Axis.Launcher/Axis.Launcher.csproj" />
+  </Folder>
+</Solution>

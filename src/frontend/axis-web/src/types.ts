@@ -52,6 +52,8 @@ export interface Activity {
   lifeAreaColor: string;
   goalId?: string;
   goalTitle?: string;
+  milestoneId?: string | null;
+  templateId?: string | null;
   title: string;
   description: string;
   plannedStartAt?: string;
@@ -121,4 +123,30 @@ export interface BalanceRow {
   hours: number;
   count: number;
   percent: number;
+}
+
+export interface BackupStatus {
+  databaseExists: boolean;
+  databasePath: string;
+  backupDirectory: string;
+  recentBackups: string[];
+}
+
+export interface BackupValidation {
+  isValid: boolean;
+  message: string;
+  manifest?: {
+    appName: string;
+    appVersion: string;
+    schemaVersion: number;
+    exportedAt: string;
+    databaseFileName: string;
+  } | null;
+}
+
+export interface BackupImportResult {
+  imported: boolean;
+  message: string;
+  preImportBackupFileName?: string | null;
+  validation: BackupValidation;
 }

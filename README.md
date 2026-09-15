@@ -24,6 +24,15 @@ Or run the launcher:
 dotnet run --project tools/Axis.Launcher -- run
 ```
 
+On Windows, publish the root launcher executable:
+
+```powershell
+.\tools\publish-launcher.ps1
+.\00-AXIS.exe
+```
+
+Double-clicking `00-AXIS.exe` opens the same local menu style as Repetitio: Run, Start, Stop, Restart, Status, and Exit.
+
 ## Local Data
 
 - SQLite database: `data/axis.db`

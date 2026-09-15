@@ -5,7 +5,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>Axis</AssemblyName>
+    <AssemblyName>00-AXIS</AssemblyName>
     <RootNamespace>Axis.Launcher</RootNamespace>
   </PropertyGroup>
 

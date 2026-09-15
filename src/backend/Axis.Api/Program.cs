@@ -548,6 +548,32 @@ static void MapMetrics(WebApplication app)
         return Results.Created($"/api/metrics/{metric.Id}", metric);
     });
 
+    group.MapPut("/{id:guid}", async (Guid id, MetricRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var metric = await db.Metrics.FindAsync([id], ct);
+        if (metric is null)
+        {
+            return Results.NotFound();
+        }
+
+        Apply(metric, request);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(metric);
+    });
+
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var metric = await db.Metrics.FindAsync([id], ct);
+        if (metric is null)
+        {
+            return Results.NotFound();
+        }
+
+        db.Metrics.Remove(metric);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+
     group.MapPost("/{id:guid}/entries", async (Guid id, MetricEntryRequest request, AxisDbContext db, CancellationToken ct) =>
     {
         if (!await db.Metrics.AnyAsync(metric => metric.Id == id, ct))
@@ -745,9 +771,32 @@ static void MapBackup(WebApplication app)
 
     group.MapGet("/status", async (IAxisBackupService backups, CancellationToken ct) => Results.Ok(await backups.GetStatusAsync(ct)));
 
-    group.MapPost("/export", async (IAxisBackupService backups, CancellationToken ct) => Results.Ok(await backups.ExportAsync(ct)));
+    group.MapGet("/export", async (IAxisBackupService backups, CancellationToken ct) =>
+    {
+        var backup = await backups.ExportAsync(ct);
+        return Results.File(File.OpenRead(backup.FullPath), "application/zip", backup.FileName);
+    });
 
-    group.MapPost("/import", async (bool replaceExisting, HttpRequest request, IAxisBackupService backups, CancellationToken ct) =>
+    group.MapPost("/export", async (IAxisBackupService backups, CancellationToken ct) =>
+    {
+        var backup = await backups.ExportAsync(ct);
+        return Results.File(File.OpenRead(backup.FullPath), "application/zip", backup.FileName);
+    });
+
+    group.MapPost("/validate", async (IFormFile file, IAxisBackupService backups, CancellationToken ct) =>
+    {
+        await using var stream = file.OpenReadStream();
+        return Results.Ok(await backups.ValidateAsync(stream, ct));
+    }).DisableAntiforgery();
+
+    group.MapPost("/import", async (IFormFile file, IAxisBackupService backups, CancellationToken ct) =>
+    {
+        await using var stream = file.OpenReadStream();
+        var result = await backups.ImportAsync(stream, ct);
+        return result.Imported ? Results.Ok(result) : Results.BadRequest(result);
+    }).DisableAntiforgery();
+
+    group.MapPost("/restore", async (bool replaceExisting, HttpRequest request, IAxisBackupService backups, CancellationToken ct) =>
     {
         await backups.RestoreAsync(request.Body, replaceExisting, ct);
         return Results.NoContent();

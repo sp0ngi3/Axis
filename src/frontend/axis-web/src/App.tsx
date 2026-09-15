@@ -12,6 +12,9 @@ import type {
   GoalStatus,
   LifeArea,
   LoadLevel,
+  Milestone,
+  MilestoneStatus,
+  MilestoneType,
   Metric,
   MetricValueType,
   OverviewDashboard,
@@ -22,6 +25,7 @@ import type {
 
 type Page = 'today' | 'calendar' | 'goals' | 'areas' | 'metrics' | 'reviews' | 'backup';
 type Theme = 'light' | 'dark';
+type CalendarView = 'day' | 'week' | 'month';
 
 const pages: Array<{ id: Page; label: string; kicker: string }> = [
   { id: 'today', label: 'Today', kicker: 'Operate' },
@@ -38,6 +42,8 @@ const activityStatuses: ActivityStatus[] = ['Planned', 'Completed', 'Skipped', '
 const goalStatuses: GoalStatus[] = ['Active', 'Paused', 'Completed', 'Archived'];
 const goalPriorities: GoalPriority[] = ['Primary', 'Secondary', 'Maintenance'];
 const progressTypes: ProgressType[] = ['Manual', 'MilestoneBased', 'CountBased', 'MetricBased', 'Decay', 'Streak', 'Maintenance'];
+const milestoneTypes: MilestoneType[] = ['Count', 'Repetition', 'Binary', 'Metric', 'Checklist'];
+const milestoneStatuses: MilestoneStatus[] = ['Active', 'Completed', 'Paused', 'Archived'];
 const metricTypes: MetricValueType[] = ['Number', 'Percentage', 'Duration', 'Currency', 'Rating', 'Boolean'];
 
 export default function App() {
@@ -183,6 +189,11 @@ export default function App() {
               () => id ? api.put(`/api/goals/${id}`, goal) : api.post('/api/goals', goal),
               id ? 'Goal updated.' : 'Goal created.'
             )}
+            onMilestoneSave={(goalId, milestone, id) => runAction(
+              () => id ? api.put(`/api/milestones/${id}`, milestone) : api.post(`/api/goals/${goalId}/milestones`, milestone),
+              id ? 'Milestone updated.' : 'Milestone created.'
+            )}
+            onMilestoneDelete={(id) => runAction(() => api.delete(`/api/milestones/${id}`), 'Milestone deleted.')}
             onDelete={(id) => runAction(() => api.delete(`/api/goals/${id}`), 'Goal deleted.')}
           />
         )}
@@ -289,35 +300,108 @@ function CalendarPage(props: {
   onDelete: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<Activity | null>(null);
-  const week = useMemo(() => nextSevenDays(), []);
+  const [view, setView] = useState<CalendarView>('week');
+  const [anchorDate, setAnchorDate] = useState(() => startOfDay(new Date()));
+  const visibleDays = useMemo(() => getCalendarDays(view, anchorDate), [view, anchorDate]);
+  const monthDays = useMemo(() => buildMonthGrid(anchorDate), [anchorDate]);
+  const rangeLabel = useMemo(() => formatCalendarRange(view, anchorDate), [view, anchorDate]);
+  const scopedActivities = useMemo(
+    () => props.activities.filter((activity) => visibleDays.some((day) => sameDay(getActivityDate(activity), day))),
+    [props.activities, visibleDays]
+  );
+
+  function move(offset: number) {
+    setAnchorDate((current) => {
+      if (view === 'day') return addDays(current, offset);
+      if (view === 'week') return addDays(current, offset * 7);
+      return addMonths(current, offset);
+    });
+  }
+
+  function openNewActivity(day: Date, hour = 9) {
+    const start = new Date(day);
+    start.setHours(hour, 0, 0, 0);
+    setSelected({
+      id: '',
+      lifeAreaId: props.areas[0]?.id ?? '',
+      lifeAreaName: props.areas[0]?.name ?? '',
+      lifeAreaColor: props.areas[0]?.color ?? '#64748b',
+      title: '',
+      description: '',
+      plannedStartAt: start.toISOString(),
+      plannedEndAt: new Date(start.getTime() + 45 * 60000).toISOString(),
+      durationMinutes: 45,
+      status: 'Planned',
+      energyCost: 'Medium',
+      mentalLoad: 'Medium',
+      physicalLoad: 'Low',
+      points: 5,
+      notes: ''
+    });
+  }
 
   return (
     <section className="workspace-grid">
       <div className="workspace-main">
-        <section className="surface">
-          <SectionTitle kicker="Week plan" title="Calendar" />
-          <div className="calendar-grid">
-            {week.map((day) => (
-              <div className="calendar-day" key={day.key}>
-                <div className="day-heading">
-                  <strong>{day.weekday}</strong>
-                  <span>{day.dateLabel}</span>
-                </div>
-                {props.activities.filter((activity) => sameDay(activity.plannedStartAt, day.date)).map((activity) => (
-                  <button className="activity-tile" key={activity.id} style={{ borderColor: activity.lifeAreaColor }} onClick={() => setSelected(activity)}>
-                    <strong>{activity.title}</strong>
-                    <span>{formatTime(activity.plannedStartAt)} · {activity.durationMinutes}m · {activity.status}</span>
+        <section className="calendar-surface">
+          <div className="calendar-toolbar">
+            <div>
+              <p className="eyebrow">Planner</p>
+              <h3>{rangeLabel}</h3>
+            </div>
+            <div className="calendar-controls">
+              <button className="secondary-button" onClick={() => move(-1)} aria-label="Previous period">‹</button>
+              <button className="secondary-button" onClick={() => setAnchorDate(startOfDay(new Date()))}>Today</button>
+              <button className="secondary-button" onClick={() => move(1)} aria-label="Next period">›</button>
+              <div className="segmented-control" aria-label="Calendar view">
+                {(['day', 'week', 'month'] as CalendarView[]).map((item) => (
+                  <button
+                    key={item}
+                    className={view === item ? 'active' : ''}
+                    onClick={() => setView(item)}
+                  >
+                    {item}
                   </button>
                 ))}
               </div>
-            ))}
+            </div>
           </div>
+
+          {view === 'month' ? (
+            <MonthCalendar
+              anchorDate={anchorDate}
+              days={monthDays}
+              activities={props.activities}
+              onOpen={setSelected}
+              onCreate={(day) => openNewActivity(day)}
+              onFocusDay={(day) => {
+                setAnchorDate(day);
+                setView('day');
+              }}
+            />
+          ) : (
+            <TimeGridCalendar
+              days={visibleDays}
+              activities={scopedActivities}
+              onOpen={setSelected}
+              onCreate={openNewActivity}
+            />
+          )}
+
+          <CalendarReviewPanel
+            title={view === 'month' ? 'Month review' : 'Plan review'}
+            activities={view === 'month' ? props.activities.filter((activity) => sameMonth(getActivityDate(activity), anchorDate)) : scopedActivities}
+            busy={props.busy}
+            onOpen={setSelected}
+            onComplete={props.onComplete}
+            onSkip={props.onSkip}
+          />
         </section>
 
         <section className="surface">
-          <SectionTitle kicker="All activities" title="Agenda" />
+          <SectionTitle kicker={view === 'month' ? 'Selected month' : 'Visible range'} title="Agenda" />
           <ActivityList
-            activities={props.activities}
+            activities={view === 'month' ? props.activities.filter((activity) => sameMonth(getActivityDate(activity), anchorDate)) : scopedActivities}
             busy={props.busy}
             onComplete={props.onComplete}
             onSkip={props.onSkip}
@@ -329,14 +413,14 @@ function CalendarPage(props: {
 
       <aside className="editor-panel">
         <ActivityForm
-          key={selected?.id ?? 'new-activity'}
+          key={`${selected?.id || 'new-activity'}-${selected?.plannedStartAt ?? ''}`}
           activity={selected}
           areas={props.areas}
           goals={props.goals}
           busy={props.busy}
           onCancel={() => setSelected(null)}
           onSave={(body) => {
-            props.onSave(body, selected?.id);
+            props.onSave(body, selected?.id || undefined);
             setSelected(null);
           }}
         />
@@ -345,15 +429,162 @@ function CalendarPage(props: {
   );
 }
 
+function TimeGridCalendar(props: {
+  days: Date[];
+  activities: Activity[];
+  onOpen: (activity: Activity) => void;
+  onCreate: (day: Date, hour: number) => void;
+}) {
+  const hours = Array.from({ length: 18 }, (_, index) => index + 6);
+
+  return (
+    <div className="time-calendar">
+      <div className="time-header" style={{ gridTemplateColumns: `72px repeat(${props.days.length}, minmax(150px, 1fr))` }}>
+        <span />
+        {props.days.map((day) => (
+          <button className={isToday(day) ? 'time-day-heading today' : 'time-day-heading'} key={dateKey(day)} onClick={() => props.onCreate(day, 9)}>
+            <span>{day.toLocaleDateString(undefined, { weekday: 'short' })}</span>
+            <strong>{day.getDate()}</strong>
+          </button>
+        ))}
+      </div>
+      <div className="time-body" style={{ gridTemplateColumns: `72px repeat(${props.days.length}, minmax(150px, 1fr))` }}>
+        <div className="time-axis">
+          {hours.map((hour) => <span key={hour}>{formatHour(hour)}</span>)}
+        </div>
+        {props.days.map((day) => (
+          <div className="time-column" key={dateKey(day)}>
+            {hours.map((hour) => (
+              <button className="time-slot" key={hour} onClick={() => props.onCreate(day, hour)} aria-label={`Create activity at ${formatHour(hour)}`} />
+            ))}
+            {props.activities.filter((activity) => sameDay(getActivityDate(activity), day)).map((activity) => (
+              <button
+                className="calendar-event"
+                key={activity.id}
+                style={{ ...eventStyle(activity), borderColor: activity.lifeAreaColor }}
+                data-status={activity.status.toLowerCase()}
+                onClick={() => props.onOpen(activity)}
+              >
+                <strong>{activity.title}</strong>
+                <span>{formatTime(getActivityDate(activity))} · {activity.durationMinutes}m</span>
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MonthCalendar(props: {
+  anchorDate: Date;
+  days: Date[];
+  activities: Activity[];
+  onOpen: (activity: Activity) => void;
+  onCreate: (day: Date) => void;
+  onFocusDay: (day: Date) => void;
+}) {
+  const weekdayLabels = getCalendarDays('week', props.anchorDate).map((day) => day.toLocaleDateString(undefined, { weekday: 'short' }));
+
+  return (
+    <div className="month-calendar">
+      <div className="month-weekdays">
+        {weekdayLabels.map((label) => <span key={label}>{label}</span>)}
+      </div>
+      <div className="month-grid">
+        {props.days.map((day) => {
+          const dayActivities = props.activities
+            .filter((activity) => sameDay(getActivityDate(activity), day))
+            .sort(compareActivities)
+            .slice(0, 4);
+
+          return (
+            <div className={sameMonth(day, props.anchorDate) ? 'month-cell' : 'month-cell outside'} key={dateKey(day)}>
+              <div className="month-cell-header">
+                <button className={isToday(day) ? 'month-date today' : 'month-date'} onClick={() => props.onFocusDay(day)}>{day.getDate()}</button>
+                <button className="ghost-button" onClick={() => props.onCreate(day)}>+</button>
+              </div>
+              <div className="month-events">
+                {dayActivities.map((activity) => (
+                  <button className="month-event" data-status={activity.status.toLowerCase()} key={activity.id} onClick={() => props.onOpen(activity)}>
+                    <i style={{ background: activity.lifeAreaColor }} />
+                    <span>{formatTime(getActivityDate(activity))}</span>
+                    <strong>{activity.title}</strong>
+                  </button>
+                ))}
+                {props.activities.filter((activity) => sameDay(getActivityDate(activity), day)).length > 4 && (
+                  <button className="more-events" onClick={() => props.onFocusDay(day)}>More</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CalendarReviewPanel(props: {
+  title: string;
+  activities: Activity[];
+  busy: boolean;
+  onOpen: (activity: Activity) => void;
+  onComplete: (id: string) => void;
+  onSkip: (id: string) => void;
+}) {
+  const sorted = [...props.activities].sort(compareActivities);
+  const planned = sorted.filter((activity) => activity.status === 'Planned').length;
+  const completed = sorted.filter((activity) => activity.status === 'Completed').length;
+  const skipped = sorted.filter((activity) => activity.status === 'Skipped').length;
+
+  return (
+    <div className="calendar-review">
+      <div className="review-summary">
+        <div>
+          <p className="eyebrow">Check-off flow</p>
+          <h4>{props.title}</h4>
+        </div>
+        <div className="review-stats">
+          <SummaryPill label="Planned" value={planned} />
+          <SummaryPill label="Done" value={completed} />
+          <SummaryPill label="Skipped" value={skipped} />
+        </div>
+      </div>
+      <div className="review-list">
+        {sorted.map((activity) => (
+          <div className="review-row" key={activity.id}>
+            <i style={{ background: activity.lifeAreaColor }} />
+            <button className="review-title" onClick={() => props.onOpen(activity)}>
+              <strong>{activity.title}</strong>
+              <span>{formatShortDate(getActivityDate(activity))} · {formatTime(getActivityDate(activity))} · {activity.lifeAreaName}</span>
+            </button>
+            <span className={`status-badge ${activity.status.toLowerCase()}`}>{activity.status}</span>
+            <div className="row-actions">
+              <button className="secondary-button" disabled={props.busy || activity.status === 'Completed'} onClick={() => props.onComplete(activity.id)}>Done</button>
+              <button className="secondary-button" disabled={props.busy || activity.status === 'Skipped'} onClick={() => props.onSkip(activity.id)}>Skip</button>
+            </div>
+          </div>
+        ))}
+        {sorted.length === 0 && <EmptyState text="Click a day or hour slot to plan the first activity in this range." />}
+      </div>
+    </div>
+  );
+}
+
 function GoalsPage(props: {
   areas: LifeArea[];
   goals: Goal[];
   busy: boolean;
   onSave: (goal: unknown, id?: string) => void;
+  onMilestoneSave: (goalId: string, milestone: unknown, id?: string) => void;
+  onMilestoneDelete: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<Goal | null>(null);
+  const [selectedMilestone, setSelectedMilestone] = useState<{ goalId: string; milestone: Milestone | null } | null>(null);
   const activeGoals = props.goals.filter((goal) => goal.status === 'Active');
+  const milestoneGoal = props.goals.find((goal) => goal.id === selectedMilestone?.goalId) ?? selected;
+  const milestoneToDelete = selectedMilestone?.milestone ?? null;
 
   return (
     <section className="workspace-grid">
@@ -376,8 +607,30 @@ function GoalsPage(props: {
               <h3>{goal.title}</h3>
               <p>{goal.description || 'No description yet.'}</p>
               <div className="meter"><i style={{ width: `${goal.currentValue}%`, background: goal.lifeAreaColor }} /></div>
+              <div className="milestone-stack">
+                {goal.milestones.slice(0, 4).map((milestone) => (
+                  <button className="milestone-row" key={milestone.id} onClick={() => {
+                    setSelected(goal);
+                    setSelectedMilestone({ goalId: goal.id, milestone });
+                  }}>
+                    <span>
+                      <strong>{milestone.title}</strong>
+                      <small>{milestone.status} · {milestone.currentValue}/{milestone.targetValue} {milestone.unit}</small>
+                    </span>
+                    <em>{milestone.progress}%</em>
+                  </button>
+                ))}
+                {goal.milestones.length === 0 && <p className="muted-copy">No milestones yet.</p>}
+              </div>
               <div className="card-actions">
-                <button className="secondary-button" onClick={() => setSelected(goal)}>Edit</button>
+                <button className="secondary-button" onClick={() => {
+                  setSelected(goal);
+                  setSelectedMilestone(null);
+                }}>Edit</button>
+                <button className="secondary-button" onClick={() => {
+                  setSelected(goal);
+                  setSelectedMilestone({ goalId: goal.id, milestone: null });
+                }}>Milestone</button>
                 <button className="danger-button" onClick={() => confirmDelete('Delete this goal?') && props.onDelete(goal.id)}>Delete</button>
               </div>
             </article>
@@ -394,9 +647,32 @@ function GoalsPage(props: {
           onSave={(body) => {
             props.onSave(body, selected?.id);
             setSelected(null);
+            setSelectedMilestone(null);
           }}
-          onCancel={() => setSelected(null)}
+          onCancel={() => {
+            setSelected(null);
+            setSelectedMilestone(null);
+          }}
         />
+        {milestoneGoal && (
+          <MilestoneForm
+            key={`${selectedMilestone?.goalId ?? milestoneGoal.id}-${selectedMilestone?.milestone?.id ?? 'new-milestone'}`}
+            goal={milestoneGoal}
+            milestone={selectedMilestone?.milestone ?? null}
+            busy={props.busy}
+            onSave={(body) => {
+              props.onMilestoneSave(milestoneGoal.id, body, selectedMilestone?.milestone?.id);
+              setSelectedMilestone(null);
+            }}
+            onDelete={milestoneToDelete ? () => {
+              if (confirmDelete('Delete this milestone? Goal progress will be recalculated.')) {
+                props.onMilestoneDelete(milestoneToDelete.id);
+                setSelectedMilestone(null);
+              }
+            } : undefined}
+            onCancel={() => setSelectedMilestone(null)}
+          />
+        )}
       </aside>
     </section>
   );
@@ -763,7 +1039,56 @@ function GoalForm(props: { goal: Goal | null; areas: LifeArea[]; busy: boolean; 
   );
 }
 
+function MilestoneForm(props: { goal: Goal; milestone: Milestone | null; busy: boolean; onSave: (body: unknown) => void; onDelete?: () => void; onCancel: () => void }) {
+  const [draft, setDraft] = useState({
+    title: props.milestone?.title ?? '',
+    description: props.milestone?.description ?? '',
+    type: props.milestone?.type ?? 'Count' as MilestoneType,
+    currentValue: props.milestone?.currentValue ?? 0,
+    targetValue: props.milestone?.targetValue ?? 1,
+    unit: props.milestone?.unit ?? '',
+    sortOrder: props.milestone?.sortOrder ?? props.goal.milestones.length + 1,
+    status: props.milestone?.status ?? 'Active' as MilestoneStatus,
+    dueDate: props.milestone?.dueDate ?? ''
+  });
+
+  return (
+    <EditorShell title={props.milestone ? 'Edit milestone' : 'Create milestone'} onCancel={props.onCancel}>
+      <form className="editor-form" onSubmit={(event) => {
+        event.preventDefault();
+        props.onSave({
+          ...draft,
+          dueDate: draft.dueDate || null
+        });
+      }}>
+        <p className="muted-copy">Goal: {props.goal.title}</p>
+        <TextField label="Title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} required />
+        <TextArea label="Description" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} />
+        <div className="form-grid two">
+          <SelectField label="Type" value={draft.type} onChange={(type) => setDraft({ ...draft, type: type as MilestoneType })} options={milestoneTypes.map(toOption)} />
+          <SelectField label="Status" value={draft.status} onChange={(status) => setDraft({ ...draft, status: status as MilestoneStatus })} options={milestoneStatuses.map(toOption)} />
+        </div>
+        <div className="form-grid three">
+          <NumberField label="Current" value={draft.currentValue} onChange={(currentValue) => setDraft({ ...draft, currentValue })} />
+          <NumberField label="Target" value={draft.targetValue} onChange={(targetValue) => setDraft({ ...draft, targetValue })} />
+          <TextField label="Unit" value={draft.unit} onChange={(unit) => setDraft({ ...draft, unit })} />
+        </div>
+        <div className="form-grid two">
+          <NumberField label="Order" value={draft.sortOrder} onChange={(sortOrder) => setDraft({ ...draft, sortOrder })} />
+          <label className="field"><span>Due date</span><input type="date" value={draft.dueDate ?? ''} onChange={(event) => setDraft({ ...draft, dueDate: event.target.value })} /></label>
+        </div>
+        <div className="button-row">
+          <button disabled={props.busy}>{props.milestone ? 'Save milestone' : 'Create milestone'}</button>
+          {props.onDelete && <button type="button" className="danger-button" disabled={props.busy} onClick={props.onDelete}>Delete</button>}
+        </div>
+      </form>
+    </EditorShell>
+  );
+}
+
 function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goals: Goal[]; busy: boolean; onSave: (body: unknown) => void; onCancel: () => void }) {
+  const isExisting = Boolean(props.activity?.id);
+  const selectedGoal = props.goals.find((goal) => goal.id === props.activity?.goalId);
   const [draft, setDraft] = useState({
     lifeAreaId: props.activity?.lifeAreaId ?? props.areas[0]?.id ?? '',
     goalId: props.activity?.goalId ?? '',
@@ -780,9 +1105,10 @@ function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goa
     points: props.activity?.points ?? 5,
     notes: props.activity?.notes ?? ''
   });
+  const availableMilestones = props.goals.find((goal) => goal.id === draft.goalId)?.milestones ?? selectedGoal?.milestones ?? [];
 
   return (
-    <EditorShell title={props.activity ? 'Edit activity' : 'Plan activity'} onCancel={props.onCancel}>
+    <EditorShell title={isExisting ? 'Edit activity' : 'Plan activity'} onCancel={props.onCancel}>
       <form className="editor-form" onSubmit={(event) => {
         event.preventDefault();
         const start = new Date(draft.plannedStartAt);
@@ -799,7 +1125,8 @@ function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goa
         <TextField label="Title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} required />
         <TextArea label="Description" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} />
         <SelectField label="Life area" value={draft.lifeAreaId} onChange={(lifeAreaId) => setDraft({ ...draft, lifeAreaId })} options={props.areas.map((area) => ({ value: area.id, label: area.name }))} />
-        <SelectField label="Goal" value={draft.goalId} onChange={(goalId) => setDraft({ ...draft, goalId })} options={[{ value: '', label: 'No goal' }, ...props.goals.map((goal) => ({ value: goal.id, label: goal.title }))]} />
+        <SelectField label="Goal" value={draft.goalId} onChange={(goalId) => setDraft({ ...draft, goalId, milestoneId: null })} options={[{ value: '', label: 'No goal' }, ...props.goals.map((goal) => ({ value: goal.id, label: goal.title }))]} />
+        <SelectField label="Milestone" value={draft.milestoneId ?? ''} onChange={(milestoneId) => setDraft({ ...draft, milestoneId: milestoneId || null })} options={[{ value: '', label: 'No milestone' }, ...availableMilestones.map((milestone) => ({ value: milestone.id, label: milestone.title }))]} />
         <div className="form-grid two">
           <label className="field"><span>Start</span><input type="datetime-local" value={draft.plannedStartAt} onChange={(event) => setDraft({ ...draft, plannedStartAt: event.target.value })} /></label>
           <NumberField label="Minutes" value={draft.durationMinutes} onChange={(durationMinutes) => setDraft({ ...draft, durationMinutes })} />
@@ -814,7 +1141,7 @@ function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goa
           <SelectField label="Physical" value={draft.physicalLoad} onChange={(physicalLoad) => setDraft({ ...draft, physicalLoad: physicalLoad as LoadLevel })} options={loadLevels.map(toOption)} />
         </div>
         <TextArea label="Notes" value={draft.notes} onChange={(notes) => setDraft({ ...draft, notes })} />
-        <button disabled={props.busy}>{props.activity ? 'Save changes' : 'Plan activity'}</button>
+        <button disabled={props.busy}>{isExisting ? 'Save changes' : 'Plan activity'}</button>
       </form>
     </EditorShell>
   );
@@ -984,17 +1311,62 @@ function toOption(value: string) {
   return { value, label: value };
 }
 
-function nextSevenDays() {
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() + index);
-    return {
-      date,
-      key: date.toISOString().slice(0, 10),
-      weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
-      dateLabel: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    };
-  });
+function getCalendarDays(view: CalendarView, anchorDate: Date) {
+  if (view === 'day') {
+    return [startOfDay(anchorDate)];
+  }
+
+  const firstDay = startOfWeek(anchorDate);
+  return Array.from({ length: 7 }, (_, index) => addDays(firstDay, index));
+}
+
+function buildMonthGrid(anchorDate: Date) {
+  const monthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
+  const gridStart = startOfWeek(monthStart);
+  return Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
+}
+
+function formatCalendarRange(view: CalendarView, anchorDate: Date) {
+  if (view === 'day') {
+    return anchorDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  }
+
+  if (view === 'month') {
+    return anchorDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  }
+
+  const start = startOfWeek(anchorDate);
+  const end = addDays(start, 6);
+  return `${start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+function startOfDay(date: Date) {
+  const copy = new Date(date);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+}
+
+function startOfWeek(date: Date) {
+  const copy = startOfDay(date);
+  const diff = (copy.getDay() + 6) % 7;
+  copy.setDate(copy.getDate() - diff);
+  return copy;
+}
+
+function addDays(date: Date, days: number) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return startOfDay(copy);
+}
+
+function addMonths(date: Date, months: number) {
+  const copy = new Date(date);
+  copy.setMonth(copy.getMonth() + months, 1);
+  return startOfDay(copy);
+}
+
+function dateKey(date: Date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
 function sameDay(value: string | undefined, date: Date) {
@@ -1002,8 +1374,47 @@ function sameDay(value: string | undefined, date: Date) {
   return new Date(value).toDateString() === date.toDateString();
 }
 
+function sameMonth(value: string | Date | undefined, date: Date) {
+  if (!value) return false;
+  const parsed = typeof value === 'string' ? new Date(value) : value;
+  return parsed.getFullYear() === date.getFullYear() && parsed.getMonth() === date.getMonth();
+}
+
+function isToday(date: Date) {
+  return startOfDay(date).getTime() === startOfDay(new Date()).getTime();
+}
+
+function getActivityDate(activity: Activity) {
+  return activity.plannedStartAt ?? activity.actualStartAt;
+}
+
+function compareActivities(first: Activity, second: Activity) {
+  return new Date(getActivityDate(first) ?? 0).getTime() - new Date(getActivityDate(second) ?? 0).getTime();
+}
+
+function eventStyle(activity: Activity) {
+  const start = new Date(getActivityDate(activity) ?? new Date());
+  const hourStart = 6;
+  const hourHeight = 56;
+  const minutesFromStart = (start.getHours() - hourStart) * 60 + start.getMinutes();
+  const top = Math.max(0, minutesFromStart / 60 * hourHeight);
+  const height = Math.max(34, Math.min(220, activity.durationMinutes / 60 * hourHeight));
+  return {
+    top: `${top}px`,
+    height: `${height}px`
+  };
+}
+
+function formatHour(hour: number) {
+  return `${hour.toString().padStart(2, '0')}:00`;
+}
+
 function formatTime(value: string | undefined) {
   return value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Anytime';
+}
+
+function formatShortDate(value: string | undefined) {
+  return value ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Unscheduled';
 }
 
 function formatDateTime(value: string) {

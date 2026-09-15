@@ -188,11 +188,35 @@ static void MapGoals(WebApplication app)
 
         await EnforcePrimaryGoalLimitAsync(request, db, ct, id);
         Apply(goal, request);
-        goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(goal);
+        if (ShouldPersistCalculatedProgress(goal))
+        {
+            goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(goal);
+        }
 
         if (goal.Status == GoalStatus.Completed && goal.CompletedAt is null)
         {
             goal.CompletedAt = DateTimeOffset.UtcNow;
+        }
+
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ToGoalResponse(goal));
+    });
+
+    group.MapPost("/{id:guid}/recalculate", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var goal = await db.Goals
+            .Include(item => item.LifeArea)
+            .Include(item => item.Milestones)
+            .FirstOrDefaultAsync(item => item.Id == id, ct);
+
+        if (goal is null)
+        {
+            return Results.NotFound();
+        }
+
+        if (ShouldPersistCalculatedProgress(goal))
+        {
+            goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(goal);
         }
 
         await db.SaveChangesAsync(ct);
@@ -236,7 +260,11 @@ static void MapMilestones(WebApplication app)
         var milestone = new Milestone { GoalId = goalId };
         Apply(milestone, request);
         goal.Milestones.Add(milestone);
-        goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(goal);
+        if (ShouldPersistCalculatedProgress(goal))
+        {
+            goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(goal);
+        }
+
         await db.SaveChangesAsync(ct);
 
         return Results.Created($"/api/milestones/{milestone.Id}", ToMilestoneResponse(milestone));
@@ -258,7 +286,10 @@ static void MapMilestones(WebApplication app)
 
         if (milestone.Goal is not null)
         {
-            milestone.Goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(milestone.Goal);
+            if (ShouldPersistCalculatedProgress(milestone.Goal))
+            {
+                milestone.Goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(milestone.Goal);
+            }
         }
 
         await db.SaveChangesAsync(ct);
@@ -267,10 +298,22 @@ static void MapMilestones(WebApplication app)
 
     app.MapDelete("/api/milestones/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
     {
-        var milestone = await db.Milestones.FindAsync([id], ct);
+        var milestone = await db.Milestones
+            .Include(item => item.Goal)
+            .ThenInclude(goal => goal!.Milestones)
+            .FirstOrDefaultAsync(item => item.Id == id, ct);
         if (milestone is null)
         {
             return Results.NotFound();
+        }
+
+        if (milestone.Goal is not null)
+        {
+            milestone.Goal.Milestones.Remove(milestone);
+            if (ShouldPersistCalculatedProgress(milestone.Goal))
+            {
+                milestone.Goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(milestone.Goal);
+            }
         }
 
         db.Milestones.Remove(milestone);
@@ -425,6 +468,11 @@ static void MapActivities(WebApplication app)
             return Results.NotFound();
         }
 
+        if (activity.Status == ActivityStatus.Completed)
+        {
+            return Results.Ok(ToActivityResponse(activity));
+        }
+
         activity.Status = ActivityStatus.Completed;
         activity.ActualStartAt ??= DateTimeOffset.UtcNow.AddMinutes(-activity.DurationMinutes);
         activity.ActualEndAt ??= DateTimeOffset.UtcNow;
@@ -440,7 +488,14 @@ static void MapActivities(WebApplication app)
 
         if (activity.Goal is not null)
         {
-            activity.Goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(activity.Goal);
+            if (activity.Milestone is null && activity.Goal.ProgressType == ProgressType.CountBased)
+            {
+                activity.Goal.CurrentValue = Math.Min(activity.Goal.TargetValue, activity.Goal.CurrentValue + 1);
+            }
+            else if (ShouldPersistCalculatedProgress(activity.Goal))
+            {
+                activity.Goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(activity.Goal);
+            }
         }
 
         await db.SaveChangesAsync(ct);
@@ -835,6 +890,11 @@ static void Apply(Goal goal, GoalRequest request)
     goal.MaintenanceThreshold = Math.Clamp(request.MaintenanceThreshold, 0, 100);
     goal.MaintenanceTargetPerWeek = request.MaintenanceTargetPerWeek;
     goal.DecayRatePercentPerWeek = Math.Max(0, request.DecayRatePercentPerWeek);
+}
+
+static bool ShouldPersistCalculatedProgress(Goal goal)
+{
+    return goal.ProgressType is not (ProgressType.Manual or ProgressType.CountBased or ProgressType.MetricBased);
 }
 
 static object ToGoalResponse(Goal goal)

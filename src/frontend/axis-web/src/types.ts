@@ -3,6 +3,8 @@ export type ActivityStatus = 'Planned' | 'Completed' | 'Skipped' | 'Moved' | 'Ca
 export type GoalStatus = 'Active' | 'Paused' | 'Completed' | 'Archived';
 export type GoalPriority = 'Primary' | 'Secondary' | 'Maintenance';
 export type ProgressType = 'Manual' | 'MilestoneBased' | 'CountBased' | 'MetricBased' | 'Decay' | 'Streak' | 'Maintenance';
+export type MilestoneType = 'Count' | 'Repetition' | 'Binary' | 'Metric' | 'Checklist';
+export type MilestoneStatus = 'Active' | 'Completed' | 'Paused' | 'Archived';
 export type MetricValueType = 'Number' | 'Percentage' | 'Duration' | 'Currency' | 'Rating' | 'Boolean';
 
 export interface LifeArea {
@@ -38,11 +40,15 @@ export interface Milestone {
   id: string;
   goalId: string;
   title: string;
+  description: string;
+  type: MilestoneType;
   currentValue: number;
   targetValue: number;
   unit: string;
   progress: number;
-  status: string;
+  sortOrder: number;
+  status: MilestoneStatus;
+  dueDate?: string;
 }
 
 export interface Activity {

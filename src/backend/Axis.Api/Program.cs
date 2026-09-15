@@ -43,6 +43,7 @@ MapLifeAreas(app);
 MapGoals(app);
 MapMilestones(app);
 MapActivityTemplates(app);
+MapRecurrenceRules(app);
 MapActivities(app);
 MapMetrics(app);
 MapReviews(app);
@@ -413,6 +414,142 @@ static void MapActivityTemplates(WebApplication app)
     }
 }
 
+static void MapRecurrenceRules(WebApplication app)
+{
+    var group = app.MapGroup("/api/recurrence-rules");
+
+    group.MapGet("/", async (Guid? templateId, AxisDbContext db, CancellationToken ct) =>
+    {
+        var query = db.RecurrenceRules.Include(rule => rule.Template).ThenInclude(template => template!.LifeArea).AsQueryable();
+        if (templateId is not null)
+        {
+            query = query.Where(rule => rule.TemplateId == templateId);
+        }
+
+        var rules = await query
+            .OrderBy(rule => rule.StartDate)
+            .ToListAsync(ct);
+
+        return Results.Ok(rules.Select(ToRecurrenceRuleResponse));
+    });
+
+    group.MapPost("/", async (RecurrenceRuleRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (!await db.ActivityTemplates.AnyAsync(template => template.Id == request.TemplateId, ct))
+        {
+            return Results.BadRequest("Template does not exist.");
+        }
+
+        var rule = new RecurrenceRule();
+        Apply(rule, request);
+        db.RecurrenceRules.Add(rule);
+        await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/recurrence-rules/{rule.Id}", ToRecurrenceRuleResponse(rule));
+    });
+
+    group.MapPut("/{id:guid}", async (Guid id, RecurrenceRuleRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var rule = await db.RecurrenceRules.FindAsync([id], ct);
+        if (rule is null)
+        {
+            return Results.NotFound();
+        }
+
+        Apply(rule, request);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ToRecurrenceRuleResponse(rule));
+    });
+
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var rule = await db.RecurrenceRules.FindAsync([id], ct);
+        if (rule is null)
+        {
+            return Results.NotFound();
+        }
+
+        db.RecurrenceRules.Remove(rule);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+
+    group.MapPost("/{id:guid}/generate", async (Guid id, GenerateRecurrenceRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var rule = await db.RecurrenceRules
+            .Include(item => item.Template)
+            .FirstOrDefaultAsync(item => item.Id == id, ct);
+
+        if (rule?.Template is null)
+        {
+            return Results.NotFound();
+        }
+
+        var start = request.From ?? DateOnly.FromDateTime(DateTimeOffset.Now.DateTime);
+        var end = request.To ?? start.AddDays(28);
+        if (end < start)
+        {
+            return Results.BadRequest("End date must be after start date.");
+        }
+
+        if (end.DayNumber - start.DayNumber > 180)
+        {
+            return Results.BadRequest("Recurring generation is limited to 180 days.");
+        }
+
+        var plannedDates = ExpandRecurrence(rule, start, end).ToList();
+        var existing = await db.Activities
+            .Where(activity => activity.TemplateId == rule.TemplateId && activity.PlannedStartAt != null)
+            .Select(activity => activity.PlannedStartAt)
+            .ToListAsync(ct);
+        var existingKeys = existing
+            .Where(value => value is not null)
+            .Select(value => ToMinuteKey(value!.Value))
+            .ToHashSet();
+        var created = new List<Activity>();
+
+        foreach (var plannedStart in plannedDates)
+        {
+            if (existingKeys.Contains(ToMinuteKey(plannedStart)))
+            {
+                continue;
+            }
+
+            var plannedEnd = plannedStart.AddMinutes(rule.Template.DefaultDurationMinutes);
+            var activity = new Activity
+            {
+                LifeAreaId = rule.Template.LifeAreaId,
+                TemplateId = rule.TemplateId,
+                Title = rule.Template.Title,
+                Description = rule.Template.Description,
+                PlannedStartAt = plannedStart,
+                PlannedEndAt = plannedEnd,
+                DurationMinutes = rule.Template.DefaultDurationMinutes,
+                Status = ActivityStatus.Planned,
+                EnergyCost = rule.Template.EnergyCost,
+                MentalLoad = rule.Template.MentalLoad,
+                PhysicalLoad = rule.Template.PhysicalLoad,
+                Points = rule.Template.DefaultPoints
+            };
+
+            db.Activities.Add(activity);
+            created.Add(activity);
+        }
+
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new { Created = created.Count, Activities = created.Select(ToActivityResponse) });
+    });
+
+    static void Apply(RecurrenceRule rule, RecurrenceRuleRequest request)
+    {
+        rule.TemplateId = request.TemplateId;
+        rule.Frequency = request.Frequency;
+        rule.Interval = Math.Max(1, request.Interval);
+        rule.DaysOfWeek = request.DaysOfWeek?.Trim() ?? string.Empty;
+        rule.StartDate = request.StartDate;
+        rule.EndDate = request.EndDate;
+    }
+}
+
 static void MapActivities(WebApplication app)
 {
     var group = app.MapGroup("/api/activities");
@@ -649,15 +786,38 @@ static void MapMetrics(WebApplication app)
         return Results.Created($"/api/metrics/{id}/entries/{entry.Id}", entry);
     });
 
-    group.MapGet("/{id:guid}/entries", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    group.MapGet("/{id:guid}/entries", async (Guid id, DateTimeOffset? from, DateTimeOffset? to, AxisDbContext db, CancellationToken ct) =>
     {
-        var entries = (await db.MetricEntries
-            .Where(entry => entry.MetricId == id)
-            .ToListAsync(ct))
+        var query = db.MetricEntries.Where(entry => entry.MetricId == id);
+
+        if (from is not null)
+        {
+            query = query.Where(entry => entry.RecordedAt >= from);
+        }
+
+        if (to is not null)
+        {
+            query = query.Where(entry => entry.RecordedAt <= to);
+        }
+
+        var entries = await query
             .OrderByDescending(entry => entry.RecordedAt)
-            .ToList();
+            .ToListAsync(ct);
 
         return Results.Ok(entries);
+    });
+
+    group.MapDelete("/{metricId:guid}/entries/{entryId:guid}", async (Guid metricId, Guid entryId, AxisDbContext db, CancellationToken ct) =>
+    {
+        var entry = await db.MetricEntries.FirstOrDefaultAsync(item => item.Id == entryId && item.MetricId == metricId, ct);
+        if (entry is null)
+        {
+            return Results.NotFound();
+        }
+
+        db.MetricEntries.Remove(entry);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
     });
 
     static void Apply(Metric metric, MetricRequest request)
@@ -706,6 +866,33 @@ static void MapReviews(WebApplication app)
         return Results.Created($"/api/reviews/{review.Id}", review);
     });
 
+    group.MapPost("/monthly/generate", async (DateOnly? monthStart, AxisDbContext db, CancellationToken ct) =>
+    {
+        var now = DateTimeOffset.Now;
+        var start = monthStart ?? new DateOnly(now.Year, now.Month, 1);
+        var end = start.AddMonths(1).AddDays(-1);
+        var from = new DateTimeOffset(start.ToDateTime(TimeOnly.MinValue), now.Offset);
+        var to = new DateTimeOffset(end.ToDateTime(TimeOnly.MaxValue), now.Offset);
+
+        var activities = (await db.Activities.Include(activity => activity.LifeArea)
+            .ToListAsync(ct))
+            .Where(activity => IsInRange(ActivityDisplayDate(activity), from, to))
+            .ToList();
+        var goals = await db.Goals
+            .Include(goal => goal.Milestones)
+            .Where(goal => goal.Status == GoalStatus.Active || goal.Status == GoalStatus.Completed)
+            .ToListAsync(ct);
+        var metrics = await db.Metrics
+            .Include(metric => metric.Entries.Where(entry => entry.RecordedAt >= from && entry.RecordedAt <= to))
+            .ToListAsync(ct);
+        var review = ReviewGenerator.DraftMonthlyReview(start, end, activities, goals, metrics);
+
+        db.Reviews.Add(review);
+        await db.SaveChangesAsync(ct);
+
+        return Results.Created($"/api/reviews/{review.Id}", review);
+    });
+
     group.MapPut("/{id:guid}", async (Guid id, ReviewRequest request, AxisDbContext db, CancellationToken ct) =>
     {
         var review = await db.Reviews.FindAsync([id], ct);
@@ -720,6 +907,19 @@ static void MapReviews(WebApplication app)
         review.NextFocus = request.NextFocus?.Trim() ?? string.Empty;
         await db.SaveChangesAsync(ct);
         return Results.Ok(review);
+    });
+
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var review = await db.Reviews.Include(item => item.Insights).FirstOrDefaultAsync(item => item.Id == id, ct);
+        if (review is null)
+        {
+            return Results.NotFound();
+        }
+
+        db.Reviews.Remove(review);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
     });
 }
 
@@ -776,35 +976,149 @@ static void MapDashboard(WebApplication app)
         });
     });
 
+    group.MapGet("/suggestions", async (AxisDbContext db, CancellationToken ct) =>
+    {
+        var now = DateTimeOffset.Now;
+        var today = DateOnly.FromDateTime(now.DateTime);
+        var dayStart = new DateTimeOffset(today.ToDateTime(TimeOnly.MinValue), now.Offset);
+        var dayEnd = new DateTimeOffset(today.ToDateTime(TimeOnly.MaxValue), now.Offset);
+        var recentThreshold = now.AddDays(-14);
+        var activities = await db.Activities.Include(activity => activity.LifeArea).Include(activity => activity.Goal).ToListAsync(ct);
+        var goals = await db.Goals.Include(goal => goal.LifeArea).Where(goal => goal.Status == GoalStatus.Active).ToListAsync(ct);
+        var areas = await db.LifeAreas.Where(area => area.IsActive).ToListAsync(ct);
+        var suggestions = new List<object>();
+
+        var overdue = activities
+            .Where(activity => activity.Status == ActivityStatus.Planned && activity.PlannedStartAt is not null && activity.PlannedStartAt < dayStart)
+            .OrderBy(activity => activity.PlannedStartAt)
+            .FirstOrDefault();
+        if (overdue is not null)
+        {
+            suggestions.Add(new
+            {
+                Kind = "Overdue",
+                Title = $"Decide what to do with {overdue.Title}",
+                Reason = "It was planned before today and still has no outcome.",
+                Activity = ToActivityResponse(overdue)
+            });
+        }
+
+        var nextHighValue = activities
+            .Where(activity => activity.Status == ActivityStatus.Planned && IsInRange(ActivityTodayDate(activity), dayStart, dayEnd))
+            .OrderByDescending(activity => activity.Points)
+            .ThenBy(activity => activity.EnergyCost)
+            .FirstOrDefault();
+        if (nextHighValue is not null)
+        {
+            suggestions.Add(new
+            {
+                Kind = "NextAction",
+                Title = $"Start {nextHighValue.Title}",
+                Reason = "It is planned for today and has the highest point value in the visible plan.",
+                Activity = ToActivityResponse(nextHighValue)
+            });
+        }
+
+        foreach (var area in areas.OrderByDescending(area => area.PriorityWeight).Take(4))
+        {
+            var lastDone = activities
+                .Where(activity => activity.LifeAreaId == area.Id && activity.Status == ActivityStatus.Completed)
+                .Select(ActivityCompletionDate)
+                .OrderByDescending(date => date)
+                .FirstOrDefault();
+
+            if (lastDone == default || lastDone < recentThreshold)
+            {
+                suggestions.Add(new
+                {
+                    Kind = "NeglectedArea",
+                    Title = $"Give {area.Name} one small action",
+                    Reason = lastDone == default ? "No completed activity is recorded for this area yet." : "This area has not had completed attention in the last 14 days.",
+                    LifeAreaId = area.Id
+                });
+            }
+        }
+
+        var primaryGoal = goals.FirstOrDefault(goal => goal.Priority == GoalPriority.Primary);
+        if (primaryGoal is not null && activities.All(activity => activity.GoalId != primaryGoal.Id || activity.Status != ActivityStatus.Planned))
+        {
+            suggestions.Add(new
+            {
+                Kind = "GoalNextStep",
+                Title = $"Plan the next step for {primaryGoal.Title}",
+                Reason = "Your primary goal has no planned activity right now.",
+                Goal = ToGoalResponse(primaryGoal)
+            });
+        }
+
+        return Results.Ok(suggestions.Take(6));
+    });
+
     group.MapGet("/balance", async (AxisDbContext db, CancellationToken ct) =>
     {
         var since = DateTimeOffset.UtcNow.AddDays(-28);
-        var rows = (await db.Activities.Include(activity => activity.LifeArea)
-            .Where(activity => activity.Status == ActivityStatus.Completed)
-            .ToListAsync(ct))
-            .Where(activity => ActivityCompletionDate(activity) >= since)
-            .GroupBy(activity => new { activity.LifeAreaId, activity.LifeArea!.Name, activity.LifeArea.Color })
-            .Select(grouping => new
-            {
-                grouping.Key.LifeAreaId,
-                grouping.Key.Name,
-                grouping.Key.Color,
-                Minutes = grouping.Sum(activity => activity.DurationMinutes),
-                Count = grouping.Count()
-            })
-            .OrderByDescending(row => row.Minutes)
+        var weekStart = StartOfWeek(DateOnly.FromDateTime(DateTimeOffset.Now.DateTime));
+        var days = Enumerable.Range(0, 7).Select(offset => weekStart.AddDays(offset)).ToList();
+        var lifeAreas = await db.LifeAreas
+            .Where(area => area.IsActive)
+            .OrderByDescending(area => area.PriorityWeight)
+            .ToListAsync(ct);
+        var activities = (await db.Activities.Include(activity => activity.LifeArea).ToListAsync(ct))
+            .Where(activity => ActivityDisplayDate(activity) >= since || ActivityCompletionDate(activity) >= since)
             .ToList();
 
-        var total = rows.Sum(row => row.Minutes);
-        return Results.Ok(rows.Select(row => new
+        var totalCompletedMinutes = activities
+            .Where(activity => activity.Status == ActivityStatus.Completed)
+            .Sum(activity => activity.DurationMinutes);
+        var totalPriority = lifeAreas.Sum(area => Math.Max(0, area.PriorityWeight));
+
+        return Results.Ok(lifeAreas.Select(area =>
         {
-            row.LifeAreaId,
-            row.Name,
-            row.Color,
-            row.Minutes,
-            Hours = Math.Round(row.Minutes / 60m, 1),
-            row.Count,
-            Percent = total == 0 ? 0 : Math.Round(row.Minutes / (decimal)total * 100, 1)
+            var areaActivities = activities.Where(activity => activity.LifeAreaId == area.Id).ToList();
+            var completed = areaActivities.Where(activity => activity.Status == ActivityStatus.Completed).ToList();
+            var skipped = areaActivities.Where(activity => activity.Status == ActivityStatus.Skipped || activity.Status == ActivityStatus.Cancelled).ToList();
+            var planned = areaActivities.Where(activity => activity.PlannedStartAt is not null && activity.Status != ActivityStatus.Cancelled).ToList();
+            var completedMinutes = completed.Sum(activity => activity.DurationMinutes);
+            var plannedMinutes = planned.Sum(activity => activity.DurationMinutes);
+            var actualPercent = totalCompletedMinutes == 0 ? 0 : Math.Round(completedMinutes / (decimal)totalCompletedMinutes * 100, 1);
+            var targetPercent = totalPriority == 0 ? 0 : Math.Round(Math.Max(0, area.PriorityWeight) / (decimal)totalPriority * 100, 1);
+            var gap = Math.Round(actualPercent - targetPercent, 1);
+
+            return new
+            {
+                LifeAreaId = area.Id,
+                area.Name,
+                area.Color,
+                PriorityWeight = area.PriorityWeight,
+                Minutes = completedMinutes,
+                Hours = Math.Round(completedMinutes / 60m, 1),
+                Count = completed.Count,
+                Percent = actualPercent,
+                TargetPercent = targetPercent,
+                PlannedMinutes = plannedMinutes,
+                CompletedMinutes = completedMinutes,
+                SkippedMinutes = skipped.Sum(activity => activity.DurationMinutes),
+                PlannedCount = planned.Count,
+                CompletedCount = completed.Count,
+                SkippedCount = skipped.Count,
+                AttentionGapPercent = gap,
+                Signal = gap < -10 ? "Neglected" : gap > 10 ? "Overloaded" : "Balanced",
+                Days = days.Select(day =>
+                {
+                    var dayStart = new DateTimeOffset(day.ToDateTime(TimeOnly.MinValue), DateTimeOffset.Now.Offset);
+                    var dayEnd = new DateTimeOffset(day.ToDateTime(TimeOnly.MaxValue), DateTimeOffset.Now.Offset);
+                    var dayActivities = areaActivities.Where(activity => IsInRange(ActivityDisplayDate(activity), dayStart, dayEnd)).ToList();
+                    var dayCompleted = dayActivities.Where(activity => activity.Status == ActivityStatus.Completed).ToList();
+
+                    return new
+                    {
+                        Date = day,
+                        PlannedMinutes = dayActivities.Where(activity => activity.PlannedStartAt is not null).Sum(activity => activity.DurationMinutes),
+                        CompletedMinutes = dayCompleted.Sum(activity => activity.DurationMinutes),
+                        SkippedCount = dayActivities.Count(activity => activity.Status == ActivityStatus.Skipped || activity.Status == ActivityStatus.Cancelled)
+                    };
+                })
+            };
         }));
     });
 
@@ -815,8 +1129,14 @@ static void MapDashboard(WebApplication app)
             .OrderBy(goal => goal.Priority)
             .ThenBy(goal => goal.TargetDate)
             .ToListAsync(ct);
+        var goalIds = goals.Select(goal => goal.Id).ToHashSet();
+        var activities = (await db.Activities
+            .Where(activity => activity.GoalId != null && goalIds.Contains(activity.GoalId.Value) && activity.Status == ActivityStatus.Completed)
+            .ToListAsync(ct))
+            .GroupBy(activity => activity.GoalId!.Value)
+            .ToDictionary(group => group.Key, group => group.ToList());
 
-        return Results.Ok(goals.Select(ToGoalResponse));
+        return Results.Ok(goals.Select(goal => ToGoalProgressResponse(goal, activities.GetValueOrDefault(goal.Id) ?? [])));
     });
 }
 
@@ -923,6 +1243,34 @@ static object ToGoalResponse(Goal goal)
     };
 }
 
+static object ToGoalProgressResponse(Goal goal, IReadOnlyCollection<Activity> completedActivities)
+{
+    var baseProgress = ProgressCalculator.CalculateGoalProgress(goal);
+    var lastMaintainedAt = completedActivities
+        .Select(ActivityCompletionDate)
+        .OrderByDescending(date => date)
+        .FirstOrDefault();
+    DateTimeOffset? maintainedAt = lastMaintainedAt == default ? null : lastMaintainedAt;
+    var decayedProgress = goal.ProgressType == ProgressType.Decay
+        ? ProgressCalculator.ApplyWeeklyDecay(baseProgress, goal.DecayRatePercentPerWeek, maintainedAt, DateTimeOffset.UtcNow)
+        : baseProgress;
+    var weekStart = DateTimeOffset.UtcNow.AddDays(-7);
+    var completedThisWeek = completedActivities.Count(activity => ActivityCompletionDate(activity) >= weekStart);
+
+    return new
+    {
+        Goal = ToGoalResponse(goal),
+        BaseProgress = baseProgress,
+        DecayedProgress = decayedProgress,
+        LastMaintainedAt = maintainedAt,
+        goal.MaintenanceThreshold,
+        goal.MaintenanceTargetPerWeek,
+        CompletedThisWeek = completedThisWeek,
+        MaintenanceSatisfied = decayedProgress >= goal.MaintenanceThreshold
+            && (goal.MaintenanceTargetPerWeek is null || completedThisWeek >= goal.MaintenanceTargetPerWeek)
+    };
+}
+
 static object ToMilestoneResponse(Milestone milestone)
 {
     return new
@@ -939,6 +1287,23 @@ static object ToMilestoneResponse(Milestone milestone)
         milestone.SortOrder,
         milestone.Status,
         milestone.DueDate
+    };
+}
+
+static object ToRecurrenceRuleResponse(RecurrenceRule rule)
+{
+    return new
+    {
+        rule.Id,
+        rule.TemplateId,
+        TemplateTitle = rule.Template?.Title ?? "",
+        LifeAreaName = rule.Template?.LifeArea?.Name ?? "",
+        LifeAreaColor = rule.Template?.LifeArea?.Color ?? "#4f8cff",
+        rule.Frequency,
+        rule.Interval,
+        rule.DaysOfWeek,
+        rule.StartDate,
+        rule.EndDate
     };
 }
 
@@ -976,6 +1341,66 @@ static DateOnly StartOfWeek(DateOnly date)
     return date.AddDays(-diff);
 }
 
+static IEnumerable<DateTimeOffset> ExpandRecurrence(RecurrenceRule rule, DateOnly from, DateOnly to)
+{
+    var effectiveStart = rule.StartDate > from ? rule.StartDate : from;
+    var effectiveEnd = rule.EndDate is not null && rule.EndDate < to ? rule.EndDate.Value : to;
+    var time = new TimeOnly(9, 0);
+    var offset = DateTimeOffset.Now.Offset;
+
+    for (var day = effectiveStart; day <= effectiveEnd; day = day.AddDays(1))
+    {
+        if (OccursOn(rule, day))
+        {
+            yield return new DateTimeOffset(day.ToDateTime(time), offset);
+        }
+    }
+}
+
+static bool OccursOn(RecurrenceRule rule, DateOnly day)
+{
+    var interval = Math.Max(1, rule.Interval);
+    var daysSinceStart = day.DayNumber - rule.StartDate.DayNumber;
+    if (daysSinceStart < 0)
+    {
+        return false;
+    }
+
+    return rule.Frequency switch
+    {
+        RecurrenceFrequency.Daily => daysSinceStart % interval == 0,
+        RecurrenceFrequency.Weekly => daysSinceStart / 7 % interval == 0 && ParseDaysOfWeek(rule).Contains(day.DayOfWeek),
+        RecurrenceFrequency.Monthly => MonthsBetween(rule.StartDate, day) % interval == 0 && day.Day == rule.StartDate.Day,
+        _ => false
+    };
+}
+
+static HashSet<DayOfWeek> ParseDaysOfWeek(RecurrenceRule rule)
+{
+    if (string.IsNullOrWhiteSpace(rule.DaysOfWeek))
+    {
+        return [rule.StartDate.DayOfWeek];
+    }
+
+    return rule.DaysOfWeek
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(value => Enum.TryParse<DayOfWeek>(value, true, out var day) ? day : (DayOfWeek?)null)
+        .Where(day => day is not null)
+        .Select(day => day!.Value)
+        .DefaultIfEmpty(rule.StartDate.DayOfWeek)
+        .ToHashSet();
+}
+
+static int MonthsBetween(DateOnly start, DateOnly day)
+{
+    return (day.Year - start.Year) * 12 + day.Month - start.Month;
+}
+
+static long ToMinuteKey(DateTimeOffset value)
+{
+    return value.ToUniversalTime().Ticks / TimeSpan.TicksPerMinute;
+}
+
 static DateTimeOffset ActivityDisplayDate(Activity activity)
 {
     return activity.PlannedStartAt ?? activity.ActualStartAt ?? activity.CreatedAt;
@@ -1003,6 +1428,10 @@ public sealed record GoalRequest(Guid LifeAreaId, string Title, string? Descript
 public sealed record MilestoneRequest(string Title, string? Description, MilestoneType Type, decimal CurrentValue, decimal TargetValue, string? Unit, int SortOrder, MilestoneStatus Status, DateOnly? DueDate);
 
 public sealed record ActivityTemplateRequest(Guid LifeAreaId, string Title, string? Description, int DefaultDurationMinutes, LoadLevel EnergyCost, LoadLevel MentalLoad, LoadLevel PhysicalLoad, int DefaultPoints, bool IsActive);
+
+public sealed record RecurrenceRuleRequest(Guid TemplateId, RecurrenceFrequency Frequency, int Interval, string? DaysOfWeek, DateOnly StartDate, DateOnly? EndDate);
+
+public sealed record GenerateRecurrenceRequest(DateOnly? From, DateOnly? To);
 
 public sealed record ActivityRequest(Guid LifeAreaId, Guid? GoalId, Guid? MilestoneId, Guid? TemplateId, string Title, string? Description, DateTimeOffset? PlannedStartAt, DateTimeOffset? PlannedEndAt, DateTimeOffset? ActualStartAt, DateTimeOffset? ActualEndAt, int DurationMinutes, ActivityStatus Status, LoadLevel EnergyCost, LoadLevel MentalLoad, LoadLevel PhysicalLoad, int Points, string? Notes);
 

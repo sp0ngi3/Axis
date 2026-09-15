@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import type {
   Activity,
+  ActivityTemplate,
   ActivityStatus,
   BackupImportResult,
   BackupStatus,
@@ -16,14 +17,18 @@ import type {
   MilestoneStatus,
   MilestoneType,
   Metric,
+  MetricEntry,
   MetricValueType,
   OverviewDashboard,
   ProgressType,
+  RecurrenceFrequency,
+  RecurrenceRule,
   Review,
+  Suggestion,
   TodayDashboard
 } from './types';
 
-type Page = 'today' | 'calendar' | 'goals' | 'areas' | 'metrics' | 'reviews' | 'backup';
+type Page = 'today' | 'calendar' | 'goals' | 'areas' | 'templates' | 'metrics' | 'reviews' | 'backup';
 type Theme = 'light' | 'dark';
 type CalendarView = 'day' | 'week' | 'month';
 
@@ -32,6 +37,7 @@ const pages: Array<{ id: Page; label: string; kicker: string }> = [
   { id: 'calendar', label: 'Calendar', kicker: 'Plan' },
   { id: 'goals', label: 'Goals', kicker: 'Outcomes' },
   { id: 'areas', label: 'Life Areas', kicker: 'Balance' },
+  { id: 'templates', label: 'Templates', kicker: 'Repeat' },
   { id: 'metrics', label: 'Metrics', kicker: 'Signals' },
   { id: 'reviews', label: 'Reviews', kicker: 'Reflect' },
   { id: 'backup', label: 'Backup', kicker: 'Safety' }
@@ -45,15 +51,20 @@ const progressTypes: ProgressType[] = ['Manual', 'MilestoneBased', 'CountBased',
 const milestoneTypes: MilestoneType[] = ['Count', 'Repetition', 'Binary', 'Metric', 'Checklist'];
 const milestoneStatuses: MilestoneStatus[] = ['Active', 'Completed', 'Paused', 'Archived'];
 const metricTypes: MetricValueType[] = ['Number', 'Percentage', 'Duration', 'Currency', 'Rating', 'Boolean'];
+const recurrenceFrequencies: RecurrenceFrequency[] = ['Daily', 'Weekly', 'Monthly'];
+const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 export default function App() {
   const [page, setPage] = useState<Page>('today');
   const [areas, setAreas] = useState<LifeArea[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [templates, setTemplates] = useState<ActivityTemplate[]>([]);
+  const [recurrenceRules, setRecurrenceRules] = useState<RecurrenceRule[]>([]);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [today, setToday] = useState<TodayDashboard | null>(null);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [overview, setOverview] = useState<OverviewDashboard | null>(null);
   const [balance, setBalance] = useState<BalanceRow[]>([]);
   const [notice, setNotice] = useState('');
@@ -64,13 +75,16 @@ export default function App() {
   async function load() {
     try {
       setError('');
-      const [lifeAreas, activeGoals, recentActivities, metricRows, reviewRows, todayData, overviewData, balanceRows] = await Promise.all([
+      const [lifeAreas, activeGoals, recentActivities, templateRows, recurrenceRows, metricRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
         api.get<LifeArea[]>('/api/life-areas'),
         api.get<Goal[]>('/api/goals'),
         api.get<Activity[]>('/api/activities'),
+        api.get<ActivityTemplate[]>('/api/activity-templates'),
+        api.get<RecurrenceRule[]>('/api/recurrence-rules'),
         api.get<Metric[]>('/api/metrics'),
         api.get<Review[]>('/api/reviews'),
         api.get<TodayDashboard>('/api/dashboard/today'),
+        api.get<Suggestion[]>('/api/dashboard/suggestions'),
         api.get<OverviewDashboard>('/api/dashboard'),
         api.get<BalanceRow[]>('/api/dashboard/balance')
       ]);
@@ -78,9 +92,12 @@ export default function App() {
       setAreas(lifeAreas);
       setGoals(activeGoals);
       setActivities(recentActivities);
+      setTemplates(templateRows);
+      setRecurrenceRules(recurrenceRows);
       setMetrics(metricRows);
       setReviews(reviewRows);
       setToday(todayData);
+      setSuggestions(suggestionRows);
       setOverview(overviewData);
       setBalance(balanceRows);
     } catch (requestError) {
@@ -156,6 +173,7 @@ export default function App() {
         {page === 'today' && (
           <TodayPage
             today={today}
+            suggestions={suggestions}
             overview={overview}
             balance={balance}
             goals={goals}
@@ -208,6 +226,25 @@ export default function App() {
             onDelete={(id) => runAction(() => api.delete(`/api/life-areas/${id}`), 'Life area deleted.')}
           />
         )}
+        {page === 'templates' && (
+          <TemplatesPage
+            areas={areas}
+            templates={templates}
+            rules={recurrenceRules}
+            busy={isBusy}
+            onSave={(template, id) => runAction(
+              () => id ? api.put(`/api/activity-templates/${id}`, template) : api.post('/api/activity-templates', template),
+              id ? 'Template updated.' : 'Template created.'
+            )}
+            onDelete={(id) => runAction(() => api.delete(`/api/activity-templates/${id}`), 'Template deleted.')}
+            onRuleSave={(rule, id) => runAction(
+              () => id ? api.put(`/api/recurrence-rules/${id}`, rule) : api.post('/api/recurrence-rules', rule),
+              id ? 'Recurrence updated.' : 'Recurrence created.'
+            )}
+            onRuleDelete={(id) => runAction(() => api.delete(`/api/recurrence-rules/${id}`), 'Recurrence deleted.')}
+            onGenerate={(id) => runAction(() => api.post(`/api/recurrence-rules/${id}/generate`, {}), 'Recurring activities generated.')}
+          />
+        )}
         {page === 'metrics' && (
           <MetricsPage
             areas={areas}
@@ -219,6 +256,7 @@ export default function App() {
               id ? 'Metric updated.' : 'Metric created.'
             )}
             onEntry={(id, body) => runAction(() => api.post(`/api/metrics/${id}/entries`, body), 'Metric entry logged.')}
+            onEntryDelete={(metricId, entryId) => runAction(() => api.delete(`/api/metrics/${metricId}/entries/${entryId}`), 'Metric entry deleted.')}
             onDelete={(id) => runAction(() => api.delete(`/api/metrics/${id}`), 'Metric deleted.')}
           />
         )}
@@ -227,6 +265,9 @@ export default function App() {
             reviews={reviews}
             busy={isBusy}
             onGenerate={() => runAction(() => api.post('/api/reviews/weekly/generate'), 'Weekly review generated.')}
+            onGenerateMonthly={() => runAction(() => api.post('/api/reviews/monthly/generate'), 'Monthly review generated.')}
+            onSave={(id, review) => runAction(() => api.put(`/api/reviews/${id}`, review), 'Review saved.')}
+            onDelete={(id) => runAction(() => api.delete(`/api/reviews/${id}`), 'Review deleted.')}
           />
         )}
         {page === 'backup' && <BackupPage onReload={load} />}
@@ -237,6 +278,7 @@ export default function App() {
 
 function TodayPage(props: {
   today: TodayDashboard | null;
+  suggestions: Suggestion[];
   overview: OverviewDashboard | null;
   balance: BalanceRow[];
   goals: Goal[];
@@ -268,24 +310,82 @@ function TodayPage(props: {
       </section>
 
       <section className="surface">
+        <SectionTitle kicker="Why this" title="Suggestions" />
+        <div className="suggestion-grid">
+          {props.suggestions.map((suggestion) => (
+            <article className="suggestion-card" key={`${suggestion.kind}-${suggestion.title}`}>
+              <span>{suggestion.kind}</span>
+              <h4>{suggestion.title}</h4>
+              <p>{suggestion.reason}</p>
+              {suggestion.activity && (
+                <div className="button-row">
+                  <button className="secondary-button" disabled={props.busy || suggestion.activity.status === 'Completed'} onClick={() => props.onComplete(suggestion.activity!.id)}>Done</button>
+                  <button className="secondary-button" disabled={props.busy || suggestion.activity.status === 'Skipped'} onClick={() => props.onSkip(suggestion.activity!.id)}>Skip</button>
+                </div>
+              )}
+            </article>
+          ))}
+          {props.suggestions.length === 0 && <EmptyState text="No suggestions yet. Add goals and plan a few activities to wake this up." />}
+        </div>
+      </section>
+
+      <section className="surface">
         <SectionTitle kicker="Today" title="Timeline" />
         <ActivityList activities={plannedToday} busy={props.busy} onComplete={props.onComplete} onSkip={props.onSkip} />
       </section>
 
       <section className="surface">
         <SectionTitle kicker="Last 28 days" title="Life balance" />
-        <div className="balance-list">
-          {props.balance.map((row) => (
-            <div className="balance-row" key={row.lifeAreaId}>
-              <span>{row.name}</span>
-              <div className="meter"><i style={{ width: `${row.percent}%`, background: row.color }} /></div>
-              <strong>{row.hours}h</strong>
-            </div>
-          ))}
-          {props.balance.length === 0 && <EmptyState text="Complete activities to build your attention map." />}
-        </div>
+        <LifeBalancePanel rows={props.balance} />
       </section>
     </section>
+  );
+}
+
+function LifeBalancePanel({ rows }: { rows: BalanceRow[] }) {
+  const maxDailyMinutes = Math.max(1, ...rows.flatMap((row) => row.days.map((day) => day.completedMinutes)));
+
+  return (
+    <div className="balance-list">
+      {rows.map((row) => (
+        <article className="balance-card" key={row.lifeAreaId}>
+          <div className="balance-card-top">
+            <div>
+              <strong>{row.name}</strong>
+              <span>{row.signal} · {row.hours}h completed</span>
+            </div>
+            <span className={`status-badge ${row.signal.toLowerCase()}`}>{row.attentionGapPercent > 0 ? '+' : ''}{row.attentionGapPercent}%</span>
+          </div>
+          <div className="balance-bars">
+            <div>
+              <span>Actual</span>
+              <div className="meter"><i style={{ width: `${Math.min(100, row.percent)}%`, background: row.color }} /></div>
+            </div>
+            <div>
+              <span>Priority</span>
+              <div className="meter muted-meter"><i style={{ width: `${Math.min(100, row.targetPercent)}%` }} /></div>
+            </div>
+          </div>
+          <dl className="compact-dl">
+            <div><dt>Planned</dt><dd>{minutesToHours(row.plannedMinutes)}h</dd></div>
+            <div><dt>Done</dt><dd>{row.completedCount}</dd></div>
+            <div><dt>Skipped</dt><dd>{row.skippedCount}</dd></div>
+          </dl>
+          <div className="balance-heatmap">
+            {row.days.map((day) => (
+              <span
+                key={day.date}
+                title={`${day.date}: ${minutesToHours(day.completedMinutes)}h done`}
+                style={{
+                  background: colorMix(row.color, Math.max(0.12, day.completedMinutes / maxDailyMinutes))
+                }}
+              />
+            ))}
+          </div>
+        </article>
+      ))}
+      {rows.length === 0 && <EmptyState text="Complete activities to build your attention map." />}
+    </div>
   );
 }
 
@@ -302,6 +402,9 @@ function CalendarPage(props: {
   const [selected, setSelected] = useState<Activity | null>(null);
   const [view, setView] = useState<CalendarView>('week');
   const [anchorDate, setAnchorDate] = useState(() => startOfDay(new Date()));
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [areaFilter, setAreaFilter] = useState('');
   const visibleDays = useMemo(() => getCalendarDays(view, anchorDate), [view, anchorDate]);
   const monthDays = useMemo(() => buildMonthGrid(anchorDate), [anchorDate]);
   const rangeLabel = useMemo(() => formatCalendarRange(view, anchorDate), [view, anchorDate]);
@@ -309,6 +412,16 @@ function CalendarPage(props: {
     () => props.activities.filter((activity) => visibleDays.some((day) => sameDay(getActivityDate(activity), day))),
     [props.activities, visibleDays]
   );
+  const monthActivities = useMemo(
+    () => props.activities.filter((activity) => sameMonth(getActivityDate(activity), anchorDate)),
+    [props.activities, anchorDate]
+  );
+  const filteredActivities = (view === 'month' ? monthActivities : scopedActivities).filter((activity) => {
+    const text = `${activity.title} ${activity.description} ${activity.lifeAreaName} ${activity.goalTitle ?? ''}`.toLowerCase();
+    return (!query || text.includes(query.toLowerCase()))
+      && (!statusFilter || activity.status === statusFilter)
+      && (!areaFilter || activity.lifeAreaId === areaFilter);
+  });
 
   function move(offset: number) {
     setAnchorDate((current) => {
@@ -367,11 +480,23 @@ function CalendarPage(props: {
             </div>
           </div>
 
+          <div className="filter-bar">
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search activities" />
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="">All statuses</option>
+              {activityStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+            </select>
+            <select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>
+              <option value="">All areas</option>
+              {props.areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
+            </select>
+          </div>
+
           {view === 'month' ? (
             <MonthCalendar
               anchorDate={anchorDate}
               days={monthDays}
-              activities={props.activities}
+              activities={filteredActivities}
               onOpen={setSelected}
               onCreate={(day) => openNewActivity(day)}
               onFocusDay={(day) => {
@@ -382,7 +507,7 @@ function CalendarPage(props: {
           ) : (
             <TimeGridCalendar
               days={visibleDays}
-              activities={scopedActivities}
+              activities={filteredActivities}
               onOpen={setSelected}
               onCreate={openNewActivity}
             />
@@ -390,7 +515,7 @@ function CalendarPage(props: {
 
           <CalendarReviewPanel
             title={view === 'month' ? 'Month review' : 'Plan review'}
-            activities={view === 'month' ? props.activities.filter((activity) => sameMonth(getActivityDate(activity), anchorDate)) : scopedActivities}
+            activities={filteredActivities}
             busy={props.busy}
             onOpen={setSelected}
             onComplete={props.onComplete}
@@ -401,7 +526,7 @@ function CalendarPage(props: {
         <section className="surface">
           <SectionTitle kicker={view === 'month' ? 'Selected month' : 'Visible range'} title="Agenda" />
           <ActivityList
-            activities={view === 'month' ? props.activities.filter((activity) => sameMonth(getActivityDate(activity), anchorDate)) : scopedActivities}
+            activities={filteredActivities}
             busy={props.busy}
             onComplete={props.onComplete}
             onSkip={props.onSkip}
@@ -582,9 +707,18 @@ function GoalsPage(props: {
 }) {
   const [selected, setSelected] = useState<Goal | null>(null);
   const [selectedMilestone, setSelectedMilestone] = useState<{ goalId: string; milestone: Milestone | null } | null>(null);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState('');
   const activeGoals = props.goals.filter((goal) => goal.status === 'Active');
   const milestoneGoal = props.goals.find((goal) => goal.id === selectedMilestone?.goalId) ?? selected;
   const milestoneToDelete = selectedMilestone?.milestone ?? null;
+  const filteredGoals = props.goals.filter((goal) => {
+    const text = `${goal.title} ${goal.description} ${goal.lifeAreaName}`.toLowerCase();
+    return (!query || text.includes(query.toLowerCase()))
+      && (!statusFilter || goal.status === statusFilter)
+      && (!priorityFilter || goal.priority === priorityFilter);
+  });
 
   return (
     <section className="workspace-grid">
@@ -597,8 +731,20 @@ function GoalsPage(props: {
           <button onClick={() => setSelected(null)}>New goal</button>
         </section>
 
+        <div className="filter-bar">
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search goals" />
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="">All statuses</option>
+            {goalStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+          </select>
+          <select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}>
+            <option value="">All priorities</option>
+            {goalPriorities.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+          </select>
+        </div>
+
         <div className="entity-grid">
-          {props.goals.map((goal) => (
+          {filteredGoals.map((goal) => (
             <article className="entity-card" key={goal.id}>
               <div className="entity-card-top">
                 <span className="color-chip" style={{ background: goal.lifeAreaColor }}>{goal.lifeAreaName}</span>
@@ -607,6 +753,15 @@ function GoalsPage(props: {
               <h3>{goal.title}</h3>
               <p>{goal.description || 'No description yet.'}</p>
               <div className="meter"><i style={{ width: `${goal.currentValue}%`, background: goal.lifeAreaColor }} /></div>
+              <div className="goal-health-row">
+                <span className={`status-badge ${getGoalHealth(goal).toLowerCase()}`}>{getGoalHealth(goal)}</span>
+                <small>{goal.progressType} · decay {goal.decayRatePercentPerWeek}%/week</small>
+              </div>
+              <dl className="compact-dl">
+                <div><dt>Maintenance</dt><dd>{goal.maintenanceThreshold}%</dd></div>
+                <div><dt>Target/week</dt><dd>{goal.maintenanceTargetPerWeek ?? 'None'}</dd></div>
+                <div><dt>Target</dt><dd>{goal.targetValue} {goal.unit}</dd></div>
+              </dl>
               <div className="milestone-stack">
                 {goal.milestones.slice(0, 4).map((milestone) => (
                   <button className="milestone-row" key={milestone.id} onClick={() => {
@@ -736,17 +891,220 @@ function AreasPage(props: {
   );
 }
 
+function TemplatesPage(props: {
+  areas: LifeArea[];
+  templates: ActivityTemplate[];
+  rules: RecurrenceRule[];
+  busy: boolean;
+  onSave: (template: unknown, id?: string) => void;
+  onDelete: (id: string) => void;
+  onRuleSave: (rule: unknown, id?: string) => void;
+  onRuleDelete: (id: string) => void;
+  onGenerate: (id: string) => void;
+}) {
+  const [selected, setSelected] = useState<ActivityTemplate | null>(null);
+  const [selectedRule, setSelectedRule] = useState<RecurrenceRule | null>(null);
+  const [query, setQuery] = useState('');
+  const [areaFilter, setAreaFilter] = useState('');
+  const templateForRule = props.templates.find((template) => template.id === selectedRule?.templateId) ?? selected;
+  const filteredTemplates = props.templates.filter((template) => {
+    const text = `${template.title} ${template.description} ${template.lifeAreaName}`.toLowerCase();
+    return (!query || text.includes(query.toLowerCase())) && (!areaFilter || template.lifeAreaId === areaFilter);
+  });
+
+  return (
+    <section className="workspace-grid">
+      <div className="workspace-main">
+        <section className="collection-header">
+          <div>
+            <p className="eyebrow">Reusable planning</p>
+            <h3>{props.templates.length} templates</h3>
+          </div>
+          <button onClick={() => {
+            setSelected(null);
+            setSelectedRule(null);
+          }}>New template</button>
+        </section>
+
+        <div className="filter-bar">
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search templates" />
+          <select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>
+            <option value="">All areas</option>
+            {props.areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
+          </select>
+        </div>
+
+        <div className="entity-grid">
+          {filteredTemplates.map((template) => {
+            const templateRules = props.rules.filter((rule) => rule.templateId === template.id);
+
+            return (
+              <article className="entity-card template-card" key={template.id}>
+                <div className="entity-card-top">
+                  <span className="color-chip" style={{ background: template.lifeAreaColor }}>{template.lifeAreaName}</span>
+                  <strong>{template.isActive ? 'Active' : 'Inactive'}</strong>
+                </div>
+                <h3>{template.title}</h3>
+                <p>{template.description || 'No description yet.'}</p>
+                <dl className="compact-dl">
+                  <div><dt>Minutes</dt><dd>{template.defaultDurationMinutes}</dd></div>
+                  <div><dt>Energy</dt><dd>{template.energyCost}</dd></div>
+                  <div><dt>Points</dt><dd>{template.defaultPoints}</dd></div>
+                </dl>
+                <div className="recurrence-list">
+                  {templateRules.map((rule) => (
+                    <div className="recurrence-row" key={rule.id}>
+                      <button onClick={() => {
+                        setSelected(template);
+                        setSelectedRule(rule);
+                      }}>
+                        <strong>{formatRecurrence(rule)}</strong>
+                        <span>{rule.startDate}{rule.endDate ? ` to ${rule.endDate}` : ''}</span>
+                      </button>
+                      <button className="secondary-button" disabled={props.busy} onClick={() => props.onGenerate(rule.id)}>Generate</button>
+                    </div>
+                  ))}
+                  {templateRules.length === 0 && <p className="muted-copy">No recurrence rule yet.</p>}
+                </div>
+                <div className="card-actions">
+                  <button className="secondary-button" onClick={() => {
+                    setSelected(template);
+                    setSelectedRule(null);
+                  }}>Edit</button>
+                  <button className="secondary-button" onClick={() => {
+                    setSelected(template);
+                    setSelectedRule(null);
+                  }}>Add recurrence</button>
+                  <button className="danger-button" onClick={() => confirmDelete('Delete this template? Existing activities will stay, but links may be removed.') && props.onDelete(template.id)}>Delete</button>
+                </div>
+              </article>
+            );
+          })}
+          {filteredTemplates.length === 0 && <EmptyState text="No templates match the current filters." />}
+        </div>
+      </div>
+
+      <aside className="editor-panel">
+        <TemplateForm
+          key={selected?.id ?? 'new-template'}
+          template={selected}
+          areas={props.areas}
+          busy={props.busy}
+          onSave={(body) => {
+            props.onSave(body, selected?.id);
+            setSelected(null);
+          }}
+          onCancel={() => setSelected(null)}
+        />
+        {templateForRule && (
+          <RecurrenceRuleForm
+            key={`${templateForRule.id}-${selectedRule?.id ?? 'new-rule'}`}
+            template={templateForRule}
+            rule={selectedRule}
+            busy={props.busy}
+            onSave={(body) => {
+              props.onRuleSave(body, selectedRule?.id);
+              setSelectedRule(null);
+            }}
+            onDelete={selectedRule ? () => {
+              if (confirmDelete('Delete this recurrence rule?')) {
+                props.onRuleDelete(selectedRule.id);
+                setSelectedRule(null);
+              }
+            } : undefined}
+            onCancel={() => setSelectedRule(null)}
+          />
+        )}
+      </aside>
+    </section>
+  );
+}
+
 function MetricsPage(props: {
   areas: LifeArea[];
   goals: Goal[];
   metrics: Metric[];
   busy: boolean;
   onSave: (metric: unknown, id?: string) => void;
-  onEntry: (id: string, body: unknown) => void;
+  onEntry: (id: string, body: unknown) => Promise<void> | void;
+  onEntryDelete: (metricId: string, entryId: string) => Promise<void> | void;
   onDelete: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<Metric | null>(null);
+  const [historyMetric, setHistoryMetric] = useState<Metric | null>(null);
+  const [historyRange, setHistoryRange] = useState('90');
+  const [query, setQuery] = useState('');
+  const [areaFilter, setAreaFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [historyEntries, setHistoryEntries] = useState<MetricEntry[]>([]);
+  const [historyError, setHistoryError] = useState('');
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [entryValues, setEntryValues] = useState<Record<string, string>>({});
+  const [entryNotes, setEntryNotes] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!historyMetric) {
+      setHistoryEntries([]);
+      return;
+    }
+
+    void loadMetricHistory(historyMetric.id, historyRange);
+  }, [historyMetric, historyRange]);
+
+  async function loadMetricHistory(metricId: string, range: string) {
+    setIsHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const params = new URLSearchParams();
+      if (range !== 'all') {
+        const from = new Date();
+        from.setDate(from.getDate() - Number(range));
+        params.set('from', from.toISOString());
+      }
+
+      const suffix = params.toString() ? `?${params}` : '';
+      setHistoryEntries(await api.get<MetricEntry[]>(`/api/metrics/${metricId}/entries${suffix}`));
+    } catch (error) {
+      setHistoryError(readError(error, 'Could not load metric history.'));
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  }
+
+  async function logEntry(metric: Metric) {
+    const value = entryValues[metric.id];
+    if (value === undefined || value.trim() === '') {
+      return;
+    }
+
+    await props.onEntry(metric.id, {
+      value: Number(value),
+      recordedAt: new Date().toISOString(),
+      notes: entryNotes[metric.id] ?? ''
+    });
+    setEntryValues({ ...entryValues, [metric.id]: '' });
+    setEntryNotes({ ...entryNotes, [metric.id]: '' });
+    if (historyMetric?.id === metric.id) {
+      await loadMetricHistory(metric.id, historyRange);
+    }
+  }
+
+  async function deleteEntry(entry: MetricEntry) {
+    if (!historyMetric || !confirmDelete('Delete this metric entry?')) {
+      return;
+    }
+
+    await props.onEntryDelete(historyMetric.id, entry.id);
+    await loadMetricHistory(historyMetric.id, historyRange);
+  }
+
+  const filteredMetrics = props.metrics.filter((metric) => {
+    const areaName = props.areas.find((area) => area.id === metric.lifeAreaId)?.name ?? '';
+    const text = `${metric.name} ${metric.unit} ${areaName}`.toLowerCase();
+    return (!query || text.includes(query.toLowerCase()))
+      && (!areaFilter || metric.lifeAreaId === areaFilter)
+      && (!typeFilter || metric.valueType === typeFilter);
+  });
 
   return (
     <section className="workspace-grid">
@@ -759,23 +1117,38 @@ function MetricsPage(props: {
           <button onClick={() => setSelected(null)}>New metric</button>
         </section>
 
+        <div className="filter-bar">
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search metrics" />
+          <select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>
+            <option value="">All areas</option>
+            {props.areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
+          </select>
+          <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+            <option value="">All types</option>
+            {metricTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+        </div>
+
         <div className="entity-grid">
-          {props.metrics.map((metric) => (
+          {filteredMetrics.map((metric) => (
             <article className="entity-card" key={metric.id}>
               <div className="entity-card-top">
                 <strong>{metric.name}</strong>
                 <span>{metric.valueType}</span>
               </div>
               <p className="large-value">{metric.latestEntry ? `${metric.latestEntry.value} ${metric.unit}` : 'No entries'}</p>
-              <form className="mini-form" onSubmit={(event) => {
+              <MetricSparkline entries={metric.latestEntry ? [metric.latestEntry] : []} targetValue={metric.targetValue} />
+              <TargetComparison metric={metric} />
+              <form className="mini-form metric-log-form" onSubmit={(event) => {
                 event.preventDefault();
-                props.onEntry(metric.id, { value: Number(entryValues[metric.id] ?? 0), recordedAt: new Date().toISOString(), notes: '' });
-                setEntryValues({ ...entryValues, [metric.id]: '' });
+                void logEntry(metric);
               }}>
                 <input type="number" value={entryValues[metric.id] ?? ''} onChange={(event) => setEntryValues({ ...entryValues, [metric.id]: event.target.value })} placeholder="Value" />
+                <input value={entryNotes[metric.id] ?? ''} onChange={(event) => setEntryNotes({ ...entryNotes, [metric.id]: event.target.value })} placeholder="Note" />
                 <button type="submit" disabled={props.busy}>Log</button>
               </form>
               <div className="card-actions">
+                <button className="secondary-button" onClick={() => setHistoryMetric(metric)}>History</button>
                 <button className="secondary-button" onClick={() => setSelected(metric)}>Edit</button>
                 <button className="danger-button" onClick={() => confirmDelete('Delete this metric?') && props.onDelete(metric.id)}>Delete</button>
               </div>
@@ -785,6 +1158,18 @@ function MetricsPage(props: {
       </div>
 
       <aside className="editor-panel">
+        {historyMetric && (
+          <MetricHistoryPanel
+            metric={historyMetric}
+            entries={historyEntries}
+            range={historyRange}
+            isLoading={isHistoryLoading}
+            error={historyError}
+            onRangeChange={setHistoryRange}
+            onDeleteEntry={(entry) => void deleteEntry(entry)}
+            onClose={() => setHistoryMetric(null)}
+          />
+        )}
         <MetricForm
           key={selected?.id ?? 'new-metric'}
           metric={selected}
@@ -802,29 +1187,197 @@ function MetricsPage(props: {
   );
 }
 
-function ReviewsPage(props: { reviews: Review[]; busy: boolean; onGenerate: () => void }) {
-  return (
-    <section className="page-grid">
-      <section className="collection-header">
-        <div>
-          <p className="eyebrow">Weekly loop</p>
-          <h3>Reviews</h3>
-        </div>
-        <button onClick={props.onGenerate} disabled={props.busy}>Generate weekly review</button>
-      </section>
+function MetricHistoryPanel(props: {
+  metric: Metric;
+  entries: MetricEntry[];
+  range: string;
+  isLoading: boolean;
+  error: string;
+  onRangeChange: (range: string) => void;
+  onDeleteEntry: (entry: MetricEntry) => void;
+  onClose: () => void;
+}) {
+  const sorted = [...props.entries].sort((first, second) => new Date(first.recordedAt).getTime() - new Date(second.recordedAt).getTime());
+  const latest = sorted.at(-1);
+  const previous = sorted.at(-2);
+  const delta = latest && previous ? latest.value - previous.value : null;
+  const average = sorted.length ? sorted.reduce((sum, entry) => sum + entry.value, 0) / sorted.length : null;
 
-      <div className="review-stack">
-        {props.reviews.map((review) => (
-          <article className="surface" key={review.id}>
-            <SectionTitle kicker={`${review.periodStart} to ${review.periodEnd}`} title={review.type} />
-            <p>{review.summary}</p>
-            <strong>{review.nextFocus}</strong>
-            {review.insights.map((insight) => <p className="insight" key={insight.id}>{insight.message}</p>)}
-          </article>
-        ))}
-        {props.reviews.length === 0 && <EmptyState text="Generate a review after planning and completing a few activities." />}
+  return (
+    <EditorShell title={`${props.metric.name} history`} onCancel={props.onClose}>
+      <div className="metric-history">
+        <div className="button-row">
+          {[
+            { value: '30', label: '30d' },
+            { value: '90', label: '90d' },
+            { value: '365', label: '1y' },
+            { value: 'all', label: 'All' }
+          ].map((option) => (
+            <button type="button" className={props.range === option.value ? '' : 'secondary-button'} key={option.value} onClick={() => props.onRangeChange(option.value)}>
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        <MetricSparkline entries={sorted} targetValue={props.metric.targetValue} large />
+
+        <dl className="compact-dl">
+          <div><dt>Latest</dt><dd>{latest ? `${latest.value} ${props.metric.unit}` : 'None'}</dd></div>
+          <div><dt>Delta</dt><dd>{delta === null ? 'None' : `${delta > 0 ? '+' : ''}${roundNumber(delta)} ${props.metric.unit}`}</dd></div>
+          <div><dt>Average</dt><dd>{average === null ? 'None' : `${roundNumber(average)} ${props.metric.unit}`}</dd></div>
+        </dl>
+
+        {props.isLoading && <EmptyState text="Loading metric history..." />}
+        {props.error && <div className="notice error">{props.error}</div>}
+
+        <div className="metric-entry-table">
+          {props.entries.map((entry) => (
+            <div className="metric-entry-row" key={entry.id}>
+              <div>
+                <strong>{entry.value} {props.metric.unit}</strong>
+                <span>{formatDateTime(entry.recordedAt)}</span>
+                {entry.notes && <p>{entry.notes}</p>}
+              </div>
+              <button className="danger-button" onClick={() => props.onDeleteEntry(entry)}>Delete</button>
+            </div>
+          ))}
+          {!props.isLoading && props.entries.length === 0 && <EmptyState text="No entries in this range yet." />}
+        </div>
       </div>
+    </EditorShell>
+  );
+}
+
+function MetricSparkline(props: { entries: MetricEntry[]; targetValue?: number; large?: boolean }) {
+  const path = buildSparklinePath(props.entries);
+  const targetY = props.targetValue === undefined ? null : getSparklineY(props.entries, props.targetValue);
+
+  return (
+    <div className={props.large ? 'sparkline large' : 'sparkline'}>
+      <svg viewBox="0 0 220 72" role="img" aria-label="Metric trend">
+        {targetY !== null && <line x1="0" x2="220" y1={targetY} y2={targetY} className="sparkline-target" />}
+        {path ? <path d={path} /> : <line x1="0" x2="220" y1="58" y2="58" className="sparkline-empty" />}
+      </svg>
+    </div>
+  );
+}
+
+function TargetComparison({ metric }: { metric: Metric }) {
+  if (metric.targetValue === undefined || metric.latestEntry === undefined) {
+    return <p className="muted-copy">No target comparison yet.</p>;
+  }
+
+  const percent = Math.max(0, Math.min(100, metric.targetValue === 0 ? 0 : metric.latestEntry.value / metric.targetValue * 100));
+
+  return (
+    <div className="target-comparison">
+      <div className="meter"><i style={{ width: `${percent}%` }} /></div>
+      <span>{roundNumber(percent)}% of target {metric.targetValue} {metric.unit}</span>
+    </div>
+  );
+}
+
+function ReviewsPage(props: { reviews: Review[]; busy: boolean; onGenerate: () => void; onGenerateMonthly: () => void; onSave: (id: string, body: unknown) => void; onDelete: (id: string) => void }) {
+  const [selected, setSelected] = useState<Review | null>(null);
+  const [query, setQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const filteredReviews = props.reviews.filter((review) => {
+    const text = `${review.summary} ${review.whatWorked} ${review.whatDidNotWork} ${review.nextFocus}`.toLowerCase();
+    return (!query || text.includes(query.toLowerCase())) && (!typeFilter || review.type === typeFilter);
+  });
+
+  return (
+    <section className="workspace-grid">
+      <div className="workspace-main">
+        <section className="collection-header">
+          <div>
+            <p className="eyebrow">Weekly loop</p>
+            <h3>Reviews</h3>
+          </div>
+          <div className="button-row">
+            <button className="secondary-button" onClick={props.onGenerateMonthly} disabled={props.busy}>Generate monthly</button>
+            <button onClick={props.onGenerate} disabled={props.busy}>Generate weekly</button>
+          </div>
+        </section>
+
+        <div className="filter-bar">
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search reviews" />
+          <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+            <option value="">All review types</option>
+            <option value="Weekly">Weekly</option>
+            <option value="Monthly">Monthly</option>
+          </select>
+        </div>
+
+        <div className="review-stack">
+          {filteredReviews.map((review) => (
+            <article className="surface review-card" key={review.id}>
+              <SectionTitle kicker={`${review.periodStart} to ${review.periodEnd}`} title={review.type} />
+              <p>{review.summary}</p>
+              <dl className="review-fields">
+                <div><dt>Worked</dt><dd>{review.whatWorked || 'Not captured yet.'}</dd></div>
+                <div><dt>Needs change</dt><dd>{review.whatDidNotWork || 'Not captured yet.'}</dd></div>
+                <div><dt>Next focus</dt><dd>{review.nextFocus || 'Not selected yet.'}</dd></div>
+              </dl>
+              {review.insights.map((insight) => <p className="insight" key={insight.id}>{insight.message}</p>)}
+              <div className="card-actions">
+                <button className="secondary-button" onClick={() => setSelected(review)}>Edit reflection</button>
+                <button className="danger-button" onClick={() => confirmDelete('Delete this review?') && props.onDelete(review.id)}>Delete</button>
+              </div>
+            </article>
+          ))}
+          {filteredReviews.length === 0 && <EmptyState text="No reviews match the current filters." />}
+        </div>
+      </div>
+
+      <aside className="editor-panel">
+        <ReviewForm
+          key={selected?.id ?? 'new-review-placeholder'}
+          review={selected}
+          busy={props.busy}
+          onSave={(body) => {
+            if (selected) {
+              props.onSave(selected.id, body);
+              setSelected(null);
+            }
+          }}
+          onCancel={() => setSelected(null)}
+        />
+      </aside>
     </section>
+  );
+}
+
+function ReviewForm(props: { review: Review | null; busy: boolean; onSave: (body: unknown) => void; onCancel: () => void }) {
+  const [draft, setDraft] = useState({
+    summary: props.review?.summary ?? '',
+    whatWorked: props.review?.whatWorked ?? '',
+    whatDidNotWork: props.review?.whatDidNotWork ?? '',
+    nextFocus: props.review?.nextFocus ?? ''
+  });
+
+  if (!props.review) {
+    return (
+      <EditorShell title="Review reflection" onCancel={props.onCancel}>
+        <EmptyState text="Select a review to edit its reflection fields." />
+      </EditorShell>
+    );
+  }
+
+  return (
+    <EditorShell title="Edit review" onCancel={props.onCancel}>
+      <form className="editor-form" onSubmit={(event) => {
+        event.preventDefault();
+        props.onSave(draft);
+      }}>
+        <p className="muted-copy">{props.review.periodStart} to {props.review.periodEnd}</p>
+        <TextArea label="Summary" value={draft.summary} onChange={(summary) => setDraft({ ...draft, summary })} />
+        <TextArea label="What worked?" value={draft.whatWorked} onChange={(whatWorked) => setDraft({ ...draft, whatWorked })} />
+        <TextArea label="What did not work?" value={draft.whatDidNotWork} onChange={(whatDidNotWork) => setDraft({ ...draft, whatDidNotWork })} />
+        <TextArea label="Main focus next week" value={draft.nextFocus} onChange={(nextFocus) => setDraft({ ...draft, nextFocus })} />
+        <button disabled={props.busy}>Save review</button>
+      </form>
+    </EditorShell>
   );
 }
 
@@ -1004,9 +1557,9 @@ function GoalForm(props: { goal: Goal | null; areas: LifeArea[]; busy: boolean; 
     targetValue: props.goal?.targetValue ?? 100,
     unit: props.goal?.unit ?? '%',
     targetDate: props.goal?.targetDate ?? '',
-    maintenanceThreshold: 80,
-    maintenanceTargetPerWeek: '',
-    decayRatePercentPerWeek: 0
+    maintenanceThreshold: props.goal?.maintenanceThreshold ?? 80,
+    maintenanceTargetPerWeek: props.goal?.maintenanceTargetPerWeek ?? '',
+    decayRatePercentPerWeek: props.goal?.decayRatePercentPerWeek ?? 0
   });
 
   return (
@@ -1031,6 +1584,11 @@ function GoalForm(props: { goal: Goal | null; areas: LifeArea[]; busy: boolean; 
           <NumberField label="Current" value={draft.currentValue} onChange={(currentValue) => setDraft({ ...draft, currentValue })} />
           <NumberField label="Target" value={draft.targetValue} onChange={(targetValue) => setDraft({ ...draft, targetValue })} />
           <TextField label="Unit" value={draft.unit} onChange={(unit) => setDraft({ ...draft, unit })} />
+        </div>
+        <div className="form-grid three">
+          <NumberField label="Maintenance %" value={draft.maintenanceThreshold} onChange={(maintenanceThreshold) => setDraft({ ...draft, maintenanceThreshold })} />
+          <NumberOrBlankField label="Target/week" value={draft.maintenanceTargetPerWeek} onChange={(maintenanceTargetPerWeek) => setDraft({ ...draft, maintenanceTargetPerWeek })} />
+          <NumberField label="Decay %/week" value={draft.decayRatePercentPerWeek} onChange={(decayRatePercentPerWeek) => setDraft({ ...draft, decayRatePercentPerWeek })} />
         </div>
         <label className="field"><span>Target date</span><input type="date" value={draft.targetDate ?? ''} onChange={(event) => setDraft({ ...draft, targetDate: event.target.value })} /></label>
         <button disabled={props.busy}>{props.goal ? 'Save changes' : 'Create goal'}</button>
@@ -1142,6 +1700,103 @@ function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goa
         </div>
         <TextArea label="Notes" value={draft.notes} onChange={(notes) => setDraft({ ...draft, notes })} />
         <button disabled={props.busy}>{isExisting ? 'Save changes' : 'Plan activity'}</button>
+      </form>
+    </EditorShell>
+  );
+}
+
+function TemplateForm(props: { template: ActivityTemplate | null; areas: LifeArea[]; busy: boolean; onSave: (body: unknown) => void; onCancel: () => void }) {
+  const [draft, setDraft] = useState({
+    lifeAreaId: props.template?.lifeAreaId ?? props.areas[0]?.id ?? '',
+    title: props.template?.title ?? '',
+    description: props.template?.description ?? '',
+    defaultDurationMinutes: props.template?.defaultDurationMinutes ?? 45,
+    energyCost: props.template?.energyCost ?? 'Medium' as LoadLevel,
+    mentalLoad: props.template?.mentalLoad ?? 'Medium' as LoadLevel,
+    physicalLoad: props.template?.physicalLoad ?? 'Low' as LoadLevel,
+    defaultPoints: props.template?.defaultPoints ?? 5,
+    isActive: props.template?.isActive ?? true
+  });
+
+  return (
+    <EditorShell title={props.template ? 'Edit template' : 'Create template'} onCancel={props.onCancel}>
+      <form className="editor-form" onSubmit={(event) => {
+        event.preventDefault();
+        props.onSave(draft);
+      }}>
+        <TextField label="Title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} required />
+        <TextArea label="Description" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} />
+        <SelectField label="Life area" value={draft.lifeAreaId} onChange={(lifeAreaId) => setDraft({ ...draft, lifeAreaId })} options={props.areas.map((area) => ({ value: area.id, label: area.name }))} />
+        <div className="form-grid two">
+          <NumberField label="Default minutes" value={draft.defaultDurationMinutes} onChange={(defaultDurationMinutes) => setDraft({ ...draft, defaultDurationMinutes })} />
+          <NumberField label="Default points" value={draft.defaultPoints} onChange={(defaultPoints) => setDraft({ ...draft, defaultPoints })} />
+        </div>
+        <div className="form-grid three">
+          <SelectField label="Energy" value={draft.energyCost} onChange={(energyCost) => setDraft({ ...draft, energyCost: energyCost as LoadLevel })} options={loadLevels.map(toOption)} />
+          <SelectField label="Mental" value={draft.mentalLoad} onChange={(mentalLoad) => setDraft({ ...draft, mentalLoad: mentalLoad as LoadLevel })} options={loadLevels.map(toOption)} />
+          <SelectField label="Physical" value={draft.physicalLoad} onChange={(physicalLoad) => setDraft({ ...draft, physicalLoad: physicalLoad as LoadLevel })} options={loadLevels.map(toOption)} />
+        </div>
+        <label className="check-field"><input type="checkbox" checked={draft.isActive} onChange={(event) => setDraft({ ...draft, isActive: event.target.checked })} /> Active</label>
+        <button disabled={props.busy}>{props.template ? 'Save template' : 'Create template'}</button>
+      </form>
+    </EditorShell>
+  );
+}
+
+function RecurrenceRuleForm(props: { template: ActivityTemplate; rule: RecurrenceRule | null; busy: boolean; onSave: (body: unknown) => void; onDelete?: () => void; onCancel: () => void }) {
+  const initialDays = parseDayList(props.rule?.daysOfWeek);
+  const [draft, setDraft] = useState({
+    templateId: props.template.id,
+    frequency: props.rule?.frequency ?? 'Weekly' as RecurrenceFrequency,
+    interval: props.rule?.interval ?? 1,
+    daysOfWeek: initialDays,
+    startDate: props.rule?.startDate ?? toDateInput(new Date()),
+    endDate: props.rule?.endDate ?? ''
+  });
+
+  function toggleDay(day: string) {
+    const days = draft.daysOfWeek.includes(day)
+      ? draft.daysOfWeek.filter((item) => item !== day)
+      : [...draft.daysOfWeek, day];
+    setDraft({ ...draft, daysOfWeek: days });
+  }
+
+  return (
+    <EditorShell title={props.rule ? 'Edit recurrence' : 'Create recurrence'} onCancel={props.onCancel}>
+      <form className="editor-form" onSubmit={(event) => {
+        event.preventDefault();
+        props.onSave({
+          templateId: props.template.id,
+          frequency: draft.frequency,
+          interval: draft.interval,
+          daysOfWeek: draft.frequency === 'Weekly' ? draft.daysOfWeek.join(',') : '',
+          startDate: draft.startDate,
+          endDate: draft.endDate || null
+        });
+      }}>
+        <p className="muted-copy">Template: {props.template.title}. Generated activities start at 09:00.</p>
+        <div className="form-grid two">
+          <SelectField label="Frequency" value={draft.frequency} onChange={(frequency) => setDraft({ ...draft, frequency: frequency as RecurrenceFrequency })} options={recurrenceFrequencies.map(toOption)} />
+          <NumberField label="Interval" value={draft.interval} onChange={(interval) => setDraft({ ...draft, interval })} />
+        </div>
+        {draft.frequency === 'Weekly' && (
+          <div className="day-toggle-grid">
+            {weekDays.map((day) => (
+              <label className="check-field" key={day}>
+                <input type="checkbox" checked={draft.daysOfWeek.includes(day)} onChange={() => toggleDay(day)} />
+                {day.slice(0, 3)}
+              </label>
+            ))}
+          </div>
+        )}
+        <div className="form-grid two">
+          <label className="field"><span>Start date</span><input type="date" value={draft.startDate} onChange={(event) => setDraft({ ...draft, startDate: event.target.value })} /></label>
+          <label className="field"><span>End date</span><input type="date" value={draft.endDate ?? ''} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} /></label>
+        </div>
+        <div className="button-row">
+          <button disabled={props.busy}>{props.rule ? 'Save recurrence' : 'Create recurrence'}</button>
+          {props.onDelete && <button type="button" className="danger-button" disabled={props.busy} onClick={props.onDelete}>Delete</button>}
+        </div>
       </form>
     </EditorShell>
   );
@@ -1392,6 +2047,45 @@ function compareActivities(first: Activity, second: Activity) {
   return new Date(getActivityDate(first) ?? 0).getTime() - new Date(getActivityDate(second) ?? 0).getTime();
 }
 
+function buildSparklinePath(entries: MetricEntry[]) {
+  if (entries.length < 2) {
+    return '';
+  }
+
+  return entries.map((entry, index) => {
+    const x = entries.length === 1 ? 0 : index / (entries.length - 1) * 220;
+    const y = getSparklineY(entries, entry.value) ?? 58;
+    return `${index === 0 ? 'M' : 'L'} ${roundNumber(x)} ${roundNumber(y)}`;
+  }).join(' ');
+}
+
+function getSparklineY(entries: MetricEntry[], value: number) {
+  const values = [...entries.map((entry) => entry.value), value];
+  if (values.length === 0) {
+    return null;
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (min === max) {
+    return 36;
+  }
+
+  return 60 - ((value - min) / (max - min)) * 48;
+}
+
+function roundNumber(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function minutesToHours(minutes: number) {
+  return roundNumber(minutes / 60);
+}
+
+function colorMix(color: string, weight: number) {
+  return `color-mix(in srgb, ${color} ${Math.round(Math.min(1, weight) * 92)}%, var(--bg-alt))`;
+}
+
 function eventStyle(activity: Activity) {
   const start = new Date(getActivityDate(activity) ?? new Date());
   const hourStart = 6;
@@ -1424,6 +2118,36 @@ function formatDateTime(value: string) {
 function toLocalInput(date: Date) {
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function toDateInput(date: Date) {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function parseDayList(value: string | undefined) {
+  return value?.split(',').map((day) => day.trim()).filter(Boolean) ?? [];
+}
+
+function formatRecurrence(rule: RecurrenceRule) {
+  const interval = rule.interval > 1 ? `Every ${rule.interval} ` : 'Every ';
+  if (rule.frequency === 'Weekly') {
+    return `${interval}week${rule.interval > 1 ? 's' : ''}${rule.daysOfWeek ? ` on ${rule.daysOfWeek}` : ''}`;
+  }
+
+  return `${interval}${rule.frequency.toLowerCase()}${rule.interval > 1 ? 's' : ''}`;
+}
+
+function getGoalHealth(goal: Goal) {
+  if (goal.currentValue >= goal.maintenanceThreshold) {
+    return 'Maintained';
+  }
+
+  if (goal.decayRatePercentPerWeek > 0 && goal.progressType === 'Decay') {
+    return 'Decaying';
+  }
+
+  return 'Building';
 }
 
 function isHexColor(value: string) {

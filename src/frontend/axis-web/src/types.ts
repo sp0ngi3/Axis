@@ -6,6 +6,7 @@ export type ProgressType = 'Manual' | 'MilestoneBased' | 'CountBased' | 'MetricB
 export type MilestoneType = 'Count' | 'Repetition' | 'Binary' | 'Metric' | 'Checklist';
 export type MilestoneStatus = 'Active' | 'Completed' | 'Paused' | 'Archived';
 export type MetricValueType = 'Number' | 'Percentage' | 'Duration' | 'Currency' | 'Rating' | 'Boolean';
+export type RecurrenceFrequency = 'Daily' | 'Weekly' | 'Monthly';
 
 export interface LifeArea {
   id: string;
@@ -33,6 +34,9 @@ export interface Goal {
   targetValue: number;
   unit: string;
   targetDate?: string;
+  maintenanceThreshold: number;
+  maintenanceTargetPerWeek?: number | null;
+  decayRatePercentPerWeek: number;
   milestones: Milestone[];
 }
 
@@ -75,6 +79,34 @@ export interface Activity {
   notes: string;
 }
 
+export interface ActivityTemplate {
+  id: string;
+  lifeAreaId: string;
+  lifeAreaName: string;
+  lifeAreaColor: string;
+  title: string;
+  description: string;
+  defaultDurationMinutes: number;
+  energyCost: LoadLevel;
+  mentalLoad: LoadLevel;
+  physicalLoad: LoadLevel;
+  defaultPoints: number;
+  isActive: boolean;
+}
+
+export interface RecurrenceRule {
+  id: string;
+  templateId: string;
+  templateTitle: string;
+  lifeAreaName: string;
+  lifeAreaColor: string;
+  frequency: RecurrenceFrequency;
+  interval: number;
+  daysOfWeek: string;
+  startDate: string;
+  endDate?: string | null;
+}
+
 export interface Metric {
   id: string;
   lifeAreaId?: string;
@@ -84,12 +116,15 @@ export interface Metric {
   valueType: MetricValueType;
   targetValue?: number;
   isActive: boolean;
-  latestEntry?: {
-    id: string;
-    value: number;
-    recordedAt: string;
-    notes: string;
-  };
+  latestEntry?: MetricEntry;
+}
+
+export interface MetricEntry {
+  id: string;
+  metricId: string;
+  value: number;
+  recordedAt: string;
+  notes: string;
 }
 
 export interface Review {
@@ -114,6 +149,15 @@ export interface TodayDashboard {
   suggestion: string;
 }
 
+export interface Suggestion {
+  kind: string;
+  title: string;
+  reason: string;
+  activity?: Activity;
+  goal?: Goal;
+  lifeAreaId?: string;
+}
+
 export interface OverviewDashboard {
   activeGoals: number;
   completedThisWeek: number;
@@ -125,10 +169,28 @@ export interface BalanceRow {
   lifeAreaId: string;
   name: string;
   color: string;
+  priorityWeight: number;
   minutes: number;
   hours: number;
   count: number;
   percent: number;
+  targetPercent: number;
+  plannedMinutes: number;
+  completedMinutes: number;
+  skippedMinutes: number;
+  plannedCount: number;
+  completedCount: number;
+  skippedCount: number;
+  attentionGapPercent: number;
+  signal: 'Neglected' | 'Overloaded' | 'Balanced';
+  days: BalanceDay[];
+}
+
+export interface BalanceDay {
+  date: string;
+  plannedMinutes: number;
+  completedMinutes: number;
+  skippedCount: number;
 }
 
 export interface BackupStatus {

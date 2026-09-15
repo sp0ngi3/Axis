@@ -317,6 +317,16 @@ textarea:focus {
   padding: 20px;
 }
 
+.filter-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) repeat(2, minmax(140px, 220px));
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
 .hero-panel {
   align-items: stretch;
   background:
@@ -345,6 +355,38 @@ textarea:focus {
 
 .work-grid.two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.suggestion-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.suggestion-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-alt);
+}
+
+.suggestion-card span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.suggestion-card h4 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.suggestion-card p {
+  margin: 0;
 }
 
 .section-title {
@@ -441,6 +483,39 @@ textarea:focus {
   gap: 7px;
 }
 
+.goal-health-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.goal-health-row small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-badge.maintained {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.status-badge.decaying {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+:root[data-theme="dark"] .status-badge.decaying {
+  background: #3b2614;
+  color: #fdba74;
+}
+
+.status-badge.building {
+  background: var(--secondary);
+  color: var(--secondary-text);
+}
+
 .milestone-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -477,6 +552,42 @@ textarea:focus {
 .milestone-row em {
   font-style: normal;
   font-weight: 850;
+}
+
+.template-card {
+  min-height: 300px;
+}
+
+.recurrence-list {
+  display: grid;
+  gap: 8px;
+}
+
+.recurrence-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-alt);
+}
+
+.recurrence-row > button:first-child {
+  display: grid;
+  gap: 3px;
+  min-height: auto;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.recurrence-row span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .card-actions,
@@ -916,6 +1027,26 @@ textarea:focus {
   color: var(--danger);
 }
 
+.status-badge.neglected {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.status-badge.overloaded {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+:root[data-theme="dark"] .status-badge.overloaded {
+  background: #3b2614;
+  color: #fdba74;
+}
+
+.status-badge.balanced {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
 .editor-shell {
   box-shadow: none;
 }
@@ -971,10 +1102,29 @@ textarea:focus {
   width: auto;
 }
 
+.day-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.day-toggle-grid .check-field {
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-alt);
+}
+
 .mini-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
+}
+
+.metric-log-form {
+  grid-template-columns: minmax(80px, 0.65fr) minmax(120px, 1fr) auto;
 }
 
 .large-value {
@@ -983,9 +1133,143 @@ textarea:focus {
   font-weight: 850;
 }
 
+.sparkline {
+  height: 56px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-alt);
+}
+
+.sparkline.large {
+  height: 120px;
+}
+
+.sparkline svg {
+  width: 100%;
+  height: 100%;
+}
+
+.sparkline path {
+  fill: none;
+  stroke: var(--primary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+
+.sparkline-target,
+.sparkline-empty {
+  stroke: var(--muted);
+  stroke-dasharray: 5 5;
+  stroke-width: 2;
+}
+
+.target-comparison {
+  display: grid;
+  gap: 6px;
+}
+
+.target-comparison .meter i {
+  background: var(--primary);
+}
+
+.target-comparison span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.metric-history {
+  display: grid;
+  gap: 13px;
+}
+
+.metric-entry-table {
+  display: grid;
+  gap: 8px;
+}
+
+.metric-entry-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-alt);
+}
+
+.metric-entry-row div {
+  display: grid;
+  gap: 3px;
+}
+
+.metric-entry-row span,
+.metric-entry-row p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .balance-list {
   display: grid;
   gap: 10px;
+}
+
+.balance-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-alt);
+}
+
+.balance-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.balance-card-top div {
+  display: grid;
+  gap: 3px;
+}
+
+.balance-card-top span,
+.balance-bars span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.balance-bars {
+  display: grid;
+  gap: 8px;
+}
+
+.balance-bars > div {
+  display: grid;
+  gap: 5px;
+}
+
+.muted-meter i {
+  background: var(--muted);
+}
+
+.balance-heatmap {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.balance-heatmap span {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
 }
 
 .balance-row {
@@ -1006,6 +1290,36 @@ textarea:focus {
 .review-stack {
   display: grid;
   gap: 14px;
+}
+
+.review-card {
+  gap: 14px;
+}
+
+.review-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.review-fields div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-alt);
+}
+
+.review-fields dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.review-fields dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .insight,
@@ -1059,6 +1373,7 @@ textarea:focus {
   .hero-panel,
   .collection-header,
   .calendar-toolbar,
+  .filter-bar,
   .work-grid.two {
     display: grid;
     grid-template-columns: 1fr;
@@ -1078,6 +1393,9 @@ textarea:focus {
 
   .activity-row,
   .balance-row,
+  .day-toggle-grid,
+  .metric-log-form,
+  .review-fields,
   .form-grid.two,
   .form-grid.three {
     grid-template-columns: 1fr;

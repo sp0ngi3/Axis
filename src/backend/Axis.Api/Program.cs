@@ -49,6 +49,9 @@ MapActivityTemplates(app);
 MapRecurrenceRules(app);
 MapActivities(app);
 MapMetrics(app);
+MapCountdowns(app);
+MapPhysique(app);
+MapWiki(app);
 MapReviews(app);
 MapDashboard(app);
 MapBackup(app);
@@ -837,6 +840,216 @@ static void MapMetrics(WebApplication app)
     }
 }
 
+static void MapCountdowns(WebApplication app)
+{
+    var group = app.MapGroup("/api/countdowns");
+
+    group.MapGet("/", async (bool? includeArchived, AxisDbContext db, CancellationToken ct) =>
+    {
+        var query = db.Countdowns.AsQueryable();
+        if (includeArchived != true)
+        {
+            query = query.Where(countdown => !countdown.IsArchived);
+        }
+
+        var countdowns = (await query.ToListAsync(ct))
+            .OrderByDescending(countdown => countdown.IsPinned)
+            .ThenBy(countdown => countdown.TargetAt)
+            .ToList();
+
+        return Results.Ok(countdowns.Select(ToCountdownResponse));
+    });
+
+    group.MapPost("/", async (CountdownRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Title))
+        {
+            return Results.BadRequest("Title is required.");
+        }
+
+        var countdown = new Countdown();
+        Apply(countdown, request);
+        db.Countdowns.Add(countdown);
+        await db.SaveChangesAsync(ct);
+
+        return Results.Created($"/api/countdowns/{countdown.Id}", ToCountdownResponse(countdown));
+    });
+
+    group.MapPut("/{id:guid}", async (Guid id, CountdownRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var countdown = await db.Countdowns.FindAsync([id], ct);
+        if (countdown is null)
+        {
+            return Results.NotFound();
+        }
+
+        Apply(countdown, request);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ToCountdownResponse(countdown));
+    });
+
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var countdown = await db.Countdowns.FindAsync([id], ct);
+        if (countdown is null)
+        {
+            return Results.NotFound();
+        }
+
+        db.Countdowns.Remove(countdown);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+
+    static void Apply(Countdown countdown, CountdownRequest request)
+    {
+        countdown.Title = request.Title.Trim();
+        countdown.Description = request.Description?.Trim() ?? string.Empty;
+        countdown.TargetAt = request.TargetAt;
+        countdown.Category = request.Category?.Trim() ?? string.Empty;
+        countdown.Color = string.IsNullOrWhiteSpace(request.Color) ? "#d060e8" : request.Color.Trim();
+        countdown.IsPinned = request.IsPinned;
+        countdown.IsArchived = request.IsArchived;
+    }
+}
+
+static void MapPhysique(WebApplication app)
+{
+    var group = app.MapGroup("/api/physique");
+
+    group.MapGet("/", async (AxisDbContext db, CancellationToken ct) =>
+    {
+        var entries = (await db.PhysiqueEntries.ToListAsync(ct))
+            .OrderByDescending(entry => entry.RecordedAt)
+            .ThenByDescending(entry => entry.CreatedAt)
+            .ToList();
+
+        return Results.Ok(entries.Select(ToPhysiqueEntryResponse));
+    });
+
+    group.MapPost("/", async (PhysiqueEntryRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (request.HeightCm <= 0 || request.WeightKg <= 0)
+        {
+            return Results.BadRequest("Height and weight must be greater than zero.");
+        }
+
+        var entry = new PhysiqueEntry();
+        Apply(entry, request);
+        db.PhysiqueEntries.Add(entry);
+        await db.SaveChangesAsync(ct);
+        await SyncMetrics(entry, db, ct);
+        await db.SaveChangesAsync(ct);
+
+        return Results.Created($"/api/physique/{entry.Id}", ToPhysiqueEntryResponse(entry));
+    });
+
+    group.MapPut("/{id:guid}", async (Guid id, PhysiqueEntryRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var entry = await db.PhysiqueEntries.FindAsync([id], ct);
+        if (entry is null)
+        {
+            return Results.NotFound();
+        }
+
+        Apply(entry, request);
+        await SyncMetrics(entry, db, ct);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ToPhysiqueEntryResponse(entry));
+    });
+
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var entry = await db.PhysiqueEntries.FindAsync([id], ct);
+        if (entry is null)
+        {
+            return Results.NotFound();
+        }
+
+        var marker = $"[physique:{entry.Id}]";
+        var linkedMetricEntries = await db.MetricEntries
+            .Where(item => item.Notes.Contains(marker))
+            .ToListAsync(ct);
+        db.MetricEntries.RemoveRange(linkedMetricEntries);
+        db.PhysiqueEntries.Remove(entry);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+
+    static void Apply(PhysiqueEntry entry, PhysiqueEntryRequest request)
+    {
+        entry.RecordedAt = request.RecordedAt ?? DateTimeOffset.UtcNow;
+        entry.Age = Math.Clamp(request.Age, 10, 120);
+        entry.Sex = string.IsNullOrWhiteSpace(request.Sex) ? "Male" : request.Sex.Trim();
+        entry.HeightCm = Math.Max(1, request.HeightCm);
+        entry.WeightKg = Math.Max(1, request.WeightKg);
+        entry.WaistCm = PositiveOrNull(request.WaistCm);
+        entry.NeckCm = PositiveOrNull(request.NeckCm);
+        entry.HipCm = PositiveOrNull(request.HipCm);
+        entry.BodyFatPercentOverride = ClampPercentOrNull(request.BodyFatPercentOverride);
+        entry.MuscleMassKg = PositiveOrNull(request.MuscleMassKg);
+        entry.MoodScore = Math.Clamp(request.MoodScore, 1, 10);
+        entry.Status = request.Status?.Trim() ?? string.Empty;
+        entry.Notes = request.Notes?.Trim() ?? string.Empty;
+    }
+
+    static async Task SyncMetrics(PhysiqueEntry entry, AxisDbContext db, CancellationToken ct)
+    {
+        var bodyFat = EstimateBodyFatPercent(entry);
+        decimal? fatMass = bodyFat is null ? null : Math.Round(entry.WeightKg * bodyFat.Value / 100, 1);
+        decimal? leanMass = fatMass is null ? null : Math.Round(entry.WeightKg - fatMass.Value, 1);
+        var values = new Dictionary<string, decimal?>
+        {
+            ["Body weight"] = entry.WeightKg,
+            ["Waist circumference"] = entry.WaistCm,
+            ["Estimated body fat"] = bodyFat,
+            ["Lean mass"] = leanMass,
+            ["Muscle mass"] = leanMass,
+            ["Mood"] = entry.MoodScore
+        };
+        var metrics = (await db.Metrics.ToListAsync(ct))
+            .Where(metric => values.ContainsKey(metric.Name))
+            .ToList();
+        var marker = $"[physique:{entry.Id}]";
+
+        foreach (var metric in metrics)
+        {
+            if (values[metric.Name] is not decimal value) continue;
+
+            var metricEntry = await db.MetricEntries
+                .FirstOrDefaultAsync(item => item.MetricId == metric.Id && item.Notes.Contains(marker), ct);
+            if (metricEntry is null)
+            {
+                db.MetricEntries.Add(new MetricEntry
+                {
+                    MetricId = metric.Id,
+                    Value = value,
+                    RecordedAt = entry.RecordedAt,
+                    Notes = $"Synced from Body lab {marker}"
+                });
+            }
+            else
+            {
+                metricEntry.Value = value;
+                metricEntry.RecordedAt = entry.RecordedAt;
+            }
+        }
+    }
+}
+
+static void MapWiki(WebApplication app)
+{
+    app.MapGet("/api/wiki-pages", async (AxisDbContext db, CancellationToken ct) =>
+    {
+        var pages = await db.WikiPages
+            .OrderBy(page => page.SortOrder)
+            .ThenBy(page => page.Title)
+            .ToListAsync(ct);
+
+        return Results.Ok(pages.Select(ToWikiPageResponse));
+    });
+}
+
 static void MapReviews(WebApplication app)
 {
     var group = app.MapGroup("/api/reviews");
@@ -1371,6 +1584,120 @@ static object ToActivityResponse(Activity activity)
     };
 }
 
+static object ToCountdownResponse(Countdown countdown)
+{
+    var remaining = countdown.TargetAt - DateTimeOffset.UtcNow;
+    var totalSeconds = Math.Max(0, remaining.TotalSeconds);
+
+    return new
+    {
+        countdown.Id,
+        countdown.Title,
+        countdown.Description,
+        countdown.TargetAt,
+        countdown.Category,
+        countdown.Color,
+        countdown.IsPinned,
+        countdown.IsArchived,
+        DaysRemaining = (int)Math.Floor(totalSeconds / 86400),
+        HoursRemaining = (int)Math.Floor(totalSeconds % 86400 / 3600),
+        MinutesRemaining = (int)Math.Floor(totalSeconds % 3600 / 60),
+        IsPast = remaining.TotalSeconds < 0,
+        countdown.CreatedAt,
+        countdown.UpdatedAt
+    };
+}
+
+static object ToPhysiqueEntryResponse(PhysiqueEntry entry)
+{
+    var bodyFatPercent = entry.BodyFatPercentOverride ?? EstimateBodyFatPercent(entry);
+    var heightMeters = (double)entry.HeightCm / 100;
+    var bmi = heightMeters <= 0 ? (decimal?)null : Math.Round(entry.WeightKg / (decimal)(heightMeters * heightMeters), 1);
+    decimal? fatMassKg = bodyFatPercent is null ? null : Math.Round(entry.WeightKg * bodyFatPercent.Value / 100, 1);
+    decimal? leanMassKg = fatMassKg is null ? null : Math.Round(entry.WeightKg - fatMassKg.Value, 1);
+    decimal? ffmi = leanMassKg is null || heightMeters <= 0 ? null : Math.Round(leanMassKg.Value / (decimal)(heightMeters * heightMeters), 1);
+
+    return new
+    {
+        entry.Id,
+        entry.RecordedAt,
+        entry.Age,
+        entry.Sex,
+        entry.HeightCm,
+        entry.WeightKg,
+        entry.WaistCm,
+        entry.NeckCm,
+        entry.HipCm,
+        entry.BodyFatPercentOverride,
+        EstimatedBodyFatPercent = bodyFatPercent,
+        FatMassKg = fatMassKg,
+        LeanMassKg = leanMassKg,
+        entry.MuscleMassKg,
+        Bmi = bmi,
+        Ffmi = ffmi,
+        entry.MoodScore,
+        entry.Status,
+        entry.Notes,
+        entry.CreatedAt,
+        entry.UpdatedAt
+    };
+}
+
+static object ToWikiPageResponse(WikiPage page)
+{
+    return new
+    {
+        page.Id,
+        page.Slug,
+        page.Title,
+        page.Category,
+        page.Summary,
+        page.Body,
+        Sources = page.Sources
+            .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+        page.SortOrder
+    };
+}
+
+static decimal? EstimateBodyFatPercent(PhysiqueEntry entry)
+{
+    if (entry.WaistCm is null || entry.NeckCm is null || entry.HeightCm <= 0)
+    {
+        return null;
+    }
+
+    var sex = entry.Sex.Trim().ToLowerInvariant();
+    if (sex.StartsWith("m", StringComparison.OrdinalIgnoreCase))
+    {
+        var waistMinusNeck = entry.WaistCm.Value - entry.NeckCm.Value;
+        if (waistMinusNeck <= 0)
+        {
+            return null;
+        }
+
+        var denominator = 1.0324
+            - 0.19077 * Math.Log10((double)waistMinusNeck)
+            + 0.15456 * Math.Log10((double)entry.HeightCm);
+        return denominator <= 0 ? null : Math.Round((decimal)(495 / denominator - 450), 1);
+    }
+
+    if (entry.HipCm is null)
+    {
+        return null;
+    }
+
+    var circumference = entry.WaistCm.Value + entry.HipCm.Value - entry.NeckCm.Value;
+    if (circumference <= 0)
+    {
+        return null;
+    }
+
+    var femaleDenominator = 1.29579
+        - 0.35004 * Math.Log10((double)circumference)
+        + 0.22100 * Math.Log10((double)entry.HeightCm);
+    return femaleDenominator <= 0 ? null : Math.Round((decimal)(495 / femaleDenominator - 450), 1);
+}
+
 static DateOnly StartOfWeek(DateOnly date)
 {
     var diff = ((int)date.DayOfWeek + 6) % 7;
@@ -1457,6 +1784,16 @@ static bool IsInRange(DateTimeOffset value, DateTimeOffset? from, DateTimeOffset
     return (from is null || value >= from.Value) && (to is null || value <= to.Value);
 }
 
+static decimal? PositiveOrNull(decimal? value)
+{
+    return value is null || value <= 0 ? null : value;
+}
+
+static decimal? ClampPercentOrNull(decimal? value)
+{
+    return value is null ? null : Math.Clamp(value.Value, 0, 100);
+}
+
 public sealed record LifeAreaRequest(string Name, string? Description, string? Color, string? Icon, int PriorityWeight, int CurrentScore, int TargetScore, bool IsActive);
 
 public sealed record GoalRequest(Guid LifeAreaId, string Title, string? Description, GoalStatus Status, GoalPriority Priority, ProgressType ProgressType, decimal CurrentValue, decimal TargetValue, string? Unit, DateOnly? TargetDate, decimal MaintenanceThreshold, int? MaintenanceTargetPerWeek, decimal DecayRatePercentPerWeek);
@@ -1476,5 +1813,9 @@ public sealed record MoveActivityRequest(DateTimeOffset PlannedStartAt, DateTime
 public sealed record MetricRequest(Guid? LifeAreaId, Guid? GoalId, string Name, string? Unit, MetricValueType ValueType, decimal? TargetValue, int SortOrder, bool IsActive);
 
 public sealed record MetricEntryRequest(decimal Value, DateTimeOffset? RecordedAt, string? Notes);
+
+public sealed record CountdownRequest(string Title, string? Description, DateTimeOffset TargetAt, string? Category, string? Color, bool IsPinned, bool IsArchived);
+
+public sealed record PhysiqueEntryRequest(DateTimeOffset? RecordedAt, int Age, string? Sex, decimal HeightCm, decimal WeightKg, decimal? WaistCm, decimal? NeckCm, decimal? HipCm, decimal? BodyFatPercentOverride, decimal? MuscleMassKg, int MoodScore, string? Status, string? Notes);
 
 public sealed record ReviewRequest(string? Summary, string? WhatWorked, string? WhatDidNotWork, string? NextFocus);

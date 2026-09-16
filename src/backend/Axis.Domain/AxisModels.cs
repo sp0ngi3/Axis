@@ -200,6 +200,69 @@ public sealed class MetricEntry : Entity
     public string Notes { get; set; } = string.Empty;
 }
 
+public sealed class Countdown : Entity
+{
+    public string Title { get; set; } = string.Empty;
+
+    public string Description { get; set; } = string.Empty;
+
+    public DateTimeOffset TargetAt { get; set; }
+
+    public string Category { get; set; } = string.Empty;
+
+    public string Color { get; set; } = "#d060e8";
+
+    public bool IsPinned { get; set; } = true;
+
+    public bool IsArchived { get; set; }
+}
+
+public sealed class PhysiqueEntry : Entity
+{
+    public DateTimeOffset RecordedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    public int Age { get; set; } = 27;
+
+    public string Sex { get; set; } = "Male";
+
+    public decimal HeightCm { get; set; } = 175;
+
+    public decimal WeightKg { get; set; } = 74;
+
+    public decimal? WaistCm { get; set; }
+
+    public decimal? NeckCm { get; set; }
+
+    public decimal? HipCm { get; set; }
+
+    public decimal? BodyFatPercentOverride { get; set; }
+
+    public decimal? MuscleMassKg { get; set; }
+
+    public int MoodScore { get; set; } = 5;
+
+    public string Status { get; set; } = string.Empty;
+
+    public string Notes { get; set; } = string.Empty;
+}
+
+public sealed class WikiPage : Entity
+{
+    public string Slug { get; set; } = string.Empty;
+
+    public string Title { get; set; } = string.Empty;
+
+    public string Category { get; set; } = string.Empty;
+
+    public string Summary { get; set; } = string.Empty;
+
+    public string Body { get; set; } = string.Empty;
+
+    public string Sources { get; set; } = string.Empty;
+
+    public int SortOrder { get; set; }
+}
+
 public sealed class Review : Entity
 {
     public ReviewType Type { get; set; } = ReviewType.Weekly;

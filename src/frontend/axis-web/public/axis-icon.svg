@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Axis icon">
+  <defs>
+    <linearGradient id="sky" x1="38" x2="218" y1="24" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff2fa6"/>
+      <stop offset="0.48" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#35bdd2"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="64" x2="192" y1="48" y2="176" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd166"/>
+      <stop offset="1" stop-color="#ff4f8b"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="44" fill="#10071f"/>
+  <path d="M24 184h208v24H24zM44 148h168v14H44zM64 118h128v10H64z" fill="#35bdd2" opacity=".34"/>
+  <circle cx="128" cy="102" r="58" fill="url(#sun)"/>
+  <path d="M73 92h110M66 112h124M76 132h104" stroke="#10071f" stroke-width="10" stroke-linecap="round" opacity=".65"/>
+  <path d="M55 211 119 40h18l64 171h-35l-12-36H101l-12 36H55Zm56-67h33l-16-52-17 52Z" fill="url(#sky)"/>
+  <path d="M74 211 128 66l54 145" fill="none" stroke="#fff7ff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity=".82"/>
+  <path d="M96 174h64" stroke="#fff7ff" stroke-width="8" stroke-linecap="round" opacity=".82"/>
+</svg>

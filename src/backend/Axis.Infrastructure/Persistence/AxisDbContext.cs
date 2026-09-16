@@ -19,6 +19,12 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
 
     public DbSet<MetricEntry> MetricEntries => Set<MetricEntry>();
 
+    public DbSet<Countdown> Countdowns => Set<Countdown>();
+
+    public DbSet<PhysiqueEntry> PhysiqueEntries => Set<PhysiqueEntry>();
+
+    public DbSet<WikiPage> WikiPages => Set<WikiPage>();
+
     public DbSet<Review> Reviews => Set<Review>();
 
     public DbSet<ReviewInsight> ReviewInsights => Set<ReviewInsight>();
@@ -39,6 +45,9 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
         ConfigureActivityTemplates(modelBuilder);
         ConfigureActivities(modelBuilder);
         ConfigureMetrics(modelBuilder);
+        ConfigureCountdowns(modelBuilder);
+        ConfigurePhysiqueEntries(modelBuilder);
+        ConfigureWikiPages(modelBuilder);
         ConfigureReviews(modelBuilder);
         ConfigureRecurrenceRules(modelBuilder);
     }
@@ -149,6 +158,45 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
         {
             entity.Property(entry => entry.Notes).HasMaxLength(1000);
             entity.HasIndex(entry => new { entry.MetricId, entry.RecordedAt });
+        });
+    }
+
+    private static void ConfigureCountdowns(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Countdown>(entity =>
+        {
+            entity.Property(countdown => countdown.Title).HasMaxLength(200).IsRequired();
+            entity.Property(countdown => countdown.Description).HasMaxLength(2000);
+            entity.Property(countdown => countdown.Category).HasMaxLength(80);
+            entity.Property(countdown => countdown.Color).HasMaxLength(24).IsRequired();
+            entity.HasIndex(countdown => countdown.TargetAt);
+            entity.HasIndex(countdown => countdown.IsArchived);
+        });
+    }
+
+    private static void ConfigurePhysiqueEntries(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<PhysiqueEntry>(entity =>
+        {
+            entity.Property(entry => entry.Sex).HasMaxLength(24).IsRequired();
+            entity.Property(entry => entry.Status).HasMaxLength(160);
+            entity.Property(entry => entry.Notes).HasMaxLength(2000);
+            entity.HasIndex(entry => entry.RecordedAt);
+        });
+    }
+
+    private static void ConfigureWikiPages(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<WikiPage>(entity =>
+        {
+            entity.Property(page => page.Slug).HasMaxLength(120).IsRequired();
+            entity.Property(page => page.Title).HasMaxLength(200).IsRequired();
+            entity.Property(page => page.Category).HasMaxLength(80);
+            entity.Property(page => page.Summary).HasMaxLength(1000);
+            entity.Property(page => page.Body).HasMaxLength(8000);
+            entity.Property(page => page.Sources).HasMaxLength(4000);
+            entity.HasIndex(page => page.Slug).IsUnique();
+            entity.HasIndex(page => page.SortOrder);
         });
     }
 

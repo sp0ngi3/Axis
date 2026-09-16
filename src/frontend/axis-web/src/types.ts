@@ -127,6 +127,54 @@ export interface MetricEntry {
   notes: string;
 }
 
+export interface Countdown {
+  id: string;
+  title: string;
+  description: string;
+  targetAt: string;
+  category: string;
+  color: string;
+  isPinned: boolean;
+  isArchived: boolean;
+  daysRemaining: number;
+  hoursRemaining: number;
+  minutesRemaining: number;
+  isPast: boolean;
+}
+
+export interface PhysiqueEntry {
+  id: string;
+  recordedAt: string;
+  age: number;
+  sex: string;
+  heightCm: number;
+  weightKg: number;
+  waistCm?: number | null;
+  neckCm?: number | null;
+  hipCm?: number | null;
+  bodyFatPercentOverride?: number | null;
+  estimatedBodyFatPercent?: number | null;
+  fatMassKg?: number | null;
+  leanMassKg?: number | null;
+  muscleMassKg?: number | null;
+  bmi?: number | null;
+  ffmi?: number | null;
+  moodScore: number;
+  status: string;
+  notes: string;
+}
+
+export interface WikiPage {
+  id: string;
+  slug: string;
+  title: string;
+  category: string;
+  summary: string;
+  body: string;
+  sources: string[];
+  sortOrder: number;
+}
+
 export interface Review {
   id: string;
   type: 'Weekly' | 'Monthly';

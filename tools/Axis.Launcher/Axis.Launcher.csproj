@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>00-AXIS</AssemblyName>
     <RootNamespace>Axis.Launcher</RootNamespace>
+    <ApplicationIcon>axis-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
 </Project>

@@ -109,14 +109,14 @@ export interface RecurrenceRule {
 
 export interface Metric {
   id: string;
-  lifeAreaId?: string;
-  goalId?: string;
+  lifeAreaId?: string | null;
+  goalId?: string | null;
   name: string;
   unit: string;
   valueType: MetricValueType;
-  targetValue?: number;
+  targetValue?: number | null;
   isActive: boolean;
-  latestEntry?: MetricEntry;
+  latestEntry?: MetricEntry | null;
 }
 
 export interface MetricEntry {

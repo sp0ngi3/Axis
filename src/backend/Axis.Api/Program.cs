@@ -9,6 +9,9 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+
 builder.Services.AddAxisInfrastructure(builder.Configuration);
 builder.Services.AddCors(options =>
 {
@@ -252,7 +255,7 @@ static void MapMilestones(WebApplication app)
 
     app.MapPost("/api/goals/{goalId:guid}/milestones", async (Guid goalId, MilestoneRequest request, AxisDbContext db, CancellationToken ct) =>
     {
-        var goal = await db.Goals.Include(item => item.Milestones).FirstOrDefaultAsync(item => item.Id == goalId, ct);
+        var goal = await db.Goals.FirstOrDefaultAsync(item => item.Id == goalId, ct);
         if (goal is null)
         {
             return Results.NotFound();
@@ -260,13 +263,10 @@ static void MapMilestones(WebApplication app)
 
         var milestone = new Milestone { GoalId = goalId };
         Apply(milestone, request);
-        goal.Milestones.Add(milestone);
-        if (ShouldPersistCalculatedProgress(goal))
-        {
-            goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(goal);
-        }
+        db.Milestones.Add(milestone);
 
         await db.SaveChangesAsync(ct);
+        await RecalculateGoalProgressAsync(goalId, db, ct);
 
         return Results.Created($"/api/milestones/{milestone.Id}", ToMilestoneResponse(milestone));
     });
@@ -334,6 +334,18 @@ static void MapMilestones(WebApplication app)
         milestone.Status = request.Status;
         milestone.DueDate = request.DueDate;
     }
+}
+
+static async Task RecalculateGoalProgressAsync(Guid goalId, AxisDbContext db, CancellationToken ct)
+{
+    var goal = await db.Goals.Include(item => item.Milestones).FirstOrDefaultAsync(item => item.Id == goalId, ct);
+    if (goal is null || !ShouldPersistCalculatedProgress(goal))
+    {
+        return;
+    }
+
+    goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(goal);
+    await db.SaveChangesAsync(ct);
 }
 
 static void MapActivityTemplates(WebApplication app)
@@ -788,21 +800,13 @@ static void MapMetrics(WebApplication app)
 
     group.MapGet("/{id:guid}/entries", async (Guid id, DateTimeOffset? from, DateTimeOffset? to, AxisDbContext db, CancellationToken ct) =>
     {
-        var query = db.MetricEntries.Where(entry => entry.MetricId == id);
-
-        if (from is not null)
-        {
-            query = query.Where(entry => entry.RecordedAt >= from);
-        }
-
-        if (to is not null)
-        {
-            query = query.Where(entry => entry.RecordedAt <= to);
-        }
-
-        var entries = await query
+        var entries = (await db.MetricEntries
+            .Where(entry => entry.MetricId == id)
+            .ToListAsync(ct))
+            .Where(entry => from is null || entry.RecordedAt >= from)
+            .Where(entry => to is null || entry.RecordedAt <= to)
             .OrderByDescending(entry => entry.RecordedAt)
-            .ToListAsync(ct);
+            .ToList();
 
         return Results.Ok(entries);
     });
@@ -843,7 +847,7 @@ static void MapReviews(WebApplication app)
             .OrderByDescending(review => review.PeriodStart)
             .ToListAsync(ct);
 
-        return Results.Ok(reviews);
+        return Results.Ok(reviews.Select(ToReviewResponse));
     });
 
     group.MapPost("/weekly/generate", async (DateOnly? weekStart, AxisDbContext db, CancellationToken ct) =>
@@ -863,7 +867,7 @@ static void MapReviews(WebApplication app)
         db.Reviews.Add(review);
         await db.SaveChangesAsync(ct);
 
-        return Results.Created($"/api/reviews/{review.Id}", review);
+        return Results.Created($"/api/reviews/{review.Id}", ToReviewResponse(review));
     });
 
     group.MapPost("/monthly/generate", async (DateOnly? monthStart, AxisDbContext db, CancellationToken ct) =>
@@ -882,20 +886,25 @@ static void MapReviews(WebApplication app)
             .Include(goal => goal.Milestones)
             .Where(goal => goal.Status == GoalStatus.Active || goal.Status == GoalStatus.Completed)
             .ToListAsync(ct);
-        var metrics = await db.Metrics
-            .Include(metric => metric.Entries.Where(entry => entry.RecordedAt >= from && entry.RecordedAt <= to))
-            .ToListAsync(ct);
+        var metrics = await db.Metrics.AsNoTracking().Include(metric => metric.Entries).ToListAsync(ct);
+        foreach (var metric in metrics)
+        {
+            metric.Entries = metric.Entries
+                .Where(entry => entry.RecordedAt >= from && entry.RecordedAt <= to)
+                .ToList();
+        }
+
         var review = ReviewGenerator.DraftMonthlyReview(start, end, activities, goals, metrics);
 
         db.Reviews.Add(review);
         await db.SaveChangesAsync(ct);
 
-        return Results.Created($"/api/reviews/{review.Id}", review);
+        return Results.Created($"/api/reviews/{review.Id}", ToReviewResponse(review));
     });
 
     group.MapPut("/{id:guid}", async (Guid id, ReviewRequest request, AxisDbContext db, CancellationToken ct) =>
     {
-        var review = await db.Reviews.FindAsync([id], ct);
+        var review = await db.Reviews.Include(item => item.Insights).FirstOrDefaultAsync(item => item.Id == id, ct);
         if (review is null)
         {
             return Results.NotFound();
@@ -906,7 +915,7 @@ static void MapReviews(WebApplication app)
         review.WhatDidNotWork = request.WhatDidNotWork?.Trim() ?? string.Empty;
         review.NextFocus = request.NextFocus?.Trim() ?? string.Empty;
         await db.SaveChangesAsync(ct);
-        return Results.Ok(review);
+        return Results.Ok(ToReviewResponse(review));
     });
 
     group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
@@ -921,6 +930,33 @@ static void MapReviews(WebApplication app)
         await db.SaveChangesAsync(ct);
         return Results.NoContent();
     });
+}
+
+static object ToReviewResponse(Review review)
+{
+    return new
+    {
+        review.Id,
+        review.Type,
+        review.PeriodStart,
+        review.PeriodEnd,
+        review.Summary,
+        review.WhatWorked,
+        review.WhatDidNotWork,
+        review.NextFocus,
+        review.CreatedAt,
+        review.UpdatedAt,
+        Insights = review.Insights.Select(insight => new
+        {
+            insight.Id,
+            insight.LifeAreaId,
+            insight.GoalId,
+            insight.Message,
+            insight.Severity,
+            insight.CreatedAt,
+            insight.UpdatedAt
+        })
+    };
 }
 
 static void MapDashboard(WebApplication app)

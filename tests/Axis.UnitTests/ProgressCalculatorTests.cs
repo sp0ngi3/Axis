@@ -30,4 +30,12 @@ public sealed class ProgressCalculatorTests
 
         Assert.InRange(progress, 69, 71);
     }
+
+    [Fact]
+    public void ApplyWeeklyDecay_DoesNotDecayWithoutMaintenanceDate()
+    {
+        var progress = ProgressCalculator.ApplyWeeklyDecay(80, 5, null, DateTimeOffset.UtcNow);
+
+        Assert.Equal(80, progress);
+    }
 }

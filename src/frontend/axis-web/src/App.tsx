@@ -32,15 +32,15 @@ type Page = 'today' | 'calendar' | 'goals' | 'areas' | 'templates' | 'metrics' |
 type Theme = 'light' | 'dark';
 type CalendarView = 'day' | 'week' | 'month';
 
-const pages: Array<{ id: Page; label: string; kicker: string }> = [
-  { id: 'today', label: 'Today', kicker: 'Operate' },
-  { id: 'calendar', label: 'Calendar', kicker: 'Plan' },
-  { id: 'goals', label: 'Goals', kicker: 'Outcomes' },
-  { id: 'areas', label: 'Life Areas', kicker: 'Balance' },
-  { id: 'templates', label: 'Templates', kicker: 'Repeat' },
-  { id: 'metrics', label: 'Metrics', kicker: 'Signals' },
-  { id: 'reviews', label: 'Reviews', kicker: 'Reflect' },
-  { id: 'backup', label: 'Backup', kicker: 'Safety' }
+const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = [
+  { id: 'today', label: 'Today', kicker: 'Operate', icon: '//' },
+  { id: 'calendar', label: 'Calendar', kicker: 'Plan', icon: '[]' },
+  { id: 'goals', label: 'Goals', kicker: 'Outcomes', icon: '<>' },
+  { id: 'areas', label: 'Life Areas', kicker: 'Balance', icon: '##' },
+  { id: 'templates', label: 'Templates', kicker: 'Repeat', icon: '~~' },
+  { id: 'metrics', label: 'Metrics', kicker: 'Signals', icon: '%%' },
+  { id: 'reviews', label: 'Reviews', kicker: 'Reflect', icon: '??' },
+  { id: 'backup', label: 'Backup', kicker: 'Safety', icon: '!!' }
 ];
 
 const loadLevels: LoadLevel[] = ['Low', 'Medium', 'High'];
@@ -53,6 +53,7 @@ const milestoneStatuses: MilestoneStatus[] = ['Active', 'Completed', 'Paused', '
 const metricTypes: MetricValueType[] = ['Number', 'Percentage', 'Duration', 'Currency', 'Rating', 'Boolean'];
 const recurrenceFrequencies: RecurrenceFrequency[] = ['Daily', 'Weekly', 'Monthly'];
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const defaultPageSize = 12;
 
 export default function App() {
   const [page, setPage] = useState<Page>('today');
@@ -69,10 +70,12 @@ export default function App() {
   const [balance, setBalance] = useState<BalanceRow[]>([]);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => localStorage.getItem('axis-theme') === 'dark' ? 'dark' : 'light');
 
   async function load() {
+    setIsLoading(true);
     try {
       setError('');
       const [lifeAreas, activeGoals, recentActivities, templateRows, recurrenceRows, metricRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
@@ -102,6 +105,8 @@ export default function App() {
       setBalance(balanceRows);
     } catch (requestError) {
       setError(readError(requestError, 'Could not load Axis data.'));
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -136,17 +141,14 @@ export default function App() {
         <div className="brand-block">
           <span className="brand-mark">AX</span>
           <div>
-            <p className="eyebrow">Local-first system</p>
+            <p className="eyebrow">Neon local-first</p>
             <h1>Axis</h1>
           </div>
         </div>
 
         <nav className="main-nav" aria-label="Axis sections">
           {pages.map((item) => (
-            <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)}>
-              <span>{item.kicker}</span>
-              <strong>{item.label}</strong>
-            </button>
+            <VaporNavButton key={item.id} item={item} isActive={page === item.id} onSelect={() => setPage(item.id)} />
           ))}
         </nav>
 
@@ -169,6 +171,7 @@ export default function App() {
         </header>
 
         {(notice || error) && <div className={error ? 'notice error' : 'notice'}>{error || notice}</div>}
+        {isLoading && <div className="loading-strip"><span /> Syncing local data</div>}
 
         {page === 'today' && (
           <TodayPage
@@ -710,6 +713,7 @@ function GoalsPage(props: {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
+  const [page, setPage] = useState(1);
   const activeGoals = props.goals.filter((goal) => goal.status === 'Active');
   const milestoneGoal = props.goals.find((goal) => goal.id === selectedMilestone?.goalId) ?? selected;
   const milestoneToDelete = selectedMilestone?.milestone ?? null;
@@ -719,6 +723,11 @@ function GoalsPage(props: {
       && (!statusFilter || goal.status === statusFilter)
       && (!priorityFilter || goal.priority === priorityFilter);
   });
+  const pagedGoals = paginate(filteredGoals, page, defaultPageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, statusFilter, priorityFilter]);
 
   return (
     <section className="workspace-grid">
@@ -744,7 +753,7 @@ function GoalsPage(props: {
         </div>
 
         <div className="entity-grid">
-          {filteredGoals.map((goal) => (
+          {pagedGoals.items.map((goal) => (
             <article className="entity-card" key={goal.id}>
               <div className="entity-card-top">
                 <span className="color-chip" style={{ background: goal.lifeAreaColor }}>{goal.lifeAreaName}</span>
@@ -791,6 +800,7 @@ function GoalsPage(props: {
             </article>
           ))}
         </div>
+        <PaginationControls page={page} totalPages={pagedGoals.totalPages} totalItems={filteredGoals.length} onPage={setPage} />
       </div>
 
       <aside className="editor-panel">
@@ -840,6 +850,19 @@ function AreasPage(props: {
   onDelete: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<LifeArea | null>(null);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const filteredAreas = props.areas.filter((area) => {
+    const text = `${area.name} ${area.description} ${area.color} ${area.icon}`.toLowerCase();
+    const statusMatches = statusFilter === '' || (statusFilter === 'active' ? area.isActive : !area.isActive);
+    return (!query || text.includes(query.toLowerCase())) && statusMatches;
+  });
+  const pagedAreas = paginate(filteredAreas, page, defaultPageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, statusFilter]);
 
   return (
     <section className="workspace-grid">
@@ -852,8 +875,17 @@ function AreasPage(props: {
           <button onClick={() => setSelected(null)}>New life area</button>
         </section>
 
+        <div className="filter-bar">
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search life areas" />
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+
         <div className="entity-grid">
-          {props.areas.map((area) => (
+          {pagedAreas.items.map((area) => (
             <article className="entity-card area-card" key={area.id}>
               <div className="area-stripe" style={{ background: area.color }} />
               <div className="entity-card-top">
@@ -872,7 +904,9 @@ function AreasPage(props: {
               </div>
             </article>
           ))}
+          {filteredAreas.length === 0 && <EmptyState text="No life areas match the current filters." />}
         </div>
+        <PaginationControls page={page} totalPages={pagedAreas.totalPages} totalItems={filteredAreas.length} onPage={setPage} />
       </div>
 
       <aside className="editor-panel">
@@ -906,11 +940,17 @@ function TemplatesPage(props: {
   const [selectedRule, setSelectedRule] = useState<RecurrenceRule | null>(null);
   const [query, setQuery] = useState('');
   const [areaFilter, setAreaFilter] = useState('');
+  const [page, setPage] = useState(1);
   const templateForRule = props.templates.find((template) => template.id === selectedRule?.templateId) ?? selected;
   const filteredTemplates = props.templates.filter((template) => {
     const text = `${template.title} ${template.description} ${template.lifeAreaName}`.toLowerCase();
     return (!query || text.includes(query.toLowerCase())) && (!areaFilter || template.lifeAreaId === areaFilter);
   });
+  const pagedTemplates = paginate(filteredTemplates, page, defaultPageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, areaFilter]);
 
   return (
     <section className="workspace-grid">
@@ -935,7 +975,7 @@ function TemplatesPage(props: {
         </div>
 
         <div className="entity-grid">
-          {filteredTemplates.map((template) => {
+          {pagedTemplates.items.map((template) => {
             const templateRules = props.rules.filter((rule) => rule.templateId === template.id);
 
             return (
@@ -982,6 +1022,7 @@ function TemplatesPage(props: {
           })}
           {filteredTemplates.length === 0 && <EmptyState text="No templates match the current filters." />}
         </div>
+        <PaginationControls page={page} totalPages={pagedTemplates.totalPages} totalItems={filteredTemplates.length} onPage={setPage} />
       </div>
 
       <aside className="editor-panel">
@@ -1036,6 +1077,7 @@ function MetricsPage(props: {
   const [query, setQuery] = useState('');
   const [areaFilter, setAreaFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [page, setPage] = useState(1);
   const [historyEntries, setHistoryEntries] = useState<MetricEntry[]>([]);
   const [historyError, setHistoryError] = useState('');
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
@@ -1105,6 +1147,11 @@ function MetricsPage(props: {
       && (!areaFilter || metric.lifeAreaId === areaFilter)
       && (!typeFilter || metric.valueType === typeFilter);
   });
+  const pagedMetrics = paginate(filteredMetrics, page, defaultPageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, areaFilter, typeFilter]);
 
   return (
     <section className="workspace-grid">
@@ -1130,7 +1177,7 @@ function MetricsPage(props: {
         </div>
 
         <div className="entity-grid">
-          {filteredMetrics.map((metric) => (
+          {pagedMetrics.items.map((metric) => (
             <article className="entity-card" key={metric.id}>
               <div className="entity-card-top">
                 <strong>{metric.name}</strong>
@@ -1155,6 +1202,7 @@ function MetricsPage(props: {
             </article>
           ))}
         </div>
+        <PaginationControls page={page} totalPages={pagedMetrics.totalPages} totalItems={filteredMetrics.length} onPage={setPage} />
       </div>
 
       <aside className="editor-panel">
@@ -1248,9 +1296,9 @@ function MetricHistoryPanel(props: {
   );
 }
 
-function MetricSparkline(props: { entries: MetricEntry[]; targetValue?: number; large?: boolean }) {
+function MetricSparkline(props: { entries: MetricEntry[]; targetValue?: number | null; large?: boolean }) {
   const path = buildSparklinePath(props.entries);
-  const targetY = props.targetValue === undefined ? null : getSparklineY(props.entries, props.targetValue);
+  const targetY = props.targetValue == null ? null : getSparklineY(props.entries, props.targetValue);
 
   return (
     <div className={props.large ? 'sparkline large' : 'sparkline'}>
@@ -1263,7 +1311,7 @@ function MetricSparkline(props: { entries: MetricEntry[]; targetValue?: number; 
 }
 
 function TargetComparison({ metric }: { metric: Metric }) {
-  if (metric.targetValue === undefined || metric.latestEntry === undefined) {
+  if (metric.targetValue == null || metric.latestEntry == null) {
     return <p className="muted-copy">No target comparison yet.</p>;
   }
 
@@ -1281,10 +1329,16 @@ function ReviewsPage(props: { reviews: Review[]; busy: boolean; onGenerate: () =
   const [selected, setSelected] = useState<Review | null>(null);
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [page, setPage] = useState(1);
   const filteredReviews = props.reviews.filter((review) => {
     const text = `${review.summary} ${review.whatWorked} ${review.whatDidNotWork} ${review.nextFocus}`.toLowerCase();
     return (!query || text.includes(query.toLowerCase())) && (!typeFilter || review.type === typeFilter);
   });
+  const pagedReviews = paginate(filteredReviews, page, defaultPageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, typeFilter]);
 
   return (
     <section className="workspace-grid">
@@ -1310,7 +1364,7 @@ function ReviewsPage(props: { reviews: Review[]; busy: boolean; onGenerate: () =
         </div>
 
         <div className="review-stack">
-          {filteredReviews.map((review) => (
+          {pagedReviews.items.map((review) => (
             <article className="surface review-card" key={review.id}>
               <SectionTitle kicker={`${review.periodStart} to ${review.periodEnd}`} title={review.type} />
               <p>{review.summary}</p>
@@ -1328,6 +1382,7 @@ function ReviewsPage(props: { reviews: Review[]; busy: boolean; onGenerate: () =
           ))}
           {filteredReviews.length === 0 && <EmptyState text="No reviews match the current filters." />}
         </div>
+        <PaginationControls page={page} totalPages={pagedReviews.totalPages} totalItems={filteredReviews.length} onPage={setPage} />
       </div>
 
       <aside className="editor-panel">
@@ -1916,12 +1971,40 @@ function SectionTitle({ kicker, title }: { kicker: string; title: string }) {
   );
 }
 
+function VaporNavButton(props: { item: { label: string; kicker: string; icon: string }; isActive: boolean; onSelect: () => void }) {
+  return (
+    <button className={props.isActive ? 'vapor-nav-button active' : 'vapor-nav-button'} onClick={props.onSelect}>
+      <i className="nav-glyph" aria-hidden="true">{props.item.icon}</i>
+      <span className="nav-copy">
+        <small>{props.item.kicker}</small>
+        <strong>{props.item.label}</strong>
+      </span>
+    </button>
+  );
+}
+
 function SummaryPill({ label, value }: { label: string; value: string | number }) {
-  return <div className="summary-pill"><span>{label}</span><strong>{value}</strong></div>;
+  return <div className="summary-pill"><span>{label}</span><strong>{value}</strong><i aria-hidden="true" /></div>;
 }
 
 function EmptyState({ text }: { text: string }) {
   return <p className="empty-state">{text}</p>;
+}
+
+function PaginationControls(props: { page: number; totalPages: number; totalItems: number; onPage: (page: number) => void }) {
+  if (props.totalPages <= 1) {
+    return null;
+  }
+
+  return (
+    <div className="pagination-bar">
+      <span>{props.totalItems} items · page {props.page} of {props.totalPages}</span>
+      <div className="button-row">
+        <button className="secondary-button" disabled={props.page <= 1} onClick={() => props.onPage(props.page - 1)}>Previous</button>
+        <button className="secondary-button" disabled={props.page >= props.totalPages} onClick={() => props.onPage(props.page + 1)}>Next</button>
+      </div>
+    </div>
+  );
 }
 
 function ValidationBox(props: { validation: BackupValidation; title?: string; detail?: string }) {
@@ -2076,6 +2159,17 @@ function getSparklineY(entries: MetricEntry[], value: number) {
 
 function roundNumber(value: number) {
   return Math.round(value * 10) / 10;
+}
+
+function paginate<T>(items: T[], page: number, pageSize: number) {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const start = (safePage - 1) * pageSize;
+
+  return {
+    items: items.slice(start, start + pageSize),
+    totalPages
+  };
 }
 
 function minutesToHours(minutes: number) {

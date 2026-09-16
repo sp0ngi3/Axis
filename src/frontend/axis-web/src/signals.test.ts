@@ -50,10 +50,20 @@ describe('Signals dashboard aggregation', () => {
     const [track] = buildDashboardTracks(days, [completedActivity()], [template]);
 
     expect(track.days.map((day) => day.key)).toEqual(['2026-8-15', '2026-8-16']);
-    expect(track.days.map((day) => day.status)).toEqual(['missed', 'done']);
+    expect(track.days.map((day) => day.status)).toEqual(['empty', 'done']);
     expect(track.completedCount).toBe(1);
-    expect(track.missedCount).toBe(1);
+    expect(track.missedCount).toBe(0);
     expect(track.minutes).toBe(5);
+    vi.useRealTimers();
+  });
+
+  it('only marks missed days after tracking was activated', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-16T12:00:00+02:00'));
+    const days = [new Date('2026-09-13T12:00:00+02:00'), new Date('2026-09-15T12:00:00+02:00')];
+    const rules = [{ id: 'rule', templateId: template.id, templateTitle: template.title, lifeAreaName: 'Health', lifeAreaColor: '#fff', frequency: 'Daily' as const, interval: 1, daysOfWeek: '', startDate: '2026-09-14' }];
+    const [track] = buildDashboardTracks(days, [], [template], rules);
+    expect(track.days.map((day) => day.status)).toEqual(['empty', 'missed']);
     vi.useRealTimers();
   });
 

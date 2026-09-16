@@ -40,6 +40,23 @@ export interface Goal {
   milestones: Milestone[];
 }
 
+export interface GoalProgress {
+  goal: Goal;
+  baseProgress: number;
+  decayedProgress: number;
+  lastMaintainedAt?: string | null;
+  firstTrackedAt?: string | null;
+  maintenanceThreshold: number;
+  maintenanceTargetPerWeek?: number | null;
+  completedThisWeek: number;
+  completedDays: number;
+  trackingTargetDays?: number | null;
+  journeyProgress?: number | null;
+  currentStreakDays: number;
+  longestStreakDays: number;
+  maintenanceSatisfied: boolean;
+}
+
 export interface Milestone {
   id: string;
   goalId: string;
@@ -162,6 +179,19 @@ export interface PhysiqueEntry {
   moodScore: number;
   status: string;
   notes: string;
+}
+
+export interface MoodEntry {
+  id: string; recordedAt: string; score: number; energy: number; stress: number; context: string; notes: string;
+}
+
+export interface DiaryEntry {
+  id: string; occurredAt: string; title: string; body: string; tags: string;
+}
+
+export interface HistoryDay {
+  date: string;
+  timeline: Array<{ at: string; kind: string; title: string; detail: string }>;
 }
 
 export interface WikiPage {

@@ -17,6 +17,7 @@ public static class DatabaseStartupExtensions
         await SeedStarterPackAsync(dbContext, cancellationToken);
         await RemoveFlexibleStudyRecurrencesAsync(dbContext, cancellationToken);
         await GenerateRollingRecurringActivitiesAsync(dbContext, 56, cancellationToken);
+        await LinkStarterActivitiesToGoalsAsync(dbContext, cancellationToken);
     }
 
     private static async Task EnsureAxisSchemaAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
@@ -64,6 +65,25 @@ public static class DatabaseStartupExtensions
 
         await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE INDEX IF NOT EXISTS "IX_PhysiqueEntries_RecordedAt" ON "PhysiqueEntries" ("RecordedAt");
+            """, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "MoodEntries" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_MoodEntries" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL, "RecordedAt" TEXT NOT NULL,
+                "Score" INTEGER NOT NULL, "Energy" INTEGER NOT NULL, "Stress" INTEGER NOT NULL,
+                "Context" TEXT NOT NULL, "Notes" TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_MoodEntries_RecordedAt" ON "MoodEntries" ("RecordedAt");
+            """, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "DiaryEntries" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_DiaryEntries" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL, "OccurredAt" TEXT NOT NULL,
+                "Title" TEXT NOT NULL, "Body" TEXT NOT NULL, "Tags" TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_DiaryEntries_OccurredAt" ON "DiaryEntries" ("OccurredAt");
             """, cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""
@@ -227,18 +247,24 @@ public static class DatabaseStartupExtensions
             DecayRatePercentPerWeek = 18
         }, cancellationToken);
 
-        await EnsureGoalAsync(dbContext, fitness, new Goal
+        var dietGoal = await EnsureGoalAsync(dbContext, fitness, new Goal
         {
             Title = "Diet adherence for leanness",
             Description = "Daily check-in for protein, calories, vegetables, and alcohol-free choices. Keep it boring enough to repeat.",
             Priority = GoalPriority.Maintenance,
             ProgressType = ProgressType.Maintenance,
-            TargetValue = 100,
-            Unit = "%",
+            TargetValue = 180,
+            Unit = "days",
             MaintenanceThreshold = 80,
             MaintenanceTargetPerWeek = 5,
             DecayRatePercentPerWeek = 10
         }, cancellationToken);
+
+        if (dietGoal.TargetValue == 100 && dietGoal.Unit == "%")
+        {
+            dietGoal.TargetValue = 180;
+            dietGoal.Unit = "days";
+        }
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -529,6 +555,28 @@ public static class DatabaseStartupExtensions
             }
         }
 
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static async Task LinkStarterActivitiesToGoalsAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var titleMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Creatine dose"] = "Creatine saturation and maintenance",
+            ["Desk mobility reset"] = "Desk mobility and pain-control streak",
+            ["Hypertrophy workout"] = "Lean muscle recomposition",
+            ["No alcohol check-in"] = "Alcohol-free baseline",
+            ["No vape check-in"] = "Vape-free baseline",
+            ["Diet check-in"] = "Diet adherence for leanness",
+            ["DSA problem rep"] = "DSA 250 list x6 repetitions",
+            ["System design case study"] = "System design interview track"
+        };
+        var goals = await dbContext.Goals.Where(goal => titleMap.Values.Contains(goal.Title)).ToDictionaryAsync(goal => goal.Title, cancellationToken);
+        var activities = await dbContext.Activities.Where(activity => activity.GoalId == null && titleMap.Keys.Contains(activity.Title)).ToListAsync(cancellationToken);
+        foreach (var activity in activities)
+        {
+            if (titleMap.TryGetValue(activity.Title, out var goalTitle) && goals.TryGetValue(goalTitle, out var goal)) activity.GoalId = goal.Id;
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 

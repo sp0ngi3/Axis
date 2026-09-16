@@ -56,6 +56,14 @@ async function downloadBackup() {
   };
 }
 
+async function download(path: string, fallbackName: string) {
+  const response = await fetch(`${API_BASE_URL}${path}`);
+  if (!response.ok) throw new Error(await response.text() || `Request failed: ${response.status}`);
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const match = /filename\*?=(?:UTF-8''|\")?([^\";]+)/i.exec(disposition);
+  return { fileName: decodeURIComponent(match?.[1] ?? fallbackName), blob: await response.blob() };
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
@@ -63,6 +71,7 @@ export const api = {
   put: <T>(path: string, body: unknown) => request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   delete: (path: string) => request<void>(path, { method: 'DELETE' }),
   exportBackup: downloadBackup,
+  download,
   validateBackup: <T>(file: File) => upload<T>('/api/backup/validate', file),
   importBackup: <T>(file: File) => upload<T>('/api/backup/import', file)
 };

@@ -12,6 +12,7 @@ import type {
   BalanceRow,
   Countdown,
   Goal,
+  GoalProgress,
   GoalPriority,
   GoalStatus,
   LifeArea,
@@ -30,10 +31,13 @@ import type {
   Suggestion,
   TodayDashboard,
   PhysiqueEntry,
+  MoodEntry,
+  DiaryEntry,
+  HistoryDay,
   WikiPage
 } from './types';
 
-type Page = 'today' | 'log' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
+type Page = 'today' | 'log' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'mood' | 'diary' | 'history' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
 type Theme = 'light' | 'dark';
 type CalendarView = 'day' | 'week' | 'month';
 
@@ -44,6 +48,9 @@ const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = 
   { id: 'calendar', label: 'Calendar', kicker: 'Plan', icon: '[]' },
   { id: 'countdowns', label: 'Countdowns', kicker: 'Anticipate', icon: '>>' },
   { id: 'physique', label: 'Physique', kicker: 'Body lab', icon: '^^' },
+  { id: 'mood', label: 'Mood', kicker: 'Mind', icon: ':)' },
+  { id: 'diary', label: 'Diary', kicker: 'Journal', icon: '|>' },
+  { id: 'history', label: 'History', kicker: 'Recall', icon: '<<' },
   { id: 'goals', label: 'Goals', kicker: 'Outcomes', icon: '<>' },
   { id: 'areas', label: 'Life Areas', kicker: 'Balance', icon: '##' },
   { id: 'templates', label: 'Templates', kicker: 'Repeat', icon: '~~' },
@@ -76,12 +83,15 @@ export default function App() {
   const [page, setPage] = useState<Page>('today');
   const [areas, setAreas] = useState<LifeArea[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalProgress, setGoalProgress] = useState<GoalProgress[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [templates, setTemplates] = useState<ActivityTemplate[]>([]);
   const [recurrenceRules, setRecurrenceRules] = useState<RecurrenceRule[]>([]);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [countdowns, setCountdowns] = useState<Countdown[]>([]);
   const [physiqueEntries, setPhysiqueEntries] = useState<PhysiqueEntry[]>([]);
+  const [moodEntries, setMoodEntries] = useState<MoodEntry[]>([]);
+  const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [today, setToday] = useState<TodayDashboard | null>(null);
@@ -98,15 +108,18 @@ export default function App() {
     setIsLoading(true);
     try {
       setError('');
-      const [lifeAreas, activeGoals, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
+      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
         api.get<LifeArea[]>('/api/life-areas'),
         api.get<Goal[]>('/api/goals'),
+        api.get<GoalProgress[]>('/api/dashboard/progress'),
         api.get<Activity[]>('/api/activities'),
         api.get<ActivityTemplate[]>('/api/activity-templates'),
         api.get<RecurrenceRule[]>('/api/recurrence-rules'),
         api.get<Metric[]>('/api/metrics'),
         api.get<Countdown[]>('/api/countdowns'),
         api.get<PhysiqueEntry[]>('/api/physique'),
+        api.get<MoodEntry[]>('/api/mood'),
+        api.get<DiaryEntry[]>('/api/diary'),
         api.get<WikiPage[]>('/api/wiki-pages'),
         api.get<Review[]>('/api/reviews'),
         api.get<TodayDashboard>('/api/dashboard/today'),
@@ -117,12 +130,15 @@ export default function App() {
 
       setAreas(lifeAreas);
       setGoals(activeGoals);
+      setGoalProgress(progressRows);
       setActivities(recentActivities);
       setTemplates(templateRows);
       setRecurrenceRules(recurrenceRows);
       setMetrics(metricRows);
       setCountdowns(countdownRows);
       setPhysiqueEntries(physiqueRows);
+      setMoodEntries(moodRows);
+      setDiaryEntries(diaryRows);
       setWikiPages(wikiRows);
       setReviews(reviewRows);
       setToday(todayData);
@@ -296,6 +312,7 @@ export default function App() {
           <DashboardPage
             activities={activities}
             templates={templates}
+            rules={recurrenceRules}
             goals={goals}
             metrics={metrics}
             busy={isBusy}
@@ -357,10 +374,14 @@ export default function App() {
             onDelete={(id) => runAction(() => api.delete(`/api/physique/${id}`), 'Physique entry deleted.')}
           />
         )}
+        {page === 'mood' && <MoodPage entries={moodEntries} busy={isBusy} onSave={(body, id) => runAction(() => id ? api.put(`/api/mood/${id}`, body) : api.post('/api/mood', body), id ? 'Mood updated.' : 'Mood logged.')} onDelete={(id) => runAction(() => api.delete(`/api/mood/${id}`), 'Mood entry deleted.')} />}
+        {page === 'diary' && <DiaryPage entries={diaryEntries} busy={isBusy} onSave={(body, id) => runAction(() => id ? api.put(`/api/diary/${id}`, body) : api.post('/api/diary', body), id ? 'Diary entry updated.' : 'Diary entry added.')} onDelete={(id) => runAction(() => api.delete(`/api/diary/${id}`), 'Diary entry deleted.')} />}
+        {page === 'history' && <HistoryPage />}
         {page === 'goals' && (
           <GoalsPage
             areas={areas}
             goals={goals}
+            progress={goalProgress}
             activities={activities}
             metrics={metrics}
             busy={isBusy}
@@ -436,6 +457,48 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+function MoodPage(props: { entries: MoodEntry[]; busy: boolean; onSave: (body: unknown, id?: string) => void; onDelete: (id: string) => void }) {
+  const [editing, setEditing] = useState<MoodEntry | null>(null);
+  const [draft, setDraft] = useState({ score: 5, energy: 5, stress: 5, context: '', notes: '' });
+  const edit = (entry: MoodEntry) => { setEditing(entry); setDraft({ score: entry.score, energy: entry.energy, stress: entry.stress, context: entry.context, notes: entry.notes }); };
+  const reset = () => { setEditing(null); setDraft({ score: 5, energy: 5, stress: 5, context: '', notes: '' }); };
+  return <section className="workspace-grid">
+    <div className="page-grid"><section className="surface"><SectionTitle kicker="Mood timeline" title="How you felt and what surrounded it" />
+      <div className="signal-summary-grid"><SummaryPill label="Latest" value={`${props.entries[0]?.score ?? '-'} / 10`} /><SummaryPill label="Energy" value={`${props.entries[0]?.energy ?? '-'} / 10`} /><SummaryPill label="Stress" value={`${props.entries[0]?.stress ?? '-'} / 10`} /></div>
+      <div className="history-timeline">{props.entries.map((entry) => <article className="timeline-entry" key={entry.id}><time>{formatDateTime(entry.recordedAt)}</time><div><h4>Mood {entry.score}/10</h4><p>Energy {entry.energy}/10 · Stress {entry.stress}/10 · {entry.context || 'No context'}</p>{entry.notes && <p>{entry.notes}</p>}</div><div className="row-actions"><button className="secondary-button" onClick={() => edit(entry)}>Edit</button><button className="danger-button" onClick={() => props.onDelete(entry.id)}>Delete</button></div></article>)}</div>
+      {props.entries.length === 0 && <EmptyState text="No mood check-ins yet." />}
+    </section></div>
+    <aside className="editor-panel"><EditorShell title={editing ? 'Edit mood context' : 'Check in now'} onCancel={reset}><form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft, editing?.id); reset(); }}>
+      {(['score', 'energy', 'stress'] as const).map((field) => <label className="field" key={field}><span>{field[0].toUpperCase() + field.slice(1)}: {draft[field]}/10</span><input type="range" min="1" max="10" value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: Number(event.target.value) })} /></label>)}
+      <TextField label="What is happening?" value={draft.context} onChange={(context) => setDraft({ ...draft, context })} /><TextArea label="Notes" value={draft.notes} onChange={(notes) => setDraft({ ...draft, notes })} /><small className="helper-copy">New check-ins use the current date and time automatically.</small><button disabled={props.busy}>Save mood</button>
+    </form></EditorShell></aside>
+  </section>;
+}
+
+function DiaryPage(props: { entries: DiaryEntry[]; busy: boolean; onSave: (body: unknown, id?: string) => void; onDelete: (id: string) => void }) {
+  const today = localDateKey(new Date().toISOString());
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+  const [editing, setEditing] = useState<DiaryEntry | null>(null);
+  const [draft, setDraft] = useState({ title: '', body: '', tags: '' });
+  const visible = props.entries.filter((entry) => localDateKey(entry.occurredAt) === selectedDate);
+  const reset = () => { setEditing(null); setDraft({ title: '', body: '', tags: '' }); };
+  const exportDiary = async (mode: 'day' | 'range' | 'all') => { const query = mode === 'day' ? `?from=${selectedDate}&to=${selectedDate}` : mode === 'range' ? `?from=${from}&to=${to}` : ''; const file = await api.download(`/api/diary/export${query}`, 'axis-diary.zip'); const link = document.createElement('a'); link.href = URL.createObjectURL(file.blob); link.download = file.fileName; link.click(); URL.revokeObjectURL(link.href); };
+  return <section className="workspace-grid"><div className="page-grid"><section className="surface"><div className="collection-header"><SectionTitle kicker="Daily record" title="Diary timeline" /><label className="field compact-field"><span>Read day</span><input type="date" max={today} value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} /></label></div>
+    <div className="history-timeline">{visible.map((entry) => <article className="timeline-entry" key={entry.id}><time>{new Date(entry.occurredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><div><h4>{entry.title}</h4><p>{entry.body}</p>{entry.tags && <small>{entry.tags}</small>}</div><div className="row-actions"><button className="secondary-button" onClick={() => { setEditing(entry); setDraft({ title: entry.title, body: entry.body, tags: entry.tags }); }}>Edit</button><button className="danger-button" onClick={() => props.onDelete(entry.id)}>Delete</button></div></article>)}</div>{visible.length === 0 && <EmptyState text="Nothing was written on this day." />}
+    <div className="export-strip"><button className="secondary-button" onClick={() => void exportDiary('day')}>Export this day</button><label className="field compact-field"><span>From</span><input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} /></label><label className="field compact-field"><span>To</span><input type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} /></label><button className="secondary-button" onClick={() => void exportDiary('range')}>Export range</button><button className="ghost-button" onClick={() => void exportDiary('all')}>Export all</button></div>
+  </section></div><aside className="editor-panel"><EditorShell title={editing ? 'Edit diary entry' : 'Write what is happening now'} onCancel={reset}><form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft, editing?.id); reset(); }}><TextField label="Title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} required /><TextArea label="Entry" value={draft.body} onChange={(body) => setDraft({ ...draft, body })} /><TextField label="Tags" value={draft.tags} onChange={(tags) => setDraft({ ...draft, tags })} /><small className="helper-copy">Axis stamps new entries with the current day and time. Backdating is disabled.</small><button disabled={props.busy}>Save entry now</button></form></EditorShell></aside></section>;
+}
+
+function HistoryPage() {
+  const today = localDateKey(new Date().toISOString());
+  const [date, setDate] = useState(today);
+  const [day, setDay] = useState<HistoryDay | null>(null);
+  useEffect(() => { void api.get<HistoryDay>(`/api/history?date=${date}`).then(setDay); }, [date]);
+  return <section className="page-grid"><section className="surface"><div className="collection-header"><SectionTitle kicker="Life history" title="Reconstruct a day" /><label className="field compact-field"><span>Day</span><input type="date" max={today} value={date} onChange={(event) => setDate(event.target.value)} /></label></div><p className="helper-copy">Activities, measurements, mood and journal notes share one chronological view.</p><div className="history-timeline">{day?.timeline.map((item, index) => <article className={`timeline-entry kind-${item.kind.toLowerCase()}`} key={`${item.at}-${index}`}><time>{new Date(item.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><div><small>{item.kind}</small><h4>{item.title}</h4><p>{item.detail}</p></div></article>)}</div>{day && day.timeline.length === 0 && <EmptyState text="No recorded signals for this day." />}</section></section>;
 }
 
 function TodayPage(props: {
@@ -600,6 +663,7 @@ function LogPage(props: { templates: ActivityTemplate[]; activities: Activity[];
 function DashboardPage(props: {
   activities: Activity[];
   templates: ActivityTemplate[];
+  rules: RecurrenceRule[];
   goals: Goal[];
   metrics: Metric[];
   busy: boolean;
@@ -631,7 +695,7 @@ function DashboardPage(props: {
     return date && new Date(date) >= rangeStart && new Date(date) <= endOfDay(now);
   });
   const todayActivities = props.activities.filter((activity) => sameDay(getActivityDate(activity), now)).sort(compareActivities);
-  const tracks = buildDashboardTracks(days, rangeActivities, quickTemplates);
+  const tracks = buildDashboardTracks(days, rangeActivities, quickTemplates, props.rules);
   const completed = rangeActivities.filter((activity) => activity.status === 'Completed').length;
   const missed = tracks.reduce((sum, track) => sum + track.missedCount, 0);
   const studyMinutes = rangeActivities
@@ -1587,6 +1651,7 @@ function WikiPageView({ pages }: { pages: WikiPage[] }) {
 function GoalsPage(props: {
   areas: LifeArea[];
   goals: Goal[];
+  progress: GoalProgress[];
   activities: Activity[];
   metrics: Metric[];
   busy: boolean;
@@ -1645,7 +1710,9 @@ function GoalsPage(props: {
         </div>
 
         <div className="entity-grid">
-          {pagedGoals.items.map((goal) => (
+          {pagedGoals.items.map((goal) => {
+            const progress = props.progress.find((item) => item.goal.id === goal.id);
+            return (
             <article
               className="entity-card goal-card"
               key={goal.id}
@@ -1671,7 +1738,13 @@ function GoalsPage(props: {
               </div>
               <h3>{goal.title}</h3>
               <p>{goal.description || 'No description yet.'}</p>
-              <div className="meter"><i style={{ width: `${goal.currentValue}%`, background: goal.lifeAreaColor }} /></div>
+              <div className="goal-card-progress">
+                <GoalProgressRing value={progress?.decayedProgress ?? goal.currentValue} color={goal.lifeAreaColor} size="small" label="score" />
+                <div>
+                  <strong>{progress?.completedDays ?? 0}{progress?.trackingTargetDays ? ` / ${progress.trackingTargetDays} days` : ' tracked days'}</strong>
+                  <span>{progress?.completedThisWeek ?? 0}/{goal.maintenanceTargetPerWeek ?? 'flex'} this week</span>
+                </div>
+              </div>
               <div className="goal-health-row">
                 <span className={`status-badge ${getGoalHealth(goal).toLowerCase()}`}>{getGoalHealth(goal)}</span>
                 <small>{goal.progressType} · decay {goal.decayRatePercentPerWeek}%/week</small>
@@ -1719,7 +1792,8 @@ function GoalsPage(props: {
                 }}>Delete</button>
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
         <PaginationControls page={page} totalPages={pagedGoals.totalPages} totalItems={filteredGoals.length} onPage={setPage} />
       </div>
@@ -1730,6 +1804,7 @@ function GoalsPage(props: {
             goal={inspectedGoal}
             activities={props.activities}
             metrics={props.metrics}
+            progress={props.progress.find((item) => item.goal.id === inspectedGoal.id)}
             onClose={() => setInspectedGoal(null)}
           />
         )}
@@ -1773,7 +1848,7 @@ function GoalsPage(props: {
   );
 }
 
-function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: Metric[]; onClose: () => void }) {
+function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: Metric[]; progress?: GoalProgress; onClose: () => void }) {
   const goalActivities = props.activities.filter((activity) => activity.goalId === props.goal.id);
   const completed = goalActivities.filter((activity) => activity.status === 'Completed');
   const skipped = goalActivities.filter((activity) => activity.status === 'Skipped' || activity.status === 'Cancelled');
@@ -1786,6 +1861,13 @@ function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: 
   const recentDays = Array.from({ length: 30 }, (_, index) => addDays(new Date(), index - 29));
   const goalMetrics = props.metrics.filter((metric) => metric.goalId === props.goal.id);
   const isFlexibleStudyGoal = /dsa|system design/i.test(props.goal.title);
+  const weeklyTarget = props.goal.maintenanceTargetPerWeek ?? 0;
+  const weekBars = Array.from({ length: 26 }, (_, index) => {
+    const end = endOfDay(addDays(new Date(), -(25 - index) * 7));
+    const start = startOfDay(addDays(end, -6));
+    const count = new Set(completed.filter((activity) => { const value = getActivityDate(activity); return value && new Date(value) >= start && new Date(value) <= end; }).map((activity) => localDateKey(getActivityDate(activity)!))).size;
+    return { start, count, percent: Math.min(100, count / Math.max(1, weeklyTarget || count || 1) * 100) };
+  });
 
   return (
     <section className="goal-detail-panel">
@@ -1793,15 +1875,32 @@ function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: 
         <SectionTitle kicker={props.goal.lifeAreaName} title={props.goal.title} />
         <button className="secondary-button icon-button" onClick={props.onClose} aria-label="Close goal details">x</button>
       </div>
-      <div className="meter"><i style={{ width: `${props.goal.currentValue}%`, background: props.goal.lifeAreaColor }} /></div>
+      <div className="goal-orbit-grid">
+        <GoalProgressRing value={props.progress?.decayedProgress ?? props.goal.currentValue} color={props.goal.lifeAreaColor} label="maintenance" />
+        {props.progress?.journeyProgress != null && <GoalProgressRing value={props.progress.journeyProgress} color="#ff4fb3" label="journey" />}
+        <div className="goal-progress-copy">
+          <span className={props.progress?.maintenanceSatisfied ? 'status-badge strong' : 'status-badge attention'}>{props.progress?.maintenanceSatisfied ? 'Maintenance reached' : 'Building baseline'}</span>
+          <h4>{props.progress?.completedDays ?? completed.length}{props.progress?.trackingTargetDays ? ` of ${props.progress.trackingTargetDays} days` : ' completed days'}</h4>
+          <p>{props.progress?.completedThisWeek ?? 0} of {props.goal.maintenanceTargetPerWeek ?? 'flexible'} expected this week. Decay is {props.goal.decayRatePercentPerWeek}% per inactive week.</p>
+        </div>
+      </div>
       <dl className="compact-dl">
-        <div><dt>Progress</dt><dd>{props.goal.currentValue}%</dd></div>
+        <div><dt>Maintenance score</dt><dd>{props.progress?.decayedProgress ?? props.goal.currentValue}%</dd></div>
+        <div><dt>Before decay</dt><dd>{props.progress?.baseProgress ?? props.goal.currentValue}%</dd></div>
         <div><dt>Done</dt><dd>{completed.length}</dd></div>
         <div><dt>Skipped</dt><dd>{skipped.length}</dd></div>
         <div><dt>Minutes</dt><dd>{minutes}</dd></div>
         <div><dt>Last done</dt><dd>{lastDone ? formatShortDate(lastDone) : 'No log'}</dd></div>
         <div><dt>Weekly target</dt><dd>{props.goal.maintenanceTargetPerWeek ?? 'Flexible'}</dd></div>
+        <div><dt>Current streak</dt><dd>{props.progress?.currentStreakDays ?? 0} days</dd></div>
+        <div><dt>Best streak</dt><dd>{props.progress?.longestStreakDays ?? 0} days</dd></div>
+        <div><dt>Started</dt><dd>{props.progress?.firstTrackedAt ? formatShortDate(props.progress.firstTrackedAt) : 'Not yet'}</dd></div>
       </dl>
+      <section className="goal-weekly-chart" aria-label="26 week execution history">
+        <div className="goal-chart-heading"><div><strong>26-week execution</strong><small>Completed days versus weekly target</small></div><span>Target {weeklyTarget || 'flex'} / week</span></div>
+        <div className="goal-week-bars">{weekBars.map((week) => <span key={dateKey(week.start)} title={`${week.start.toLocaleDateString()}: ${week.count} completed days`}><i style={{ height: `${Math.max(4, week.percent)}%`, background: week.count >= weeklyTarget && weeklyTarget > 0 ? 'var(--success)' : props.goal.lifeAreaColor }} /></span>)}</div>
+        <div className="goal-chart-axis"><span>26 weeks ago</span><span>Now</span></div>
+      </section>
       <div className="track-heatmap goal-history">
         {recentDays.map((day) => {
           const dayActivities = goalActivities.filter((activity) => sameDay(getActivityDate(activity), day));
@@ -2977,6 +3076,13 @@ function VaporNavButton(props: { item: { label: string; kicker: string; icon: st
   );
 }
 
+function GoalProgressRing(props: { value: number; color: string; label: string; size?: 'small' | 'large' }) {
+  const value = Math.max(0, Math.min(100, Number(props.value) || 0));
+  return <div className={`goal-progress-ring ${props.size ?? 'large'}`} style={{ '--ring-value': `${value * 3.6}deg`, '--ring-color': props.color } as React.CSSProperties} aria-label={`${props.label}: ${value}%`}>
+    <div><strong>{Math.round(value)}%</strong><span>{props.label}</span></div>
+  </div>;
+}
+
 function SummaryPill({ label, value }: { label: string; value: string | number }) {
   return <div className="summary-pill"><span>{label}</span><strong>{value}</strong><i aria-hidden="true" /></div>;
 }
@@ -3280,11 +3386,11 @@ function getActivityDate(activity: Activity) {
 function findGoalIdForTemplate(templateTitle: string, goals: Goal[]) {
   const exactMap: Record<string, string> = {
     'Creatine dose': 'Creatine saturation and maintenance',
-    'Desk mobility reset': 'Desk mobility and flexibility',
+    'Desk mobility reset': 'Desk mobility and pain-control streak',
     'Hypertrophy workout': 'Lean muscle recomposition',
     'No alcohol check-in': 'Alcohol-free baseline',
     'No vape check-in': 'Vape-free baseline',
-    'Diet check-in': 'Diet adherence and lean body composition',
+    'Diet check-in': 'Diet adherence for leanness',
     'DSA problem rep': 'DSA 250 list x6 repetitions',
     'System design case study': 'System design interview track'
   };
@@ -3379,6 +3485,13 @@ function formatShortDate(value: string | undefined) {
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+}
+
+function localDateKey(value: string) {
+  const date = new Date(value);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 function toLocalInput(date: Date) {

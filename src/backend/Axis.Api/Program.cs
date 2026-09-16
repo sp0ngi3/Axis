@@ -1,3 +1,6 @@
+using System.IO.Compression;
+using System.Security;
+using System.Text;
 using System.Text.Json.Serialization;
 using Axis.Application.Backup;
 using Axis.Application.Progress;
@@ -51,6 +54,9 @@ MapActivities(app);
 MapMetrics(app);
 MapCountdowns(app);
 MapPhysique(app);
+MapMood(app);
+MapDiary(app);
+MapHistory(app);
 MapWiki(app);
 MapReviews(app);
 MapDashboard(app);
@@ -1389,6 +1395,157 @@ static void MapDashboard(WebApplication app)
     });
 }
 
+static void MapMood(WebApplication app)
+{
+    var group = app.MapGroup("/api/mood");
+    group.MapGet("/", async (DateTimeOffset? from, DateTimeOffset? to, AxisDbContext db, CancellationToken ct) =>
+        Results.Ok((await db.MoodEntries.AsNoTracking().ToListAsync(ct))
+            .Where(entry => IsInRange(entry.RecordedAt, from, to)).OrderByDescending(entry => entry.RecordedAt)));
+    group.MapPost("/", async (MoodEntryRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var entry = new MoodEntry { RecordedAt = DateTimeOffset.Now };
+        ApplyMood(entry, request);
+        db.MoodEntries.Add(entry);
+        await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/mood/{entry.Id}", entry);
+    });
+    group.MapPut("/{id:guid}", async (Guid id, MoodEntryRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var entry = await db.MoodEntries.FindAsync([id], ct);
+        if (entry is null) return Results.NotFound();
+        ApplyMood(entry, request);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(entry);
+    });
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var entry = await db.MoodEntries.FindAsync([id], ct);
+        if (entry is null) return Results.NotFound();
+        db.MoodEntries.Remove(entry);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+}
+
+static void ApplyMood(MoodEntry entry, MoodEntryRequest request)
+{
+    entry.Score = Math.Clamp(request.Score, 1, 10);
+    entry.Energy = Math.Clamp(request.Energy, 1, 10);
+    entry.Stress = Math.Clamp(request.Stress, 1, 10);
+    entry.Context = request.Context?.Trim() ?? string.Empty;
+    entry.Notes = request.Notes?.Trim() ?? string.Empty;
+}
+
+static void MapDiary(WebApplication app)
+{
+    var group = app.MapGroup("/api/diary");
+    group.MapGet("/", async (DateTimeOffset? from, DateTimeOffset? to, AxisDbContext db, CancellationToken ct) =>
+        Results.Ok((await db.DiaryEntries.AsNoTracking().ToListAsync(ct))
+            .Where(entry => IsInRange(entry.OccurredAt, from, to)).OrderByDescending(entry => entry.OccurredAt)));
+    group.MapPost("/", async (DiaryEntryRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Title)) return Results.BadRequest("Diary title is required.");
+        var entry = new DiaryEntry { OccurredAt = DateTimeOffset.Now };
+        ApplyDiary(entry, request);
+        db.DiaryEntries.Add(entry);
+        await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/diary/{entry.Id}", entry);
+    });
+    group.MapPut("/{id:guid}", async (Guid id, DiaryEntryRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var entry = await db.DiaryEntries.FindAsync([id], ct);
+        if (entry is null) return Results.NotFound();
+        ApplyDiary(entry, request);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(entry);
+    });
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var entry = await db.DiaryEntries.FindAsync([id], ct);
+        if (entry is null) return Results.NotFound();
+        db.DiaryEntries.Remove(entry);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+    group.MapGet("/export", async (DateOnly? from, DateOnly? to, AxisDbContext db, CancellationToken ct) =>
+    {
+        var start = from?.ToDateTime(TimeOnly.MinValue) ?? DateTime.MinValue;
+        var end = (to ?? from)?.ToDateTime(TimeOnly.MaxValue) ?? DateTime.MaxValue;
+        if (end < start) return Results.BadRequest("End date must not be before start date.");
+        var entries = (await db.DiaryEntries.AsNoTracking().ToListAsync(ct))
+            .Where(entry => entry.OccurredAt.LocalDateTime >= start && entry.OccurredAt.LocalDateTime <= end)
+            .OrderBy(entry => entry.OccurredAt).ToList();
+        if (entries.Count == 0) return Results.NotFound("No diary entries in this range.");
+        var days = entries.GroupBy(entry => DateOnly.FromDateTime(entry.OccurredAt.LocalDateTime)).ToList();
+        if (days.Count == 1)
+        {
+            var day = days[0];
+            return Results.File(CreateDiaryDocx(day.Key, day), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", $"axis-diary-{day.Key:yyyy-MM-dd}.docx");
+        }
+        using var output = new MemoryStream();
+        using (var zip = new ZipArchive(output, ZipArchiveMode.Create, true))
+        {
+            foreach (var day in days)
+            {
+                var file = zip.CreateEntry($"{day.Key:yyyy}/{day.Key:MM}/{day.Key:yyyy-MM-dd}-axis-diary.docx", CompressionLevel.Optimal);
+                await using var stream = file.Open();
+                await stream.WriteAsync(CreateDiaryDocx(day.Key, day), ct);
+            }
+        }
+        return Results.File(output.ToArray(), "application/zip", $"axis-diary-{days.First().Key:yyyy-MM-dd}-to-{days.Last().Key:yyyy-MM-dd}.zip");
+    });
+}
+
+static void ApplyDiary(DiaryEntry entry, DiaryEntryRequest request)
+{
+    entry.Title = request.Title.Trim();
+    entry.Body = request.Body?.Trim() ?? string.Empty;
+    entry.Tags = request.Tags?.Trim() ?? string.Empty;
+}
+
+static byte[] CreateDiaryDocx(DateOnly day, IEnumerable<DiaryEntry> entries)
+{
+    static string P(string value, string style = "Normal") => $"<w:p><w:pPr><w:pStyle w:val=\"{style}\"/></w:pPr><w:r><w:t xml:space=\"preserve\">{SecurityElement.Escape(value)}</w:t></w:r></w:p>";
+    var body = new StringBuilder(P($"Axis Diary - {day:dddd, dd MMMM yyyy}", "Title"));
+    foreach (var entry in entries.OrderBy(item => item.OccurredAt))
+    {
+        body.Append(P($"{entry.OccurredAt.LocalDateTime:HH:mm}  {entry.Title}", "Heading1"));
+        if (!string.IsNullOrWhiteSpace(entry.Body)) body.Append(P(entry.Body));
+        if (!string.IsNullOrWhiteSpace(entry.Tags)) body.Append(P($"Tags: {entry.Tags}", "Subtitle"));
+    }
+    var document = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>{body}<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\"/></w:sectPr></w:body></w:document>";
+    const string types = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>";
+    const string rels = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>";
+    using var output = new MemoryStream();
+    using (var zip = new ZipArchive(output, ZipArchiveMode.Create, true))
+    {
+        void Add(string name, string content) { using var writer = new StreamWriter(zip.CreateEntry(name).Open(), new UTF8Encoding(false)); writer.Write(content); }
+        Add("[Content_Types].xml", types); Add("_rels/.rels", rels); Add("word/document.xml", document);
+    }
+    return output.ToArray();
+}
+
+static void MapHistory(WebApplication app)
+{
+    app.MapGet("/api/history", async (DateOnly? date, AxisDbContext db, CancellationToken ct) =>
+    {
+        var selected = date ?? DateOnly.FromDateTime(DateTime.Now);
+        var start = selected.ToDateTime(TimeOnly.MinValue);
+        var end = selected.ToDateTime(TimeOnly.MaxValue);
+        var activities = (await db.Activities.AsNoTracking().Include(x => x.LifeArea).ToListAsync(ct)).Where(x => ActivityDisplayDate(x).LocalDateTime >= start && ActivityDisplayDate(x).LocalDateTime <= end);
+        var metrics = (await db.MetricEntries.AsNoTracking().Include(x => x.Metric).ToListAsync(ct)).Where(x => x.RecordedAt.LocalDateTime >= start && x.RecordedAt.LocalDateTime <= end);
+        var physique = (await db.PhysiqueEntries.AsNoTracking().ToListAsync(ct)).Where(x => x.RecordedAt.LocalDateTime >= start && x.RecordedAt.LocalDateTime <= end);
+        var moods = (await db.MoodEntries.AsNoTracking().ToListAsync(ct)).Where(x => x.RecordedAt.LocalDateTime >= start && x.RecordedAt.LocalDateTime <= end);
+        var diary = (await db.DiaryEntries.AsNoTracking().ToListAsync(ct)).Where(x => x.OccurredAt.LocalDateTime >= start && x.OccurredAt.LocalDateTime <= end);
+        var timeline = activities.Select(x => new { At = ActivityDisplayDate(x), Kind = "Activity", Title = x.Title, Detail = $"{x.Status} · {x.DurationMinutes} min · {x.LifeArea?.Name}" })
+            .Concat(metrics.Select(x => new { At = x.RecordedAt, Kind = "Metric", Title = x.Metric?.Name ?? "Metric", Detail = $"{x.Value} {x.Metric?.Unit} {x.Notes}" }))
+            .Concat(physique.Select(x => new { At = x.RecordedAt, Kind = "Physique", Title = $"{x.WeightKg} kg", Detail = $"Waist {x.WaistCm} cm · mood {x.MoodScore}/10" }))
+            .Concat(moods.Select(x => new { At = x.RecordedAt, Kind = "Mood", Title = $"Mood {x.Score}/10", Detail = $"Energy {x.Energy}/10 · stress {x.Stress}/10 · {x.Context} {x.Notes}" }))
+            .Concat(diary.Select(x => new { At = x.OccurredAt, Kind = "Diary", x.Title, Detail = x.Body })).OrderBy(x => x.At);
+        return Results.Ok(new { Date = selected, Timeline = timeline });
+    });
+}
+
 static void MapBackup(WebApplication app)
 {
     var group = app.MapGroup("/api/backup");
@@ -1494,17 +1651,26 @@ static object ToGoalResponse(Goal goal)
 
 static object ToGoalProgressResponse(Goal goal, IReadOnlyCollection<Activity> completedActivities)
 {
-    var baseProgress = ProgressCalculator.CalculateGoalProgress(goal);
-    var lastMaintainedAt = completedActivities
-        .Select(ActivityCompletionDate)
-        .OrderByDescending(date => date)
-        .FirstOrDefault();
+    var today = DateOnly.FromDateTime(DateTime.Now);
+    var completionDates = completedActivities.Select(activity => DateOnly.FromDateTime(ActivityCompletionDate(activity).LocalDateTime))
+        .Distinct().OrderBy(date => date).ToList();
+    var trackingTargetDays = goal.Unit.Equals("days", StringComparison.OrdinalIgnoreCase)
+        ? Math.Max(1, (int)goal.TargetValue)
+        : goal.Title.Contains("Creatine", StringComparison.OrdinalIgnoreCase) ? 28 : (int?)null;
+    var journeyProgress = trackingTargetDays is null ? (decimal?)null : ProgressCalculator.CalculateRatio(completionDates.Count, trackingTargetDays.Value);
+    var rollingCompletedDays = completionDates.Count(date => date >= today.AddDays(-27));
+    var rollingTarget = Math.Max(1, (goal.MaintenanceTargetPerWeek ?? 7) * 4);
+    var baseProgress = goal.ProgressType is ProgressType.Maintenance or ProgressType.Streak or ProgressType.Decay
+        ? ProgressCalculator.CalculateRatio(rollingCompletedDays, rollingTarget)
+        : ProgressCalculator.CalculateGoalProgress(goal);
+    var lastMaintainedAt = completedActivities.Select(ActivityCompletionDate).OrderByDescending(date => date).FirstOrDefault();
     DateTimeOffset? maintainedAt = lastMaintainedAt == default ? null : lastMaintainedAt;
-    var decayedProgress = goal.ProgressType == ProgressType.Decay
+    var decayedProgress = goal.DecayRatePercentPerWeek > 0
         ? ProgressCalculator.ApplyWeeklyDecay(baseProgress, goal.DecayRatePercentPerWeek, maintainedAt, DateTimeOffset.UtcNow)
         : baseProgress;
-    var weekStart = DateTimeOffset.UtcNow.AddDays(-7);
-    var completedThisWeek = completedActivities.Count(activity => ActivityCompletionDate(activity) >= weekStart);
+    var weekStart = today.AddDays(-((7 + (int)today.DayOfWeek - (int)DayOfWeek.Monday) % 7));
+    var completedThisWeek = completionDates.Count(date => date >= weekStart);
+    var (currentStreak, longestStreak) = CalculateStreaks(completionDates, today);
 
     return new
     {
@@ -1515,9 +1681,31 @@ static object ToGoalProgressResponse(Goal goal, IReadOnlyCollection<Activity> co
         goal.MaintenanceThreshold,
         goal.MaintenanceTargetPerWeek,
         CompletedThisWeek = completedThisWeek,
+        CompletedDays = completionDates.Count,
+        TrackingTargetDays = trackingTargetDays,
+        JourneyProgress = journeyProgress,
+        CurrentStreakDays = currentStreak,
+        LongestStreakDays = longestStreak,
+        FirstTrackedAt = completedActivities.Select(ActivityCompletionDate).OrderBy(date => date).Cast<DateTimeOffset?>().FirstOrDefault(),
         MaintenanceSatisfied = decayedProgress >= goal.MaintenanceThreshold
             && (goal.MaintenanceTargetPerWeek is null || completedThisWeek >= goal.MaintenanceTargetPerWeek)
     };
+}
+
+static (int Current, int Longest) CalculateStreaks(IReadOnlyList<DateOnly> dates, DateOnly today)
+{
+    if (dates.Count == 0) return (0, 0);
+    var longest = 1;
+    var running = 1;
+    for (var index = 1; index < dates.Count; index++)
+    {
+        running = dates[index].DayNumber == dates[index - 1].DayNumber + 1 ? running + 1 : 1;
+        longest = Math.Max(longest, running);
+    }
+    var latest = dates[^1];
+    var current = latest == today || latest == today.AddDays(-1) ? 1 : 0;
+    for (var index = dates.Count - 2; current > 0 && index >= 0 && dates[index].DayNumber == dates[index + 1].DayNumber - 1; index--) current++;
+    return (current, longest);
 }
 
 static object ToMilestoneResponse(Milestone milestone)
@@ -1817,5 +2005,9 @@ public sealed record MetricEntryRequest(decimal Value, DateTimeOffset? RecordedA
 public sealed record CountdownRequest(string Title, string? Description, DateTimeOffset TargetAt, string? Category, string? Color, bool IsPinned, bool IsArchived);
 
 public sealed record PhysiqueEntryRequest(DateTimeOffset? RecordedAt, int Age, string? Sex, decimal HeightCm, decimal WeightKg, decimal? WaistCm, decimal? NeckCm, decimal? HipCm, decimal? BodyFatPercentOverride, decimal? MuscleMassKg, int MoodScore, string? Status, string? Notes);
+
+public sealed record MoodEntryRequest(int Score, int Energy, int Stress, string? Context, string? Notes);
+
+public sealed record DiaryEntryRequest(string Title, string? Body, string? Tags);
 
 public sealed record ReviewRequest(string? Summary, string? WhatWorked, string? WhatDidNotWork, string? NextFocus);

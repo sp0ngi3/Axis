@@ -23,6 +23,10 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
 
     public DbSet<PhysiqueEntry> PhysiqueEntries => Set<PhysiqueEntry>();
 
+    public DbSet<MoodEntry> MoodEntries => Set<MoodEntry>();
+
+    public DbSet<DiaryEntry> DiaryEntries => Set<DiaryEntry>();
+
     public DbSet<WikiPage> WikiPages => Set<WikiPage>();
 
     public DbSet<Review> Reviews => Set<Review>();
@@ -47,6 +51,8 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
         ConfigureMetrics(modelBuilder);
         ConfigureCountdowns(modelBuilder);
         ConfigurePhysiqueEntries(modelBuilder);
+        ConfigureMoodEntries(modelBuilder);
+        ConfigureDiaryEntries(modelBuilder);
         ConfigureWikiPages(modelBuilder);
         ConfigureReviews(modelBuilder);
         ConfigureRecurrenceRules(modelBuilder);
@@ -182,6 +188,27 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
             entity.Property(entry => entry.Status).HasMaxLength(160);
             entity.Property(entry => entry.Notes).HasMaxLength(2000);
             entity.HasIndex(entry => entry.RecordedAt);
+        });
+    }
+
+    private static void ConfigureMoodEntries(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MoodEntry>(entity =>
+        {
+            entity.Property(entry => entry.Context).HasMaxLength(500);
+            entity.Property(entry => entry.Notes).HasMaxLength(4000);
+            entity.HasIndex(entry => entry.RecordedAt);
+        });
+    }
+
+    private static void ConfigureDiaryEntries(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<DiaryEntry>(entity =>
+        {
+            entity.Property(entry => entry.Title).HasMaxLength(200).IsRequired();
+            entity.Property(entry => entry.Body).HasMaxLength(12000);
+            entity.Property(entry => entry.Tags).HasMaxLength(500);
+            entity.HasIndex(entry => entry.OccurredAt);
         });
     }
 

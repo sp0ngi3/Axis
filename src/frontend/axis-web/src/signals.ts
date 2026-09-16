@@ -1,4 +1,4 @@
-import type { Activity, ActivityTemplate } from './types';
+import type { Activity, ActivityTemplate, RecurrenceRule } from './types';
 
 export type TrackDayStatus = 'done' | 'missed' | 'planned' | 'skipped' | 'empty';
 
@@ -31,8 +31,9 @@ function sameDay(value: string | undefined, date: Date) {
   return value ? new Date(value).toDateString() === date.toDateString() : false;
 }
 
-export function getDayStatus(activities: Activity[], flexible: boolean, day: Date): TrackDayStatus {
+export function getDayStatus(activities: Activity[], flexible: boolean, day: Date, activeFrom?: Date): TrackDayStatus {
   const today = startOfDay(new Date());
+  if (activeFrom && startOfDay(day).getTime() < startOfDay(activeFrom).getTime()) return 'empty';
   if (activities.some((activity) => activity.status === 'Completed')) return 'done';
   if (activities.some((activity) => activity.status === 'Skipped' || activity.status === 'Cancelled')) return 'skipped';
   if (activities.some((activity) => activity.status === 'Planned' || activity.status === 'Moved')) return 'planned';
@@ -40,14 +41,17 @@ export function getDayStatus(activities: Activity[], flexible: boolean, day: Dat
   return 'empty';
 }
 
-export function buildDashboardTracks(days: Date[], activities: Activity[], templates: ActivityTemplate[]): DashboardTrack[] {
+export function buildDashboardTracks(days: Date[], activities: Activity[], templates: ActivityTemplate[], rules: RecurrenceRule[] = []): DashboardTrack[] {
   const flexibleTitles = new Set(['DSA problem rep', 'System design case study']);
 
   return templates.map((template) => {
     const flexible = flexibleTitles.has(template.title);
     const related = activities.filter((activity) => activity.templateId === template.id || activity.title === template.title);
+    const starts = rules.filter((rule) => rule.templateId === template.id).map((rule) => new Date(`${rule.startDate}T00:00:00`));
+    related.forEach((activity) => { const value = getActivityDate(activity); if (value) starts.push(new Date(value)); });
+    const activeFrom = starts.length ? new Date(Math.min(...starts.map((value) => value.getTime()))) : new Date();
     const trackDays = days.map((day) => {
-      const status = getDayStatus(related.filter((activity) => sameDay(getActivityDate(activity), day)), flexible, day);
+      const status = getDayStatus(related.filter((activity) => sameDay(getActivityDate(activity), day)), flexible, day, activeFrom);
       return { key: dateKey(day), label: day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), status };
     });
     const completedCount = related.filter((activity) => activity.status === 'Completed').length;
@@ -55,7 +59,7 @@ export function buildDashboardTracks(days: Date[], activities: Activity[], templ
     const today = startOfDay(new Date());
     const expectedCount = flexible
       ? Math.max(completedCount, related.length)
-      : trackDays.filter((trackDay, index) => trackDay.status !== 'empty' || startOfDay(days[index]).getTime() < today.getTime()).length;
+      : trackDays.filter((trackDay, index) => trackDay.status !== 'empty' || (startOfDay(days[index]).getTime() >= startOfDay(activeFrom).getTime() && startOfDay(days[index]).getTime() < today.getTime())).length;
 
     return {
       title: template.title,

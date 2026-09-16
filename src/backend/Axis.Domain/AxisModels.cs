@@ -246,6 +246,24 @@ public sealed class PhysiqueEntry : Entity
     public string Notes { get; set; } = string.Empty;
 }
 
+public sealed class MoodEntry : Entity
+{
+    public DateTimeOffset RecordedAt { get; set; } = DateTimeOffset.UtcNow;
+    public int Score { get; set; } = 5;
+    public int Energy { get; set; } = 5;
+    public int Stress { get; set; } = 5;
+    public string Context { get; set; } = string.Empty;
+    public string Notes { get; set; } = string.Empty;
+}
+
+public sealed class DiaryEntry : Entity
+{
+    public DateTimeOffset OccurredAt { get; set; } = DateTimeOffset.UtcNow;
+    public string Title { get; set; } = string.Empty;
+    public string Body { get; set; } = string.Empty;
+    public string Tags { get; set; } = string.Empty;
+}
+
 public sealed class WikiPage : Entity
 {
     public string Slug { get; set; } = string.Empty;

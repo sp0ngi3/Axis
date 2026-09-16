@@ -158,6 +158,8 @@ function installFetchMock() {
         return jsonResponse([area]);
       case '/api/goals':
         return jsonResponse([goal]);
+      case '/api/dashboard/progress':
+        return jsonResponse([{ goal, baseProgress: 20, decayedProgress: 20, maintenanceThreshold: 80, maintenanceTargetPerWeek: 1, completedThisWeek: 0, completedDays: 0, trackingTargetDays: null, journeyProgress: null, currentStreakDays: 0, longestStreakDays: 0, maintenanceSatisfied: false }]);
       case '/api/activities':
         return jsonResponse([activity]);
       case '/api/activity-templates':
@@ -170,6 +172,12 @@ function installFetchMock() {
         return jsonResponse([]);
       case '/api/reviews':
         return jsonResponse([review]);
+      case '/api/mood':
+      case '/api/diary':
+      case '/api/countdowns':
+      case '/api/physique':
+      case '/api/wiki-pages':
+        return jsonResponse([]);
       case '/api/dashboard/today':
         return jsonResponse({
           date: '2026-09-16',

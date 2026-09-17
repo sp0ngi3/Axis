@@ -596,8 +596,20 @@ static void MapActivities(WebApplication app)
 
     group.MapPost("/", async (ActivityRequest request, AxisDbContext db, CancellationToken ct) =>
     {
+        if (request.Status == ActivityStatus.Completed && request.PlannedStartAt is { } plannedStartAt && plannedStartAt > DateTimeOffset.Now.AddMinutes(5))
+        {
+            return Results.BadRequest("A future activity cannot be completed.");
+        }
+
         var activity = new Activity();
         Apply(activity, request);
+        await AttachActivityProgressTargetsAsync(db, activity, request.GoalId, request.MilestoneId, ct);
+        if (request.Status == ActivityStatus.Completed)
+        {
+            activity.Status = ActivityStatus.Planned;
+            ApplyActivityStatusTransition(activity, ActivityStatus.Planned, ActivityStatus.Completed, DateTimeOffset.UtcNow);
+        }
+
         db.Activities.Add(activity);
         await db.SaveChangesAsync(ct);
         return Results.Created($"/api/activities/{activity.Id}", ToActivityResponse(activity));
@@ -605,13 +617,36 @@ static void MapActivities(WebApplication app)
 
     group.MapPut("/{id:guid}", async (Guid id, ActivityRequest request, AxisDbContext db, CancellationToken ct) =>
     {
-        var activity = await db.Activities.FindAsync([id], ct);
+        var activity = await LoadActivityForStatusChangeAsync(db, id, ct);
         if (activity is null)
         {
             return Results.NotFound();
         }
 
+        var previousStatus = activity.Status;
+        if (request.Status == ActivityStatus.Completed && !CanCompleteActivity(activity, previousStatus, request.PlannedStartAt))
+        {
+            return Results.BadRequest("A future activity cannot be completed.");
+        }
+
+        if (previousStatus == ActivityStatus.Completed)
+        {
+            RevertActivityProgress(activity);
+        }
+
         Apply(activity, request);
+        await AttachActivityProgressTargetsAsync(db, activity, request.GoalId, request.MilestoneId, ct);
+        if (request.Status == ActivityStatus.Completed)
+        {
+            activity.Status = ActivityStatus.Planned;
+            ApplyActivityStatusTransition(activity, ActivityStatus.Planned, ActivityStatus.Completed, DateTimeOffset.UtcNow);
+        }
+        else
+        {
+            activity.ActualStartAt = null;
+            activity.ActualEndAt = null;
+        }
+
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToActivityResponse(activity));
     });
@@ -628,56 +663,38 @@ static void MapActivities(WebApplication app)
             return Results.NotFound();
         }
 
-        if (activity.Status == ActivityStatus.Completed)
+        var previousStatus = activity.Status;
+        if (previousStatus == ActivityStatus.Completed)
         {
             return Results.Ok(ToActivityResponse(activity));
         }
 
-        activity.Status = ActivityStatus.Completed;
-        activity.ActualStartAt ??= DateTimeOffset.UtcNow.AddMinutes(-activity.DurationMinutes);
-        activity.ActualEndAt ??= DateTimeOffset.UtcNow;
-
-        if (activity.Milestone is not null)
+        if (!CanCompleteActivity(activity, previousStatus, activity.PlannedStartAt))
         {
-            activity.Milestone.CurrentValue = Math.Min(activity.Milestone.TargetValue, activity.Milestone.CurrentValue + 1);
-            if (activity.Milestone.CurrentValue >= activity.Milestone.TargetValue)
-            {
-                activity.Milestone.Status = MilestoneStatus.Completed;
-            }
+            return Results.BadRequest("A future activity cannot be completed.");
         }
 
-        if (activity.Goal is not null)
-        {
-            if (activity.Milestone is null && activity.Goal.ProgressType == ProgressType.CountBased)
-            {
-                activity.Goal.CurrentValue = Math.Min(activity.Goal.TargetValue, activity.Goal.CurrentValue + 1);
-            }
-            else if (ShouldPersistCalculatedProgress(activity.Goal))
-            {
-                activity.Goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(activity.Goal);
-            }
-        }
-
+        ApplyActivityStatusTransition(activity, previousStatus, ActivityStatus.Completed, DateTimeOffset.UtcNow);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToActivityResponse(activity));
     });
 
     group.MapPost("/{id:guid}/skip", async (Guid id, AxisDbContext db, CancellationToken ct) =>
     {
-        var activity = await db.Activities.FindAsync([id], ct);
+        var activity = await LoadActivityForStatusChangeAsync(db, id, ct);
         if (activity is null)
         {
             return Results.NotFound();
         }
 
-        activity.Status = ActivityStatus.Skipped;
+        ApplyActivityStatusTransition(activity, activity.Status, ActivityStatus.Skipped, DateTimeOffset.UtcNow);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToActivityResponse(activity));
     });
 
     group.MapPost("/{id:guid}/move", async (Guid id, MoveActivityRequest request, AxisDbContext db, CancellationToken ct) =>
     {
-        var activity = await db.Activities.FindAsync([id], ct);
+        var activity = await LoadActivityForStatusChangeAsync(db, id, ct);
         if (activity is null)
         {
             return Results.NotFound();
@@ -685,21 +702,28 @@ static void MapActivities(WebApplication app)
 
         activity.PlannedStartAt = request.PlannedStartAt;
         activity.PlannedEndAt = request.PlannedEndAt;
-        activity.Status = ActivityStatus.Moved;
+        ApplyActivityStatusTransition(activity, activity.Status, ActivityStatus.Moved, DateTimeOffset.UtcNow);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToActivityResponse(activity));
     });
 
     group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
     {
-        var activity = await db.Activities.FindAsync([id], ct);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var activity = await LoadActivityForStatusChangeAsync(db, id, ct);
         if (activity is null)
         {
             return Results.NotFound();
         }
 
+        if (activity.Status == ActivityStatus.Completed)
+        {
+            RevertActivityProgress(activity);
+        }
+
         db.Activities.Remove(activity);
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         return Results.NoContent();
     });
 
@@ -1960,6 +1984,112 @@ static string ToDayKey(DateTimeOffset value)
     return DateOnly.FromDateTime(value.LocalDateTime).ToString("yyyy-MM-dd");
 }
 
+static Task<Activity?> LoadActivityForStatusChangeAsync(AxisDbContext db, Guid id, CancellationToken cancellationToken)
+{
+    return db.Activities
+        .Include(activity => activity.Milestone)
+        .Include(activity => activity.Goal).ThenInclude(goal => goal!.Milestones)
+        .FirstOrDefaultAsync(activity => activity.Id == id, cancellationToken);
+}
+
+static async Task AttachActivityProgressTargetsAsync(AxisDbContext db, Activity activity, Guid? goalId, Guid? milestoneId, CancellationToken cancellationToken)
+{
+    activity.Goal = goalId is null
+        ? null
+        : await db.Goals.Include(goal => goal.Milestones).FirstOrDefaultAsync(goal => goal.Id == goalId, cancellationToken);
+    activity.Milestone = milestoneId is null
+        ? null
+        : await db.Milestones.FirstOrDefaultAsync(milestone => milestone.Id == milestoneId, cancellationToken);
+}
+
+static bool CanCompleteActivity(Activity activity, ActivityStatus previousStatus, DateTimeOffset? plannedStartAt)
+{
+    if (previousStatus is ActivityStatus.Skipped or ActivityStatus.Cancelled)
+    {
+        return true;
+    }
+
+    return plannedStartAt is null || plannedStartAt <= DateTimeOffset.Now.AddMinutes(5);
+}
+
+static void ApplyActivityStatusTransition(Activity activity, ActivityStatus previousStatus, ActivityStatus nextStatus, DateTimeOffset now)
+{
+    if (previousStatus == nextStatus)
+    {
+        return;
+    }
+
+    if (previousStatus == ActivityStatus.Completed)
+    {
+        RevertActivityProgress(activity);
+    }
+
+    activity.Status = nextStatus;
+    if (nextStatus == ActivityStatus.Completed)
+    {
+        activity.ActualStartAt ??= now.AddMinutes(-activity.DurationMinutes);
+        activity.ActualEndAt ??= now;
+        ApplyActivityProgress(activity);
+    }
+    else
+    {
+        activity.ActualStartAt = null;
+        activity.ActualEndAt = null;
+    }
+}
+
+static void ApplyActivityProgress(Activity activity)
+{
+    if (activity.Milestone is not null)
+    {
+        activity.Milestone.CurrentValue = Math.Min(activity.Milestone.TargetValue, activity.Milestone.CurrentValue + 1);
+        if (activity.Milestone.CurrentValue >= activity.Milestone.TargetValue)
+        {
+            activity.Milestone.Status = MilestoneStatus.Completed;
+        }
+    }
+
+    if (activity.Goal is null)
+    {
+        return;
+    }
+
+    if (activity.Milestone is null && activity.Goal.ProgressType == ProgressType.CountBased)
+    {
+        activity.Goal.CurrentValue = Math.Min(activity.Goal.TargetValue, activity.Goal.CurrentValue + 1);
+    }
+    else if (ShouldPersistCalculatedProgress(activity.Goal))
+    {
+        activity.Goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(activity.Goal);
+    }
+}
+
+static void RevertActivityProgress(Activity activity)
+{
+    if (activity.Milestone is not null)
+    {
+        activity.Milestone.CurrentValue = Math.Max(0, activity.Milestone.CurrentValue - 1);
+        if (activity.Milestone.Status == MilestoneStatus.Completed && activity.Milestone.CurrentValue < activity.Milestone.TargetValue)
+        {
+            activity.Milestone.Status = MilestoneStatus.Active;
+        }
+    }
+
+    if (activity.Goal is null)
+    {
+        return;
+    }
+
+    if (activity.Milestone is null && activity.Goal.ProgressType == ProgressType.CountBased)
+    {
+        activity.Goal.CurrentValue = Math.Max(0, activity.Goal.CurrentValue - 1);
+    }
+    else if (ShouldPersistCalculatedProgress(activity.Goal))
+    {
+        activity.Goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(activity.Goal);
+    }
+}
+
 static DateTimeOffset ActivityDisplayDate(Activity activity)
 {
     return activity.PlannedStartAt ?? activity.ActualStartAt ?? activity.CreatedAt;
@@ -2019,3 +2149,5 @@ public sealed record MoodEntryRequest(DateTimeOffset? RecordedAt, int Score, int
 public sealed record DiaryEntryRequest(DateTimeOffset? OccurredAt, string Title, string? Body, string? Tags);
 
 public sealed record ReviewRequest(string? Summary, string? WhatWorked, string? WhatDidNotWork, string? NextFocus);
+
+public partial class Program;

@@ -11,6 +11,27 @@ export interface DashboardTrack {
   expectedCount: number;
   missedCount: number;
   minutes: number;
+  kind: 'duration' | 'checkin' | 'quantity';
+  quantityTotal: number;
+  quantityUnit: string;
+}
+
+const checkInTitles = new Set([
+  'Creatine dose',
+  'Desk mobility reset',
+  'No alcohol check-in',
+  'No vape check-in',
+  'Diet check-in',
+  'SPF 30+'
+]);
+
+function trackKind(title: string): DashboardTrack['kind'] {
+  if (title === 'Sleep log') return 'quantity';
+  return checkInTitles.has(title) ? 'checkin' : 'duration';
+}
+
+function loggedQuantity(activity: Activity) {
+  return Number(activity.notes.match(/Quantity:\s*([0-9.]+)/i)?.[1] ?? 0);
 }
 
 function startOfDay(date: Date) {
@@ -46,6 +67,7 @@ export function buildDashboardTracks(days: Date[], activities: Activity[], templ
 
   return templates.map((template) => {
     const flexible = flexibleTitles.has(template.title);
+    const kind = trackKind(template.title);
     const related = activities.filter((activity) => activity.templateId === template.id || activity.title === template.title);
     const starts = rules.filter((rule) => rule.templateId === template.id).map((rule) => new Date(`${rule.startDate}T00:00:00`));
     related.forEach((activity) => { const value = getActivityDate(activity); if (value) starts.push(new Date(value)); });
@@ -69,7 +91,10 @@ export function buildDashboardTracks(days: Date[], activities: Activity[], templ
       completedCount,
       expectedCount,
       missedCount,
-      minutes: related.filter((activity) => activity.status === 'Completed').reduce((sum, activity) => sum + activity.durationMinutes, 0)
+      minutes: kind === 'duration' ? related.filter((activity) => activity.status === 'Completed').reduce((sum, activity) => sum + activity.durationMinutes, 0) : 0,
+      kind,
+      quantityTotal: kind === 'quantity' ? related.filter((activity) => activity.status === 'Completed').reduce((sum, activity) => sum + loggedQuantity(activity), 0) : 0,
+      quantityUnit: kind === 'quantity' ? 'h' : ''
     };
   });
 }

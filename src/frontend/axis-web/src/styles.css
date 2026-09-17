@@ -1184,6 +1184,17 @@ textarea:focus {
   gap: 13px;
 }
 
+.activity-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-alt);
+}
+
 .form-grid {
   display: grid;
   gap: 10px;
@@ -4057,6 +4068,371 @@ button,
   grid-template-columns: minmax(80px, .7fr) minmax(175px, 1.25fr) minmax(120px, 1fr) auto;
 }
 
+.hero-metrics .summary-pill {
+  min-width: 132px;
+  border-width: 2px;
+  border-color: color-mix(in srgb, var(--cyan) 48%, var(--line));
+  background: var(--surface-raised);
+}
+
+.hero-metrics .summary-pill strong {
+  color: var(--text);
+  font-size: 28px;
+  line-height: 1;
+  text-shadow: none;
+}
+
+.balance-card-top > .status-badge {
+  min-width: 84px;
+  padding: 7px 10px;
+  border: 1px solid currentColor;
+  background: var(--surface-raised);
+  font-size: 13px;
+  opacity: 1;
+  text-align: center;
+}
+
+.today-status-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--line-strong);
+  background: var(--surface-raised);
+}
+
+.today-status-strip > div,
+.today-status-strip > button {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-right: 1px solid var(--line);
+}
+
+.today-status-strip > button {
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  text-align: left;
+}
+
+.today-status-strip > button:hover,
+.today-status-strip > button.active {
+  background: color-mix(in srgb, var(--cyan) 12%, var(--surface-raised));
+}
+
+.today-status-strip > button.active {
+  box-shadow: inset 0 -3px 0 var(--cyan);
+}
+
+.today-status-strip > :last-child {
+  border-right: 0;
+}
+
+.today-status-strip span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.today-status-strip strong {
+  color: var(--text);
+  font-size: 24px;
+}
+
+.today-status-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.today-plan {
+  display: grid;
+  gap: 10px;
+}
+
+.today-plan details {
+  border: 1px solid var(--line);
+  background: var(--bg-alt);
+}
+
+.today-plan summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.today-plan summary span {
+  display: grid;
+  place-items: center;
+  min-width: 30px;
+  min-height: 26px;
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-raised);
+  color: var(--cyan);
+}
+
+.today-plan details .activity-list {
+  padding: 0 12px 12px;
+}
+
+.today-chart-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.chart-footnote {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.calendar-event-group {
+  z-index: 4;
+  border-width: 2px;
+  background: color-mix(in srgb, var(--surface-raised) 78%, var(--cyan) 22%);
+}
+
+.calendar-event-group strong {
+  color: var(--text);
+}
+
+.grouped-calendar-list {
+  display: grid;
+  gap: 8px;
+}
+
+.grouped-calendar-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg-alt);
+}
+
+.grouped-calendar-list > div > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.grouped-calendar-list small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.journal-summary-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.journal-summary-metrics .summary-pill {
+  min-width: 104px;
+}
+
+.journal-chart {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 230px;
+}
+
+.journal-chart .chart-legend {
+  display: flex;
+  gap: 14px;
+}
+
+.journal-chart .chart-legend span::before {
+  display: inline-block;
+  width: 18px;
+  height: 3px;
+  margin-right: 6px;
+  content: '';
+  vertical-align: middle;
+}
+
+.journal-chart polyline.mood,
+.journal-chart .chart-legend .mood::before {
+  stroke: var(--accent);
+  background: var(--accent);
+}
+
+.journal-chart polyline.energy,
+.journal-chart .chart-legend .energy::before {
+  stroke: var(--cyan);
+  background: var(--cyan);
+}
+
+.journal-chart polyline.stress,
+.journal-chart .chart-legend .stress::before {
+  stroke: var(--danger);
+  background: var(--danger);
+}
+
+.metrics-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 430px), 1fr));
+}
+
+.metrics-grid .entity-card {
+  align-content: start;
+  min-width: 0;
+}
+
+.metric-log-form {
+  grid-template-columns: minmax(110px, .7fr) minmax(185px, 1.25fr) auto;
+  grid-template-areas:
+    "value time submit"
+    "note note note";
+}
+
+.metric-value-input { grid-area: value; }
+.metric-time-input { grid-area: time; }
+.metric-note-input { grid-area: note; }
+.metric-log-form button { grid-area: submit; }
+
+.metric-latest-note {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--cyan);
+  background: var(--bg-alt);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.metric-latest-note strong {
+  color: var(--text);
+}
+
+.sparkline {
+  display: grid;
+  gap: 6px;
+}
+
+.sparkline-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.review-planning-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr);
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.review-period-chart {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(34px, 1fr));
+  align-items: end;
+  gap: 8px;
+  min-height: 150px;
+}
+
+.review-period-chart > div {
+  display: grid;
+  align-items: end;
+  justify-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.review-period-chart > div > div {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  height: 105px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.review-period-chart i {
+  width: 35%;
+  min-height: 3px;
+}
+
+.review-period-chart i.done { background: var(--cyan); }
+.review-period-chart i.skipped { background: var(--danger); }
+
+.review-period-chart strong,
+.review-period-chart small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-next-plan {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: var(--bg-alt);
+}
+
+.review-next-plan h4 {
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+
+.review-next-plan p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.planning-goals {
+  display: grid;
+  gap: 8px;
+}
+
+.planning-goals > div {
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr);
+  gap: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.planning-goals i {
+  min-height: 34px;
+}
+
+.planning-goals span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.planning-goals strong,
+.planning-goals small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planning-goals small {
+  color: var(--muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -4083,6 +4459,10 @@ button,
 
   .today-chart-grid,
   .coach-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .review-planning-grid {
     grid-template-columns: 1fr;
   }
 
@@ -4209,6 +4589,26 @@ button,
     grid-template-columns: 1fr;
   }
 
+  .metric-log-form {
+    grid-template-areas:
+      "value"
+      "time"
+      "note"
+      "submit";
+  }
+
+  .today-status-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .today-status-strip > :nth-child(2) {
+    border-right: 0;
+  }
+
+  .today-status-strip > :nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
+  }
+
   .exercise-row,
   .journal-sliders {
     grid-template-columns: 1fr;
@@ -4220,5 +4620,37 @@ button,
 
   .row-actions {
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 560px) {
+  .today-status-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .today-status-strip > *,
+  .today-status-strip > :nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .today-status-strip > :last-child {
+    border-bottom: 0;
+  }
+
+  .grouped-calendar-list > div {
+    grid-template-columns: 1fr;
+  }
+
+  .review-period-chart {
+    grid-template-columns: repeat(4, minmax(34px, 1fr));
+  }
+
+  .journal-summary-metrics {
+    justify-content: stretch;
+  }
+
+  .journal-summary-metrics .summary-pill {
+    flex: 1 1 92px;
   }
 }

@@ -53,7 +53,23 @@ describe('Signals dashboard aggregation', () => {
     expect(track.days.map((day) => day.status)).toEqual(['empty', 'done']);
     expect(track.completedCount).toBe(1);
     expect(track.missedCount).toBe(0);
-    expect(track.minutes).toBe(5);
+    expect(track.kind).toBe('checkin');
+    expect(track.minutes).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('keeps quantity logs separate from time and check-ins', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-16T12:00:00+02:00'));
+    const sleepTemplate = { ...template, id: 'sleep-template', title: 'Sleep log', defaultDurationMinutes: 1 };
+    const sleep = completedActivity({ templateId: sleepTemplate.id, title: sleepTemplate.title, durationMinutes: 1, notes: 'Quantity: 7.5' });
+
+    const [track] = buildDashboardTracks([new Date('2026-09-16T12:00:00+02:00')], [sleep], [sleepTemplate]);
+
+    expect(track.kind).toBe('quantity');
+    expect(track.quantityTotal).toBe(7.5);
+    expect(track.quantityUnit).toBe('h');
+    expect(track.minutes).toBe(0);
     vi.useRealTimers();
   });
 

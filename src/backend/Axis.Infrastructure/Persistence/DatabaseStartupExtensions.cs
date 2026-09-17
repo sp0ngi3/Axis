@@ -1,4 +1,5 @@
 using Axis.Domain;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -11,7 +12,9 @@ public static class DatabaseStartupExtensions
         await using var scope = services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AxisDbContext>();
 
+        await VerifyDatabaseIntegrityAsync(dbContext, cancellationToken);
         await dbContext.Database.EnsureCreatedAsync(cancellationToken);
+        await ConfigureSqliteDurabilityAsync(dbContext, cancellationToken);
         await EnsureAxisSchemaAsync(dbContext, cancellationToken);
         await SeedDefaultsAsync(dbContext, cancellationToken);
         await SeedStarterPackAsync(dbContext, cancellationToken);
@@ -22,6 +25,62 @@ public static class DatabaseStartupExtensions
         await GenerateRollingRecurringActivitiesAsync(dbContext, 56, cancellationToken);
         await RemoveDuplicateGeneratedActivitiesAsync(dbContext, cancellationToken);
         await LinkStarterActivitiesToGoalsAsync(dbContext, cancellationToken);
+    }
+
+    private static async Task VerifyDatabaseIntegrityAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var connectionString = dbContext.Database.GetConnectionString();
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return;
+        }
+
+        var connectionOptions = new SqliteConnectionStringBuilder(connectionString);
+        if (connectionOptions.Mode == SqliteOpenMode.Memory || connectionOptions.DataSource == ":memory:")
+        {
+            return;
+        }
+
+        var databasePath = Path.GetFullPath(connectionOptions.DataSource);
+        if (!File.Exists(databasePath))
+        {
+            var directory = Path.GetDirectoryName(databasePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            return;
+        }
+
+        try
+        {
+            await dbContext.Database.OpenConnectionAsync(cancellationToken);
+            await using var command = dbContext.Database.GetDbConnection().CreateCommand();
+            command.CommandText = "PRAGMA quick_check;";
+            var result = (await command.ExecuteScalarAsync(cancellationToken))?.ToString();
+            if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"Axis database integrity check failed: {result ?? "unknown SQLite error"}. The application stopped before making startup writes.");
+            }
+        }
+        catch (SqliteException exception)
+        {
+            throw new InvalidOperationException("Axis database integrity check failed. The application stopped before making startup writes.", exception);
+        }
+        finally
+        {
+            await dbContext.Database.CloseConnectionAsync();
+        }
+    }
+
+    private static async Task ConfigureSqliteDurabilityAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        await dbContext.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("PRAGMA synchronous=FULL;", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys=ON;", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("PRAGMA busy_timeout=5000;", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("PRAGMA wal_autocheckpoint=1000;", cancellationToken);
     }
 
     private static async Task EnsureAxisSchemaAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
@@ -650,6 +709,7 @@ public static class DatabaseStartupExtensions
         var checkInTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "Creatine dose",
+            "Desk mobility reset",
             "No alcohol check-in",
             "No vape check-in",
             "Diet check-in",

@@ -414,6 +414,14 @@ textarea:focus {
   padding: 20px;
 }
 
+.collection-header.flush-header {
+  align-items: end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .filter-bar {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -1511,6 +1519,41 @@ textarea:focus {
 
 .log-form-panel,
 .log-form-panel form { display: grid; gap: 16px; }
+.today-log-panel,
+.today-log-panel > .template-picker,
+.today-log-panel > .recent-log-list {
+  display: grid;
+  gap: 14px;
+}
+
+.compact-recent-log {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.diary-workspace {
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 560px);
+}
+
+.diary-editor .editor-shell {
+  min-height: calc(100vh - 130px);
+}
+
+.diary-form {
+  gap: 14px;
+}
+
+.diary-paper textarea {
+  min-height: 58vh;
+  padding: 28px 32px;
+  border-color: color-mix(in srgb, var(--line) 64%, transparent);
+  background:
+    linear-gradient(to bottom, transparent 0 31px, color-mix(in srgb, var(--line) 28%, transparent) 31px 32px),
+    var(--surface-raised);
+  background-size: 100% 32px, auto;
+  line-height: 32px;
+}
 .template-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
 .template-picker button { display: grid; gap: 3px; min-height: 58px; padding: 9px; border: 1px solid var(--line); color: var(--text); background: var(--bg-alt); text-align: left; }
 .template-picker button.active { border-color: var(--cyan); background: color-mix(in srgb, var(--cyan) 9%, var(--bg-alt)); box-shadow: inset 3px 0 var(--cyan); }
@@ -3558,6 +3601,462 @@ button,
     var(--surface);
 }
 
+.tool-drawer {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.tool-drawer summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--bg-alt);
+  font-size: 12px;
+  font-weight: 850;
+  list-style-position: inside;
+}
+
+.tool-nav {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tool-nav .vapor-nav-button {
+  min-height: 48px;
+}
+
+.workout-builder {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  background: var(--bg-alt);
+}
+
+.workout-builder-heading,
+.chart-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workout-builder-heading > div,
+.chart-heading {
+  min-width: 0;
+}
+
+.workout-builder-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.workout-builder-heading span,
+.chart-heading span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.exercise-table {
+  display: grid;
+  gap: 8px;
+}
+
+.exercise-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 2fr) minmax(110px, 1fr) repeat(4, minmax(64px, .55fr)) 36px;
+  gap: 8px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.exercise-row .field span {
+  font-size: 9px;
+}
+
+.exercise-remove {
+  width: 36px;
+  height: 40px;
+  padding: 0;
+}
+
+.today-chart-grid,
+.coach-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.coach-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.compact-chart {
+  display: grid;
+  gap: 12px;
+  min-height: 220px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--bg-alt);
+}
+
+.stacked-week-chart,
+.simple-bar-chart {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
+  gap: 10px;
+  height: 154px;
+}
+
+.stacked-week-chart > div,
+.simple-bar-chart > div {
+  display: grid;
+  height: 100%;
+  gap: 4px;
+  align-items: end;
+  justify-items: center;
+}
+
+.stacked-bars {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  height: 125px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.stacked-bars i {
+  width: 32%;
+  min-height: 3px;
+}
+
+.stacked-bars .done,
+.simple-bar-chart i {
+  background: var(--cyan);
+}
+
+.stacked-bars .skipped {
+  background: var(--danger);
+}
+
+.simple-bar-chart > div > span {
+  display: flex;
+  align-items: end;
+  width: 54%;
+  height: 105px;
+  background: color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.simple-bar-chart i {
+  display: block;
+  width: 100%;
+  min-height: 3px;
+}
+
+.stacked-week-chart small,
+.simple-bar-chart small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.horizontal-bars {
+  display: grid;
+  gap: 10px;
+}
+
+.horizontal-bars > div {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.horizontal-bars > div > div {
+  height: 9px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--line) 58%, transparent);
+}
+
+.horizontal-bars i {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  background: var(--cyan);
+}
+
+.muscle-volume i.low { background: var(--sun); }
+.muscle-volume i.high { background: var(--danger); }
+
+.progression-list,
+.coach-advice {
+  display: grid;
+  gap: 8px;
+}
+
+.progression-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.progression-list span {
+  display: grid;
+  gap: 3px;
+}
+
+.progression-list small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.progression-list em {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.progression-list em.positive { color: var(--success); }
+.progression-list em.negative { color: var(--danger); }
+
+.coach-advice {
+  margin-top: 12px;
+  padding: 14px;
+  border-left: 3px solid var(--cyan);
+  background: var(--bg-alt);
+}
+
+.coach-advice p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.journal-chart {
+  height: 190px;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-alt);
+}
+
+.journal-chart svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.journal-chart polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.journal-chart circle {
+  fill: var(--cyan);
+  stroke: var(--surface);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.journal-chart .chart-axis {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.journal-sliders {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.journal-timeline .timeline-entry {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.journal-timeline .timeline-entry .row-actions {
+  grid-column: 2;
+  grid-row: 2;
+  justify-content: flex-start;
+}
+
+.journal-timeline .timeline-entry > div:not(.row-actions) {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.journal-header-actions {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.goal-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  border: 0;
+  border-radius: 0;
+  background: rgba(10, 8, 18, .48);
+  box-shadow: none;
+}
+
+.goal-drawer-backdrop:hover {
+  transform: none;
+}
+
+.goals-editor-panel {
+  position: fixed;
+  z-index: 41;
+  top: 18px;
+  right: 18px;
+  bottom: 18px;
+  width: min(480px, calc(100vw - 36px));
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .32);
+}
+
+.goals-editor-panel > .surface,
+.goals-editor-panel > .goal-detail-panel {
+  min-height: 100%;
+  border: 0;
+  box-shadow: none;
+}
+
+.drawer-workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-editor-drawer {
+  width: min(620px, calc(100vw - 36px));
+  padding: 0;
+  scrollbar-gutter: stable;
+}
+
+.app-editor-drawer > .editor-shell {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.app-editor-drawer > .editor-shell + .editor-shell {
+  border-top: 1px solid var(--line-strong);
+}
+
+.app-editor-drawer .exercise-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.app-editor-drawer .exercise-name {
+  grid-column: span 2;
+}
+
+.physique-hero-action {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+}
+
+.app-shell {
+  grid-template-columns: 264px minmax(0, 1fr);
+}
+
+.app-sidebar {
+  gap: 18px;
+  padding: 20px 16px;
+}
+
+.vapor-nav-button,
+.main-nav button {
+  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-areas: "icon copy";
+}
+
+.vapor-nav-button .nav-copy,
+.main-nav button span {
+  grid-area: copy;
+}
+
+.vapor-nav-button .nav-copy small,
+.vapor-nav-button .nav-copy strong {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.main-nav button strong {
+  grid-area: auto;
+}
+
+.tool-drawer {
+  min-width: 0;
+}
+
+.tool-nav .vapor-nav-button {
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 9px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  text-shadow: none;
+  box-shadow: none;
+}
+
+.tool-nav .nav-glyph {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  font-size: 10px;
+}
+
+.tool-nav .vapor-nav-button:hover,
+.tool-nav .vapor-nav-button.active {
+  border-color: var(--line-strong);
+  background: var(--vapor-gradient);
+  color: #ffffff;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.tool-nav .vapor-nav-button:hover .nav-copy small,
+.tool-nav .vapor-nav-button.active .nav-copy small {
+  color: rgba(255, 255, 255, .82);
+}
+
+.time-calendar,
+.month-calendar {
+  scrollbar-gutter: stable;
+}
+
+.calendar-event {
+  padding: 7px 8px;
+}
+
+.metric-log-form {
+  grid-template-columns: minmax(80px, .7fr) minmax(175px, 1.25fr) minmax(120px, 1fr) auto;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -3574,8 +4073,25 @@ button,
     grid-template-columns: 1fr;
   }
 
+  .diary-workspace {
+    grid-template-columns: 1fr;
+  }
+
   .momentum-visual-grid {
     grid-template-columns: 1fr;
+  }
+
+  .today-chart-grid,
+  .coach-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .exercise-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .exercise-name {
+    grid-column: span 2;
   }
 
   .editor-panel {
@@ -3594,6 +4110,21 @@ button,
   }
 
   .main-nav {
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
+    overflow-x: auto;
+  }
+
+  .main-nav .vapor-nav-button {
+    grid-template-columns: 30px minmax(0, 1fr);
+    min-width: 116px;
+    min-height: 52px;
+  }
+
+  .main-nav .nav-copy small {
+    display: none;
+  }
+
+  .tool-nav {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -3676,6 +4207,15 @@ button,
   .form-grid.two,
   .form-grid.three {
     grid-template-columns: 1fr;
+  }
+
+  .exercise-row,
+  .journal-sliders {
+    grid-template-columns: 1fr;
+  }
+
+  .exercise-name {
+    grid-column: auto;
   }
 
   .row-actions {

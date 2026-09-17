@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import { buildDashboardTracks, getDayStatus } from './signals';
 import type { DashboardTrack } from './signals';
@@ -37,19 +37,34 @@ import type {
   WikiPage
 } from './types';
 
-type Page = 'today' | 'log' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'mood' | 'diary' | 'history' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
+type Page = 'today' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
 type Theme = 'light' | 'dark';
 type CalendarView = 'day' | 'week' | 'month';
+type WorkoutExercise = {
+  id: string;
+  name: string;
+  muscle: string;
+  sets: number;
+  reps: number;
+  weightKg: number;
+  rir: number;
+};
+type QuickLogDraft = {
+  recordedAt: string;
+  durationMinutes: number;
+  quantity: number;
+  notes: string;
+  muscles: string[];
+  exercises: WorkoutExercise[];
+};
 
 const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = [
   { id: 'today', label: 'Today', kicker: 'Operate', icon: '//' },
-  { id: 'log', label: 'Log', kicker: 'Capture', icon: '++' },
-  { id: 'dashboard', label: 'Dashboard', kicker: 'Signals', icon: '==' },
+  { id: 'dashboard', label: 'Insights', kicker: 'Signals', icon: '==' },
   { id: 'calendar', label: 'Calendar', kicker: 'Plan', icon: '[]' },
   { id: 'countdowns', label: 'Countdowns', kicker: 'Anticipate', icon: '>>' },
   { id: 'physique', label: 'Physique', kicker: 'Body lab', icon: '^^' },
-  { id: 'mood', label: 'Mood', kicker: 'Mind', icon: ':)' },
-  { id: 'diary', label: 'Diary', kicker: 'Journal', icon: '|>' },
+  { id: 'journal', label: 'Journal', kicker: 'Mind + diary', icon: '|>' },
   { id: 'history', label: 'History', kicker: 'Recall', icon: '<<' },
   { id: 'goals', label: 'Goals', kicker: 'Outcomes', icon: '<>' },
   { id: 'areas', label: 'Life Areas', kicker: 'Balance', icon: '##' },
@@ -59,6 +74,8 @@ const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = 
   { id: 'reviews', label: 'Reviews', kicker: 'Reflect', icon: '??' },
   { id: 'backup', label: 'Backup', kicker: 'Safety', icon: '!!' }
 ];
+
+const primaryPageIds: Page[] = ['today', 'calendar', 'dashboard', 'goals', 'journal'];
 
 const loadLevels: LoadLevel[] = ['Low', 'Medium', 'High'];
 const activityStatuses: ActivityStatus[] = ['Planned', 'Completed', 'Skipped', 'Moved', 'Cancelled'];
@@ -70,6 +87,8 @@ const milestoneStatuses: MilestoneStatus[] = ['Active', 'Completed', 'Paused', '
 const metricTypes: MetricValueType[] = ['Number', 'Percentage', 'Duration', 'Currency', 'Rating', 'Boolean'];
 const recurrenceFrequencies: RecurrenceFrequency[] = ['Daily', 'Weekly', 'Monthly'];
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const workoutMuscles = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core'];
+const workoutMarker = '[axis-workout-v1]';
 const defaultPageSize = 12;
 const dashboardRanges = [
   { value: 1, label: '1D' },
@@ -175,48 +194,60 @@ export default function App() {
     }
   }
 
-  async function quickLogTemplate(template: ActivityTemplate) {
-    const now = new Date();
+  async function quickLogTemplate(template: ActivityTemplate, draft?: QuickLogDraft) {
+    const end = draft?.recordedAt ? new Date(draft.recordedAt) : new Date();
+    const durationMinutes = Math.max(1, draft?.durationMinutes ?? template.defaultDurationMinutes);
+    const quantity = Math.max(1, draft?.quantity ?? 1);
+    const start = new Date(end.getTime() - durationMinutes * 60000);
+    const humanNotes = [
+      'Quick logged from Today.',
+      `Quantity: ${template.title === 'SPF 30+' ? 1 : quantity}`,
+      draft?.muscles.length ? `Muscles: ${draft.muscles.join(', ')}` : '',
+      draft?.notes ?? ''
+    ].filter(Boolean).join(' · ');
+    const notes = template.title === 'Hypertrophy workout'
+      ? serializeWorkoutNotes(humanNotes, draft?.exercises ?? [])
+      : humanNotes;
     const existing = activities.find((activity) =>
       activity.templateId === template.id
       && activity.status === 'Planned'
-      && sameDay(activity.plannedStartAt ?? activity.actualStartAt, now)
+      && sameDay(activity.plannedStartAt ?? activity.actualStartAt, end)
     );
-
-    if (existing) {
-      await api.post(`/api/activities/${existing.id}/complete`);
-      await logCompanionMetric(template.title);
-      return;
-    }
-
-    const start = new Date(now.getTime() - template.defaultDurationMinutes * 60000);
-    await api.post('/api/activities', {
+    const body = {
       lifeAreaId: template.lifeAreaId,
       goalId: findGoalIdForTemplate(template.title, goals),
       milestoneId: null,
       templateId: template.id,
       title: template.title,
       description: template.description,
-      plannedStartAt: start.toISOString(),
-      plannedEndAt: now.toISOString(),
+      plannedStartAt: existing?.plannedStartAt ?? start.toISOString(),
+      plannedEndAt: existing?.plannedEndAt ?? end.toISOString(),
       actualStartAt: start.toISOString(),
-      actualEndAt: now.toISOString(),
-      durationMinutes: template.defaultDurationMinutes,
+      actualEndAt: end.toISOString(),
+      durationMinutes,
       status: 'Completed',
       energyCost: template.energyCost,
       mentalLoad: template.mentalLoad,
       physicalLoad: template.physicalLoad,
-      points: template.defaultPoints,
-      notes: 'Quick logged from dashboard.'
-    });
-    await logCompanionMetric(template.title);
+      points: template.defaultPoints * quantity,
+      notes
+    };
+
+    if (existing) {
+      await api.put(`/api/activities/${existing.id}`, body);
+    } else {
+      await api.post('/api/activities', body);
+    }
+
+    await logCompanionMetric(template.title, end, quantity);
   }
 
-  async function logCompanionMetric(templateTitle: string) {
+  async function logCompanionMetric(templateTitle: string, recordedAt: Date, quantity: number) {
     const metricMap: Record<string, { name: string; value: number; notes: string }> = {
-      'Creatine dose': { name: 'Creatine dose', value: 5, notes: 'Quick logged default maintenance dose.' },
+      'Creatine dose': { name: 'Creatine dose', value: 5 * quantity, notes: 'Quick logged default maintenance dose.' },
       'No alcohol check-in': { name: 'Alcohol drinks', value: 0, notes: 'Quick logged alcohol-free day.' },
       'No vape check-in': { name: 'Vape-free day', value: 1, notes: 'Quick logged vape-free day.' },
+      'Sleep log': { name: 'Sleep duration', value: quantity, notes: 'Quick logged sleep duration.' },
       'SPF 30+': { name: 'SPF 30+', value: 1, notes: 'Quick logged daily SPF.' }
     };
     const config = metricMap[templateTitle];
@@ -227,7 +258,7 @@ export default function App() {
 
     await api.post(`/api/metrics/${metric.id}/entries`, {
       value: config.value,
-      recordedAt: new Date().toISOString(),
+      recordedAt: recordedAt.toISOString(),
       notes: config.notes
     });
   }
@@ -238,7 +269,9 @@ export default function App() {
     const metricNameByTemplate: Record<string, string> = {
       'Creatine dose': 'Creatine dose',
       'No alcohol check-in': 'Alcohol drinks',
-      'No vape check-in': 'Vape-free day'
+      'No vape check-in': 'Vape-free day',
+      'Sleep log': 'Sleep duration',
+      'SPF 30+': 'SPF 30+'
     };
     const metric = metrics.find((item) => item.name === metricNameByTemplate[activity.title]);
     if (!metric) return;
@@ -269,10 +302,19 @@ export default function App() {
         </div>
 
         <nav className="main-nav" aria-label="Axis sections">
-          {pages.map((item) => (
+          {pages.filter((item) => primaryPageIds.includes(item.id)).map((item) => (
             <VaporNavButton key={item.id} item={item} isActive={page === item.id} onSelect={() => setPage(item.id)} />
           ))}
         </nav>
+
+        <details className="tool-drawer" open={!primaryPageIds.includes(page)}>
+          <summary>More tools</summary>
+          <div className="tool-nav">
+            {pages.filter((item) => !primaryPageIds.includes(item.id)).map((item) => (
+              <VaporNavButton key={item.id} item={item} isActive={page === item.id} onSelect={() => setPage(item.id)} />
+            ))}
+          </div>
+        </details>
 
         <button className="ghost-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
           {theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
@@ -303,7 +345,10 @@ export default function App() {
             balance={balance}
             goals={goals}
             activities={activities}
+            templates={templates}
             busy={isBusy}
+            onQuickLog={(template, draft) => runAction(() => quickLogTemplate(template, draft), `${template.title} logged.`)}
+            onDeleteLog={(activity) => runAction(() => deleteQuickLog(activity), `${activity.title} log deleted.`)}
             onComplete={(id) => runAction(() => api.post(`/api/activities/${id}/complete`), 'Activity completed.')}
             onSkip={(id) => runAction(() => api.post(`/api/activities/${id}/skip`), 'Activity skipped.')}
           />
@@ -316,25 +361,8 @@ export default function App() {
             goals={goals}
             metrics={metrics}
             busy={isBusy}
-            onQuickLog={(template) => runAction(() => quickLogTemplate(template), `${template.title} logged.`)}
-            onDeleteLog={(activity) => runAction(() => deleteQuickLog(activity), `${activity.title} log deleted.`)}
             onComplete={(id) => runAction(() => api.post(`/api/activities/${id}/complete`), 'Activity completed.')}
             onSkip={(id) => runAction(() => api.post(`/api/activities/${id}/skip`), 'Activity skipped.')}
-          />
-        )}
-        {page === 'log' && (
-          <LogPage
-            templates={templates}
-            activities={activities}
-            goals={goals}
-            busy={isBusy}
-            onSave={(body, companion) => runAction(async () => {
-              await api.post('/api/activities', body);
-              if (companion) {
-                const metric = metrics.find((item) => item.name === companion.name);
-                if (metric) await api.post(`/api/metrics/${metric.id}/entries`, { value: companion.value, recordedAt: companion.recordedAt, notes: companion.notes });
-              }
-            }, 'Work logged.')}
           />
         )}
         {page === 'calendar' && (
@@ -374,8 +402,20 @@ export default function App() {
             onDelete={(id) => runAction(() => api.delete(`/api/physique/${id}`), 'Physique entry deleted.')}
           />
         )}
-        {page === 'mood' && <MoodPage entries={moodEntries} busy={isBusy} onSave={(body, id) => runAction(() => id ? api.put(`/api/mood/${id}`, body) : api.post('/api/mood', body), id ? 'Mood updated.' : 'Mood logged.')} onDelete={(id) => runAction(() => api.delete(`/api/mood/${id}`), 'Mood entry deleted.')} />}
-        {page === 'diary' && <DiaryPage entries={diaryEntries} busy={isBusy} onSave={(body, id) => runAction(() => id ? api.put(`/api/diary/${id}`, body) : api.post('/api/diary', body), id ? 'Diary entry updated.' : 'Diary entry added.')} onDelete={(id) => runAction(() => api.delete(`/api/diary/${id}`), 'Diary entry deleted.')} />}
+        {page === 'journal' && (
+          <JournalPage
+            moods={moodEntries}
+            entries={diaryEntries}
+            busy={isBusy}
+            onSave={(mood, diary, moodId, diaryId) => runAction(async () => {
+              const writes: Promise<unknown>[] = [moodId ? api.put(`/api/mood/${moodId}`, mood) : api.post('/api/mood', mood)];
+              if (diary) writes.push(diaryId ? api.put(`/api/diary/${diaryId}`, diary) : api.post('/api/diary', diary));
+              await Promise.all(writes);
+            }, moodId || diaryId ? 'Journal entry updated.' : 'Journal check-in saved.')}
+            onDeleteMood={(id) => runAction(() => api.delete(`/api/mood/${id}`), 'Mood entry deleted.')}
+            onDeleteDiary={(id) => runAction(() => api.delete(`/api/diary/${id}`), 'Diary entry deleted.')}
+          />
+        )}
         {page === 'history' && <HistoryPage />}
         {page === 'goals' && (
           <GoalsPage
@@ -459,46 +499,131 @@ export default function App() {
   );
 }
 
-function MoodPage(props: { entries: MoodEntry[]; busy: boolean; onSave: (body: unknown, id?: string) => void; onDelete: (id: string) => void }) {
-  const [editing, setEditing] = useState<MoodEntry | null>(null);
-  const [draft, setDraft] = useState({ score: 5, energy: 5, stress: 5, context: '', notes: '' });
-  const edit = (entry: MoodEntry) => { setEditing(entry); setDraft({ score: entry.score, energy: entry.energy, stress: entry.stress, context: entry.context, notes: entry.notes }); };
-  const reset = () => { setEditing(null); setDraft({ score: 5, energy: 5, stress: 5, context: '', notes: '' }); };
-  return <section className="workspace-grid">
-    <div className="page-grid"><section className="surface"><SectionTitle kicker="Mood timeline" title="How you felt and what surrounded it" />
-      <div className="signal-summary-grid"><SummaryPill label="Latest" value={`${props.entries[0]?.score ?? '-'} / 10`} /><SummaryPill label="Energy" value={`${props.entries[0]?.energy ?? '-'} / 10`} /><SummaryPill label="Stress" value={`${props.entries[0]?.stress ?? '-'} / 10`} /></div>
-      <div className="history-timeline">{props.entries.map((entry) => <article className="timeline-entry" key={entry.id}><time>{formatDateTime(entry.recordedAt)}</time><div><h4>Mood {entry.score}/10</h4><p>Energy {entry.energy}/10 · Stress {entry.stress}/10 · {entry.context || 'No context'}</p>{entry.notes && <p>{entry.notes}</p>}</div><div className="row-actions"><button className="secondary-button" onClick={() => edit(entry)}>Edit</button><button className="danger-button" onClick={() => props.onDelete(entry.id)}>Delete</button></div></article>)}</div>
-      {props.entries.length === 0 && <EmptyState text="No mood check-ins yet." />}
-    </section></div>
-    <aside className="editor-panel"><EditorShell title={editing ? 'Edit mood context' : 'Check in now'} onCancel={reset}><form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft, editing?.id); reset(); }}>
-      {(['score', 'energy', 'stress'] as const).map((field) => <label className="field" key={field}><span>{field[0].toUpperCase() + field.slice(1)}: {draft[field]}/10</span><input type="range" min="1" max="10" value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: Number(event.target.value) })} /></label>)}
-      <TextField label="What is happening?" value={draft.context} onChange={(context) => setDraft({ ...draft, context })} /><TextArea label="Notes" value={draft.notes} onChange={(notes) => setDraft({ ...draft, notes })} /><small className="helper-copy">New check-ins use the current date and time automatically.</small><button disabled={props.busy}>Save mood</button>
-    </form></EditorShell></aside>
-  </section>;
-}
-
-function DiaryPage(props: { entries: DiaryEntry[]; busy: boolean; onSave: (body: unknown, id?: string) => void; onDelete: (id: string) => void }) {
+function JournalPage(props: {
+  moods: MoodEntry[];
+  entries: DiaryEntry[];
+  busy: boolean;
+  onSave: (mood: unknown, diary: unknown | null, moodId?: string, diaryId?: string) => void;
+  onDeleteMood: (id: string) => void;
+  onDeleteDiary: (id: string) => void;
+}) {
   const today = localDateKey(new Date().toISOString());
   const [selectedDate, setSelectedDate] = useState(today);
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
-  const [editing, setEditing] = useState<DiaryEntry | null>(null);
-  const [draft, setDraft] = useState({ title: '', body: '', tags: '' });
-  const visible = props.entries.filter((entry) => localDateKey(entry.occurredAt) === selectedDate);
-  const reset = () => { setEditing(null); setDraft({ title: '', body: '', tags: '' }); };
-  const exportDiary = async (mode: 'day' | 'range' | 'all') => { const query = mode === 'day' ? `?from=${selectedDate}&to=${selectedDate}` : mode === 'range' ? `?from=${from}&to=${to}` : ''; const file = await api.download(`/api/diary/export${query}`, 'axis-diary.zip'); const link = document.createElement('a'); link.href = URL.createObjectURL(file.blob); link.download = file.fileName; link.click(); URL.revokeObjectURL(link.href); };
-  return <section className="workspace-grid"><div className="page-grid"><section className="surface"><div className="collection-header"><SectionTitle kicker="Daily record" title="Diary timeline" /><label className="field compact-field"><span>Read day</span><input type="date" max={today} value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} /></label></div>
-    <div className="history-timeline">{visible.map((entry) => <article className="timeline-entry" key={entry.id}><time>{new Date(entry.occurredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><div><h4>{entry.title}</h4><p>{entry.body}</p>{entry.tags && <small>{entry.tags}</small>}</div><div className="row-actions"><button className="secondary-button" onClick={() => { setEditing(entry); setDraft({ title: entry.title, body: entry.body, tags: entry.tags }); }}>Edit</button><button className="danger-button" onClick={() => props.onDelete(entry.id)}>Delete</button></div></article>)}</div>{visible.length === 0 && <EmptyState text="Nothing was written on this day." />}
-    <div className="export-strip"><button className="secondary-button" onClick={() => void exportDiary('day')}>Export this day</button><label className="field compact-field"><span>From</span><input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} /></label><label className="field compact-field"><span>To</span><input type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} /></label><button className="secondary-button" onClick={() => void exportDiary('range')}>Export range</button><button className="ghost-button" onClick={() => void exportDiary('all')}>Export all</button></div>
-  </section></div><aside className="editor-panel"><EditorShell title={editing ? 'Edit diary entry' : 'Write what is happening now'} onCancel={reset}><form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft, editing?.id); reset(); }}><TextField label="Title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} required /><TextArea label="Entry" value={draft.body} onChange={(body) => setDraft({ ...draft, body })} /><TextField label="Tags" value={draft.tags} onChange={(tags) => setDraft({ ...draft, tags })} /><small className="helper-copy">Axis stamps new entries with the current day and time. Backdating is disabled.</small><button disabled={props.busy}>Save entry now</button></form></EditorShell></aside></section>;
+  const [editingMood, setEditingMood] = useState<MoodEntry | null>(null);
+  const [editingDiary, setEditingDiary] = useState<DiaryEntry | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [draft, setDraft] = useState({ occurredAt: toLocalInput(new Date()), score: 5, energy: 5, stress: 5, context: '', moodNotes: '', title: '', body: '', tags: '' });
+  const visibleMoods = props.moods.filter((entry) => localDateKey(entry.recordedAt) === selectedDate);
+  const visibleEntries = props.entries.filter((entry) => localDateKey(entry.occurredAt) === selectedDate);
+  const timeline = [
+    ...visibleMoods.map((entry) => ({ at: entry.recordedAt, kind: 'mood' as const, entry })),
+    ...visibleEntries.map((entry) => ({ at: entry.occurredAt, kind: 'diary' as const, entry }))
+  ].sort((first, second) => new Date(second.at).getTime() - new Date(first.at).getTime());
+  const recentMood = props.moods.slice(0, 28);
+  const moodAverage = recentMood.length ? roundNumber(recentMood.reduce((sum, entry) => sum + entry.score, 0) / recentMood.length) : '-';
+
+  function closestPair(at: string) {
+    const time = new Date(at).getTime();
+    const mood = props.moods.map((entry) => ({ entry, distance: Math.abs(new Date(entry.recordedAt).getTime() - time) })).sort((a, b) => a.distance - b.distance)[0];
+    const diary = props.entries.map((entry) => ({ entry, distance: Math.abs(new Date(entry.occurredAt).getTime() - time) })).sort((a, b) => a.distance - b.distance)[0];
+    return { mood: mood?.distance <= 2 * 60 * 60 * 1000 ? mood.entry : null, diary: diary?.distance <= 2 * 60 * 60 * 1000 ? diary.entry : null };
+  }
+
+  function editAt(at: string) {
+    const pair = closestPair(at);
+    setEditingMood(pair.mood);
+    setEditingDiary(pair.diary);
+    setEditorOpen(true);
+    setDraft({
+      occurredAt: toLocalInput(new Date(at)),
+      score: pair.mood?.score ?? 5,
+      energy: pair.mood?.energy ?? 5,
+      stress: pair.mood?.stress ?? 5,
+      context: pair.mood?.context ?? '',
+      moodNotes: pair.mood?.notes ?? '',
+      title: pair.diary?.title ?? '',
+      body: pair.diary?.body ?? '',
+      tags: pair.diary?.tags ?? ''
+    });
+  }
+
+  function reset() {
+    setEditingMood(null);
+    setEditingDiary(null);
+    setEditorOpen(false);
+    setDraft({ occurredAt: toLocalInput(new Date()), score: 5, energy: 5, stress: 5, context: '', moodNotes: '', title: '', body: '', tags: '' });
+  }
+
+  const exportDiary = async (mode: 'day' | 'range' | 'all') => {
+    const query = mode === 'day' ? `?from=${selectedDate}&to=${selectedDate}` : mode === 'range' ? `?from=${from}&to=${to}` : '';
+    const file = await api.download(`/api/diary/export${query}`, 'axis-diary.zip');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(file.blob);
+    link.download = file.fileName;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  return <section className="workspace-grid drawer-workspace journal-workspace">
+    <div className="page-grid">
+      <section className="surface journal-summary">
+        <div className="collection-header flush-header"><SectionTitle kicker="Last 28 check-ins" title="Mind trend" /><SummaryPill label="Mood average" value={`${moodAverage} / 10`} /></div>
+        <JournalMoodChart entries={recentMood} />
+      </section>
+      <section className="surface">
+        <div className="collection-header flush-header"><SectionTitle kicker="Mood + diary" title="Daily record" /><div className="journal-header-actions"><label className="field compact-field"><span>Read day</span><input type="date" max={today} value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} /></label><button onClick={() => {
+          reset();
+          setEditorOpen(true);
+        }}>New check-in</button></div></div>
+        <div className="history-timeline journal-timeline">{timeline.slice(0, 12).map((item) => item.kind === 'mood'
+          ? <article className="timeline-entry kind-mood" key={`mood-${item.entry.id}`}><time>{new Date(item.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><div><h4>Mood {item.entry.score}/10</h4><p>Energy {item.entry.energy}/10 · Stress {item.entry.stress}/10 · {item.entry.context || 'No context'}</p>{item.entry.notes && <p>{item.entry.notes}</p>}</div><div className="row-actions"><button className="secondary-button" onClick={() => editAt(item.at)}>Edit check-in</button><button className="danger-button" onClick={() => props.onDeleteMood(item.entry.id)}>Delete</button></div></article>
+          : <article className="timeline-entry kind-diary" key={`diary-${item.entry.id}`}><time>{new Date(item.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><div><h4>{item.entry.title}</h4><p>{item.entry.body}</p>{item.entry.tags && <small>{item.entry.tags}</small>}</div><div className="row-actions"><button className="secondary-button" onClick={() => editAt(item.at)}>Edit check-in</button><button className="danger-button" onClick={() => props.onDeleteDiary(item.entry.id)}>Delete</button></div></article>
+        )}</div>
+        {timeline.length === 0 && <EmptyState text="Nothing was recorded on this day." />}
+        {timeline.length > 12 && <p className="helper-copy">Showing the 12 newest items for this day.</p>}
+        <div className="export-strip"><button className="secondary-button" onClick={() => void exportDiary('day')}>Export day</button><label className="field compact-field"><span>From</span><input type="date" value={from} max={today} onChange={(event) => setFrom(event.target.value)} /></label><label className="field compact-field"><span>To</span><input type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} /></label><button className="secondary-button" onClick={() => void exportDiary('range')}>Export range</button><button className="ghost-button" onClick={() => void exportDiary('all')}>Export all</button></div>
+      </section>
+    </div>
+    <EditorDrawer open={editorOpen} label={editingMood || editingDiary ? 'Edit check-in' : 'New check-in'} onClose={reset}><EditorShell title={editingMood || editingDiary ? 'Edit check-in' : 'Write and check in'} onCancel={reset}><form className="editor-form diary-form" onSubmit={(event) => {
+      event.preventDefault();
+      const occurredAt = new Date(draft.occurredAt).toISOString();
+      props.onSave(
+        { recordedAt: occurredAt, score: draft.score, energy: draft.energy, stress: draft.stress, context: draft.context, notes: draft.moodNotes },
+        draft.title.trim() || draft.body.trim() ? { occurredAt, title: draft.title.trim() || 'Journal entry', body: draft.body, tags: draft.tags } : null,
+        editingMood?.id,
+        editingDiary?.id
+      );
+      reset();
+    }}>
+      <label className="field"><span>When</span><input type="datetime-local" value={draft.occurredAt} max={toLocalInput(new Date())} onChange={(event) => setDraft({ ...draft, occurredAt: event.target.value })} /></label>
+      <div className="journal-sliders">{(['score', 'energy', 'stress'] as const).map((field) => <label className="field" key={field}><span>{field[0].toUpperCase() + field.slice(1)}: {draft[field]}/10</span><input type="range" min="1" max="10" value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: Number(event.target.value) })} /></label>)}</div>
+      <TextField label="What is happening?" value={draft.context} onChange={(context) => setDraft({ ...draft, context })} />
+      <TextArea label="Mood note" value={draft.moodNotes} onChange={(moodNotes) => setDraft({ ...draft, moodNotes })} />
+      <TextField label="Diary title (optional)" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} />
+      <label className="field full diary-paper"><span>Diary</span><textarea value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} placeholder="Write freely..." /></label>
+      <TextField label="Tags" value={draft.tags} onChange={(tags) => setDraft({ ...draft, tags })} />
+      <small className="helper-copy">You can record an earlier moment. Future timestamps are blocked.</small>
+      <button disabled={props.busy}>Save check-in</button>
+    </form></EditorShell></EditorDrawer>
+  </section>;
+}
+
+function JournalMoodChart({ entries }: { entries: MoodEntry[] }) {
+  const sorted = [...entries].sort((first, second) => new Date(first.recordedAt).getTime() - new Date(second.recordedAt).getTime());
+  const points = sorted.map((entry, index) => `${sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100},${92 - entry.score / 10 * 78}`).join(' ');
+  return <div className="journal-chart"><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Mood trend over recent check-ins"><line x1="0" x2="100" y1="53" y2="53" className="chart-axis" />{points && <polyline points={points} />}{sorted.map((entry, index) => <circle key={entry.id} cx={sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100} cy={92 - entry.score / 10 * 78} r="1.6"><title>{formatDateTime(entry.recordedAt)}: {entry.score}/10</title></circle>)}</svg></div>;
 }
 
 function HistoryPage() {
   const today = localDateKey(new Date().toISOString());
   const [date, setDate] = useState(today);
   const [day, setDay] = useState<HistoryDay | null>(null);
-  useEffect(() => { void api.get<HistoryDay>(`/api/history?date=${date}`).then(setDay); }, [date]);
-  return <section className="page-grid"><section className="surface"><div className="collection-header"><SectionTitle kicker="Life history" title="Reconstruct a day" /><label className="field compact-field"><span>Day</span><input type="date" max={today} value={date} onChange={(event) => setDate(event.target.value)} /></label></div><p className="helper-copy">Activities, measurements, mood and journal notes share one chronological view.</p><div className="history-timeline">{day?.timeline.map((item, index) => <article className={`timeline-entry kind-${item.kind.toLowerCase()}`} key={`${item.at}-${index}`}><time>{new Date(item.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><div><small>{item.kind}</small><h4>{item.title}</h4><p>{item.detail}</p></div></article>)}</div>{day && day.timeline.length === 0 && <EmptyState text="No recorded signals for this day." />}</section></section>;
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => { setExpanded(false); void api.get<HistoryDay>(`/api/history?date=${date}`).then(setDay); }, [date]);
+  const visible = expanded ? day?.timeline : day?.timeline.slice(0, 16);
+  return <section className="page-grid"><section className="surface"><div className="collection-header"><SectionTitle kicker="Life history" title="Reconstruct a day" /><label className="field compact-field"><span>Day</span><input type="date" max={today} value={date} onChange={(event) => setDate(event.target.value)} /></label></div><p className="helper-copy">Activities, measurements, mood and journal notes share one chronological view.</p><div className="history-timeline">{visible?.map((item, index) => <article className={`timeline-entry kind-${item.kind.toLowerCase()}`} key={`${item.at}-${index}`}><time>{new Date(item.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><div><small>{item.kind}</small><h4>{item.title}</h4><p>{item.detail}</p></div></article>)}</div>{day && day.timeline.length > 16 && <button className="secondary-button" onClick={() => setExpanded((current) => !current)}>{expanded ? 'Show less' : `Show all ${day.timeline.length}`}</button>}{day && day.timeline.length === 0 && <EmptyState text="No recorded signals for this day." />}</section></section>;
 }
 
 function TodayPage(props: {
@@ -508,12 +633,20 @@ function TodayPage(props: {
   balance: BalanceRow[];
   goals: Goal[];
   activities: Activity[];
+  templates: ActivityTemplate[];
   busy: boolean;
+  onQuickLog: (template: ActivityTemplate, draft: QuickLogDraft) => void;
+  onDeleteLog: (activity: Activity) => void;
   onComplete: (id: string) => void;
   onSkip: (id: string) => void;
 }) {
   const primary = props.today?.primaryGoal ?? props.goals.find((goal) => goal.priority === 'Primary');
   const plannedToday = props.today?.timeline ?? [];
+  const quickTemplates = getQuickTemplates(props.templates);
+  const recentQuickLogs = props.activities
+    .filter((activity) => activity.status === 'Completed' && quickTemplates.some((template) => template.id === activity.templateId))
+    .sort((first, second) => new Date(getActivityDate(second) ?? 0).getTime() - new Date(getActivityDate(first) ?? 0).getTime())
+    .slice(0, 8);
 
   return (
     <section className="page-grid">
@@ -533,6 +666,24 @@ function TodayPage(props: {
         <FocusPanel title="Main focus" activity={props.today?.mainFocus} busy={props.busy} onComplete={props.onComplete} onSkip={props.onSkip} />
         <FocusPanel title="Recovery" activity={props.today?.recoveryTask} busy={props.busy} onComplete={props.onComplete} onSkip={props.onSkip} />
       </section>
+
+      <TodayTrendsPanel activities={props.activities} />
+
+      <section className="surface">
+        <SectionTitle kicker="Last 28 days" title="Life balance" />
+        <LifeBalancePanel rows={props.balance} />
+      </section>
+
+      <TodayQuickLogPanel
+        templates={quickTemplates}
+        activities={props.activities}
+        recentQuickLogs={recentQuickLogs}
+        busy={props.busy}
+        onQuickLog={props.onQuickLog}
+        onDeleteLog={props.onDeleteLog}
+      />
+
+      <HypertrophyCoach activities={props.activities} />
 
       <section className="surface">
         <SectionTitle kicker="Why this" title="Suggestions" />
@@ -558,13 +709,178 @@ function TodayPage(props: {
         <SectionTitle kicker="Today" title="Timeline" />
         <ActivityList activities={plannedToday} busy={props.busy} onComplete={props.onComplete} onSkip={props.onSkip} />
       </section>
-
-      <section className="surface">
-        <SectionTitle kicker="Last 28 days" title="Life balance" />
-        <LifeBalancePanel rows={props.balance} />
-      </section>
     </section>
   );
+}
+
+function TodayQuickLogPanel(props: {
+  templates: ActivityTemplate[];
+  activities: Activity[];
+  recentQuickLogs: Activity[];
+  busy: boolean;
+  onQuickLog: (template: ActivityTemplate, draft: QuickLogDraft) => void;
+  onDeleteLog: (activity: Activity) => void;
+}) {
+  const [templateId, setTemplateId] = useState(props.templates[0]?.id ?? '');
+  const template = props.templates.find((item) => item.id === templateId) ?? props.templates[0];
+  const [quantity, setQuantity] = useState(1);
+  const [duration, setDuration] = useState(template?.defaultDurationMinutes ?? 30);
+  const [recordedAt, setRecordedAt] = useState(toLocalInput(new Date()));
+  const [notes, setNotes] = useState('');
+  const [muscles, setMuscles] = useState<string[]>([]);
+  const [exercises, setExercises] = useState<WorkoutExercise[]>([createExercise()]);
+  const muscleOptions = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core'];
+  const recentMuscles = props.activities.filter((item) => item.status === 'Completed' && /Muscles:/i.test(item.notes) && new Date(getActivityDate(item) ?? 0) >= addDays(new Date(), -3));
+  const recoveryHits = muscles.filter((muscle) => recentMuscles.some((item) => item.notes.includes(muscle)));
+  const isSleep = template?.title === 'Sleep log';
+  const isSpf = template?.title === 'SPF 30+';
+  const sleepScore = quantity >= 8 ? { label: 'Optimal recovery', tone: 'good', copy: 'At or above the 8-hour target.' } : quantity >= 7 ? { label: 'Acceptable, not optimal', tone: 'okay', copy: 'A workable night, but some sleep debt may remain.' } : quantity >= 6 ? { label: 'Recovery compromised', tone: 'warning', copy: 'Training, attention, appetite, and appearance may suffer.' } : { label: 'Severe sleep deficit', tone: 'danger', copy: 'Prioritize recovery and avoid making this a pattern.' };
+
+  useEffect(() => {
+    if (!template && props.templates[0]) {
+      setTemplateId(props.templates[0].id);
+    }
+  }, [props.templates, template]);
+
+  function chooseTemplate(id: string) {
+    const next = props.templates.find((item) => item.id === id);
+    setTemplateId(id);
+    setDuration(next?.defaultDurationMinutes ?? 30);
+    setQuantity(next?.title === 'Sleep log' ? 8 : 1);
+    setMuscles([]);
+    setExercises([createExercise()]);
+  }
+
+  return (
+    <section className="surface today-log-panel">
+      <div className="collection-header flush-header">
+        <SectionTitle kicker="Operate" title="Log completed work" />
+        <label className="field compact-field"><span>When</span><input type="datetime-local" value={recordedAt} max={toLocalInput(new Date())} onChange={(event) => setRecordedAt(event.target.value)} /></label>
+      </div>
+      <div className="template-picker">{props.templates.map((item) => <button key={item.id} className={template?.id === item.id ? 'active' : ''} onClick={() => chooseTemplate(item.id)}>{item.title}<small>{item.lifeAreaName}</small></button>)}</div>
+      {template && (
+        <>
+          <div className="form-grid three">
+            {!isSpf && <NumberField label={isSleep ? 'Hours slept' : 'Quantity'} value={quantity} onChange={(value) => setQuantity(Math.max(isSleep ? 0 : 1, value))} />}
+            {isDurationActivity(template.title) && <NumberField label="Total minutes" value={duration} onChange={(value) => setDuration(Math.max(1, value))} />}
+          </div>
+          {isSleep && <div className={`sleep-assessment ${sleepScore.tone}`}><strong>{quantity}h · {sleepScore.label}</strong><span>{sleepScore.copy}</span></div>}
+          {template.title === 'Hypertrophy workout' && <><div className="muscle-picker">{muscleOptions.map((muscle) => <button key={muscle} className={muscles.includes(muscle) ? 'active' : ''} onClick={() => setMuscles((current) => current.includes(muscle) ? current.filter((item) => item !== muscle) : [...current, muscle])}>{muscle}</button>)}</div><WorkoutExerciseEditor exercises={exercises} onChange={setExercises} />{recoveryHits.length > 0 && <div className="recovery-warning"><strong>Recovery check</strong><span>{recoveryHits.join(', ')} appeared in a workout during the last 72 hours.</span></div>}</>}
+          <TextArea label="Notes" value={notes} onChange={setNotes} />
+          <button disabled={props.busy} onClick={() => props.onQuickLog(template, { recordedAt, durationMinutes: isDurationActivity(template.title) ? duration : 1, quantity: isSpf ? 1 : quantity, notes, muscles, exercises: template.title === 'Hypertrophy workout' ? exercises.filter((exercise) => exercise.name.trim()) : [] })}>
+            {isSpf ? 'Confirm SPF applied' : 'Log completed work'}
+          </button>
+        </>
+      )}
+      <div className="recent-log-list compact-recent-log">
+        {props.recentQuickLogs.map((activity) => (
+          <div className="recent-log-row" key={activity.id}>
+            <span><strong>{activity.title}</strong><small>{formatDateTime(getActivityDate(activity) ?? '')}</small></span>
+            <button className="danger-button" disabled={props.busy} onClick={() => confirmDelete(`Delete the ${activity.title} log?`) && props.onDeleteLog(activity)}>Delete</button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WorkoutExerciseEditor(props: { exercises: WorkoutExercise[]; onChange: (exercises: WorkoutExercise[]) => void }) {
+  function update(id: string, field: keyof WorkoutExercise, value: string | number) {
+    props.onChange(props.exercises.map((exercise) => exercise.id === id ? { ...exercise, [field]: value } : exercise));
+  }
+
+  return <section className="workout-builder">
+    <div className="workout-builder-heading"><div><strong>Exercises</strong><span>Sets, reps, load and reps in reserve</span></div><button type="button" className="secondary-button" onClick={() => props.onChange([...props.exercises, createExercise()])}>Add exercise</button></div>
+    <div className="exercise-table">
+      {props.exercises.map((exercise, index) => <div className="exercise-row" key={exercise.id}>
+        <label className="field exercise-name"><span>Exercise {index + 1}</span><input value={exercise.name} onChange={(event) => update(exercise.id, 'name', event.target.value)} placeholder="e.g. Incline press" /></label>
+        <label className="field"><span>Muscle</span><select value={exercise.muscle} onChange={(event) => update(exercise.id, 'muscle', event.target.value)}>{workoutMuscles.map((muscle) => <option key={muscle}>{muscle}</option>)}</select></label>
+        <label className="field"><span>Sets</span><input type="number" min="1" max="20" value={exercise.sets} onChange={(event) => update(exercise.id, 'sets', Number(event.target.value))} /></label>
+        <label className="field"><span>Reps</span><input type="number" min="1" max="100" value={exercise.reps} onChange={(event) => update(exercise.id, 'reps', Number(event.target.value))} /></label>
+        <label className="field"><span>kg</span><input type="number" min="0" step="0.5" value={exercise.weightKg} onChange={(event) => update(exercise.id, 'weightKg', Number(event.target.value))} /></label>
+        <label className="field"><span>RIR</span><input type="number" min="0" max="10" value={exercise.rir} onChange={(event) => update(exercise.id, 'rir', Number(event.target.value))} /></label>
+        <button type="button" className="danger-button icon-button exercise-remove" aria-label={`Remove exercise ${index + 1}`} onClick={() => props.onChange(props.exercises.length === 1 ? [createExercise()] : props.exercises.filter((item) => item.id !== exercise.id))}>x</button>
+      </div>)}
+    </div>
+  </section>;
+}
+
+function TodayTrendsPanel({ activities }: { activities: Activity[] }) {
+  const start = startOfDay(addDays(new Date(), -27));
+  const recent = activities.filter((activity) => {
+    const at = getActivityDate(activity);
+    return at && new Date(at) >= start && new Date(at) <= endOfDay(new Date());
+  });
+  const weeks = Array.from({ length: 4 }, (_, index) => {
+    const weekStart = addDays(start, index * 7);
+    const weekEnd = endOfDay(addDays(weekStart, 6));
+    const rows = recent.filter((activity) => { const at = getActivityDate(activity); return at && new Date(at) >= weekStart && new Date(at) <= weekEnd; });
+    return {
+      label: `${weekStart.getDate()}/${weekStart.getMonth() + 1}`,
+      done: rows.filter((activity) => activity.status === 'Completed').length,
+      skipped: rows.filter((activity) => activity.status === 'Skipped' || activity.status === 'Cancelled').length,
+      minutes: rows.filter((activity) => activity.status === 'Completed').reduce((sum, activity) => sum + (isDurationActivity(activity.title) ? activity.durationMinutes : 0), 0)
+    };
+  });
+  const maxCount = Math.max(1, ...weeks.map((week) => week.done + week.skipped));
+  const maxMinutes = Math.max(1, ...weeks.map((week) => week.minutes));
+  const areaRows = Array.from(recent.filter((activity) => activity.status === 'Completed').reduce((map, activity) => {
+    const current = map.get(activity.lifeAreaName) ?? { name: activity.lifeAreaName, color: activity.lifeAreaColor, minutes: 0, count: 0 };
+    current.minutes += isDurationActivity(activity.title) ? activity.durationMinutes : 0;
+    current.count += 1;
+    map.set(activity.lifeAreaName, current);
+    return map;
+  }, new Map<string, { name: string; color: string; minutes: number; count: number }>()).values()).sort((a, b) => b.minutes - a.minutes || b.count - a.count);
+  const maxArea = Math.max(1, ...areaRows.map((row) => row.minutes || row.count));
+
+  return <section className="surface today-trends">
+    <SectionTitle kicker="Last 28 days" title="Execution at a glance" />
+    <div className="today-chart-grid">
+      <article className="compact-chart"><div className="chart-heading"><strong>Done vs skipped</strong><span>Weekly actions</span></div><div className="stacked-week-chart">{weeks.map((week) => <div key={week.label}><div className="stacked-bars" title={`${week.done} done, ${week.skipped} skipped`}><i className="done" style={{ height: `${week.done / maxCount * 100}%` }} /><i className="skipped" style={{ height: `${week.skipped / maxCount * 100}%` }} /></div><small>{week.label}</small></div>)}</div></article>
+      <article className="compact-chart"><div className="chart-heading"><strong>Focused minutes</strong><span>Check-ins excluded</span></div><div className="simple-bar-chart">{weeks.map((week) => <div key={week.label}><span><i style={{ height: `${week.minutes / maxMinutes * 100}%` }} /></span><strong>{week.minutes}</strong><small>{week.label}</small></div>)}</div></article>
+      <article className="compact-chart"><div className="chart-heading"><strong>Attention by area</strong><span>Minutes or check-ins</span></div><div className="horizontal-bars">{areaRows.slice(0, 5).map((row) => <div key={row.name}><span>{row.name}</span><div><i style={{ width: `${(row.minutes || row.count) / maxArea * 100}%`, background: row.color }} /></div><strong>{row.minutes ? `${row.minutes}m` : `${row.count}x`}</strong></div>)}{areaRows.length === 0 && <EmptyState text="No completed work in this range." />}</div></article>
+    </div>
+  </section>;
+}
+
+function HypertrophyCoach({ activities }: { activities: Activity[] }) {
+  const workouts = activities
+    .filter((activity) => activity.status === 'Completed' && /hypertrophy workout|gym session/i.test(activity.title))
+    .map((activity) => ({ activity, exercises: parseWorkoutExercises(activity.notes) }))
+    .sort((first, second) => new Date(getActivityDate(second.activity) ?? 0).getTime() - new Date(getActivityDate(first.activity) ?? 0).getTime());
+  const weekStart = addDays(new Date(), -6);
+  const weeklyExercises = workouts.filter((workout) => new Date(getActivityDate(workout.activity) ?? 0) >= weekStart).flatMap((workout) => workout.exercises);
+  const muscleRows = workoutMuscles.map((muscle) => ({ muscle, sets: weeklyExercises.filter((exercise) => exercise.muscle === muscle).reduce((sum, exercise) => sum + exercise.sets, 0) })).filter((row) => row.sets > 0);
+  const maxSets = Math.max(1, ...muscleRows.map((row) => row.sets));
+  const allExercises = workouts.flatMap((workout) => workout.exercises.map((exercise) => ({ exercise, at: getActivityDate(workout.activity) ?? '' })));
+  const exerciseNames = Array.from(new Set(allExercises.map((row) => row.exercise.name.trim()).filter(Boolean)));
+  const progressionRows = exerciseNames.map((name) => {
+    const logs = allExercises.filter((row) => row.exercise.name.trim().toLowerCase() === name.toLowerCase()).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+    const latest = logs[0]?.exercise;
+    const previous = logs[1]?.exercise;
+    const latestVolume = latest ? latest.sets * latest.reps * latest.weightKg : 0;
+    const previousVolume = previous ? previous.sets * previous.reps * previous.weightKg : 0;
+    return { name, latest, delta: previousVolume > 0 ? Math.round((latestVolume - previousVolume) / previousVolume * 100) : null };
+  }).slice(0, 6);
+  const averageRir = weeklyExercises.length ? weeklyExercises.reduce((sum, exercise) => sum + exercise.rir, 0) / weeklyExercises.length : null;
+  const suggestions: string[] = [];
+  if (workouts.length === 0) suggestions.push('Log your first workout with exercises, sets, reps and load. Axis needs at least two comparable sessions to judge progression.');
+  muscleRows.filter((row) => row.sets < 8).forEach((row) => suggestions.push(`${row.muscle}: ${row.sets} hard sets this week. Add 2-4 quality sets next week if recovery and technique are good.`));
+  muscleRows.filter((row) => row.sets > 20).forEach((row) => suggestions.push(`${row.muscle}: ${row.sets} sets is a high weekly dose. Reduce volume if performance or recovery is falling.`));
+  if (averageRir !== null && averageRir > 3) suggestions.push(`Average RIR is ${roundNumber(averageRir)}. Most working sets may be too easy; add reps or a small amount of load while keeping clean technique.`);
+  if (averageRir !== null && averageRir < 1) suggestions.push(`Average RIR is ${roundNumber(averageRir)}. Too many all-out sets can create fatigue; keep most work around 1-3 RIR.`);
+  progressionRows.filter((row) => row.delta !== null && row.delta < -10).forEach((row) => suggestions.push(`${row.name}: volume fell ${Math.abs(row.delta!)}% versus the previous log. Check sleep, exercise order and recovery before adding load.`));
+  if (workouts.length > 0 && suggestions.length === 0) suggestions.push('Volume and effort are in a productive range. Keep the same plan and progress one variable at a time: one rep, a small load increase, or one extra set.');
+
+  return <section className="surface hypertrophy-coach">
+    <div className="collection-header flush-header"><SectionTitle kicker="Training analysis" title="Hypertrophy coach" /><span className="status-badge maintained">{workouts.length} logged workouts</span></div>
+    <div className="coach-grid">
+      <article className="compact-chart"><div className="chart-heading"><strong>Weekly hard sets</strong><span>Useful range depends on recovery</span></div><div className="horizontal-bars muscle-volume">{muscleRows.map((row) => <div key={row.muscle}><span>{row.muscle}</span><div><i className={row.sets < 8 ? 'low' : row.sets > 20 ? 'high' : ''} style={{ width: `${row.sets / maxSets * 100}%` }} /></div><strong>{row.sets}</strong></div>)}{muscleRows.length === 0 && <EmptyState text="Add exercises to a completed workout to build this chart." />}</div></article>
+      <article className="compact-chart"><div className="chart-heading"><strong>Exercise progression</strong><span>Volume versus previous log</span></div><div className="progression-list">{progressionRows.map((row) => <div key={row.name}><span><strong>{row.name}</strong><small>{row.latest ? `${row.latest.sets} x ${row.latest.reps} @ ${row.latest.weightKg} kg · RIR ${row.latest.rir}` : ''}</small></span><em className={(row.delta ?? 0) >= 0 ? 'positive' : 'negative'}>{row.delta === null ? 'baseline' : `${row.delta > 0 ? '+' : ''}${row.delta}%`}</em></div>)}{progressionRows.length === 0 && <EmptyState text="Repeat an exercise to see progression." />}</div></article>
+    </div>
+    <div className="coach-advice"><strong>Next plan changes</strong>{suggestions.slice(0, 5).map((suggestion) => <p key={suggestion}>{suggestion}</p>)}</div>
+    <small className="helper-copy">Training guidance is based on your logs and common hypertrophy principles. Pain, injury, illness and medical constraints need professional judgment.</small>
+  </section>;
 }
 
 function LifeBalancePanel({ rows }: { rows: BalanceRow[] }) {
@@ -614,52 +930,6 @@ function LifeBalancePanel({ rows }: { rows: BalanceRow[] }) {
   );
 }
 
-function LogPage(props: { templates: ActivityTemplate[]; activities: Activity[]; goals: Goal[]; busy: boolean; onSave: (body: unknown, companion?: { name: string; value: number; recordedAt: string; notes: string }) => void }) {
-  const activeTemplates = props.templates.filter((item) => item.isActive);
-  const [templateId, setTemplateId] = useState(activeTemplates[0]?.id ?? '');
-  const [quantity, setQuantity] = useState(1);
-  const [duration, setDuration] = useState(activeTemplates[0]?.defaultDurationMinutes ?? 30);
-  const [recordedAt, setRecordedAt] = useState(toLocalInput(new Date()));
-  const [notes, setNotes] = useState('');
-  const [muscles, setMuscles] = useState<string[]>([]);
-  const template = activeTemplates.find((item) => item.id === templateId);
-  const muscleOptions = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core'];
-  const recentMuscles = props.activities.filter((item) => item.status === 'Completed' && /Muscles:/i.test(item.notes) && new Date(getActivityDate(item) ?? 0) >= addDays(new Date(), -3));
-  const recoveryHits = muscles.filter((muscle) => recentMuscles.some((item) => item.notes.includes(muscle)));
-  const isSleep = template?.title === 'Sleep log';
-  const isSpf = template?.title === 'SPF 30+';
-  const sleepScore = quantity >= 8 ? { label: 'Optimal recovery', tone: 'good', copy: 'At or above the 8-hour target.' } : quantity >= 7 ? { label: 'Acceptable, not optimal', tone: 'okay', copy: 'A workable night, but some sleep debt may remain.' } : quantity >= 6 ? { label: 'Recovery compromised', tone: 'warning', copy: 'Training, attention, appetite, and appearance may suffer.' } : { label: 'Severe sleep deficit', tone: 'danger', copy: 'Prioritize recovery and avoid making this a pattern.' };
-
-  function chooseTemplate(id: string) {
-    const next = activeTemplates.find((item) => item.id === id);
-    setTemplateId(id);
-    if (next) setDuration(next.defaultDurationMinutes);
-    if (next?.title === 'Sleep log') setQuantity(8);
-    if (next?.title === 'SPF 30+') setQuantity(1);
-    setMuscles([]);
-  }
-
-  return <section className="workspace-grid log-workspace">
-    <div className="workspace-main">
-      <section className="hero-panel"><div><p className="eyebrow">Universal capture</p><h3>Log what actually happened</h3><p>One place for habits, training, study volume, and meaningful work.</p></div></section>
-      <section className="surface log-form-panel">
-        <SectionTitle kicker="Completed work" title="New log" />
-        <div className="template-picker">{activeTemplates.map((item) => <button key={item.id} className={templateId === item.id ? 'active' : ''} onClick={() => chooseTemplate(item.id)}>{item.title}<small>{item.lifeAreaName}</small></button>)}</div>
-        <div className="form-grid three">
-          {!isSpf && <NumberField label={isSleep ? 'Hours slept' : 'Quantity'} value={quantity} onChange={(value) => setQuantity(Math.max(isSleep ? 0 : 1, value))} />}
-          <NumberField label="Total minutes" value={duration} onChange={(value) => setDuration(Math.max(1, value))} />
-          <label className="field"><span>When</span><input type="datetime-local" value={recordedAt} onChange={(event) => setRecordedAt(event.target.value)} /></label>
-        </div>
-        {isSleep && <div className={`sleep-assessment ${sleepScore.tone}`}><strong>{quantity}h · {sleepScore.label}</strong><span>{sleepScore.copy} Axis uses 8h as the target, while 7h is the minimum acceptable zone for most adults.</span></div>}
-        {template?.title === 'Hypertrophy workout' && <><div className="muscle-picker">{muscleOptions.map((muscle) => <button key={muscle} className={muscles.includes(muscle) ? 'active' : ''} onClick={() => setMuscles((current) => current.includes(muscle) ? current.filter((item) => item !== muscle) : [...current, muscle])}>{muscle}</button>)}</div>{recoveryHits.length > 0 && <div className="recovery-warning"><strong>Recovery check</strong><span>{recoveryHits.join(', ')} appeared in a workout during the last 72 hours. Consider another muscle group or a lighter session.</span></div>}</>}
-        <TextArea label="Notes" value={notes} onChange={setNotes} />
-        <button disabled={props.busy || !template} onClick={() => { if (!template) return; const end = new Date(recordedAt); const start = new Date(end.getTime() - duration * 60000); const body = { lifeAreaId: template.lifeAreaId, goalId: findGoalIdForTemplate(template.title, props.goals), milestoneId: null, templateId: template.id, title: template.title, description: template.description, plannedStartAt: start.toISOString(), plannedEndAt: end.toISOString(), actualStartAt: start.toISOString(), actualEndAt: end.toISOString(), durationMinutes: duration, status: 'Completed', energyCost: template.energyCost, mentalLoad: template.mentalLoad, physicalLoad: template.physicalLoad, points: template.defaultPoints * quantity, notes: [`Quantity: ${isSpf ? 1 : quantity}`, muscles.length ? `Muscles: ${muscles.join(', ')}` : '', notes].filter(Boolean).join(' · ') }; const companion = isSleep ? { name: 'Sleep duration', value: quantity, recordedAt: end.toISOString(), notes: sleepScore.label } : isSpf ? { name: 'SPF 30+', value: 1, recordedAt: end.toISOString(), notes: 'Daily SPF confirmed.' } : undefined; props.onSave(body, companion); }}>{isSpf ? 'Confirm SPF applied' : 'Log completed work'}</button>
-      </section>
-    </div>
-    <aside className="editor-panel"><section className="surface"><SectionTitle kicker="Recovery" title="Recent muscle work" />{recentMuscles.slice(0, 8).map((item) => <div className="recent-log-row" key={item.id}><span><strong>{item.title}</strong><small>{formatDateTime(getActivityDate(item) ?? '')}</small></span></div>)}{recentMuscles.length === 0 && <EmptyState text="No muscle groups logged in the last 72 hours." />}</section></aside>
-  </section>;
-}
-
 function DashboardPage(props: {
   activities: Activity[];
   templates: ActivityTemplate[];
@@ -667,44 +937,24 @@ function DashboardPage(props: {
   goals: Goal[];
   metrics: Metric[];
   busy: boolean;
-  onQuickLog: (template: ActivityTemplate) => void;
-  onDeleteLog: (activity: Activity) => void;
   onComplete: (id: string) => void;
   onSkip: (id: string) => void;
 }) {
   const [rangeDays, setRangeDays] = useState(7);
-  const [pendingTemplate, setPendingTemplate] = useState<ActivityTemplate | null>(null);
   const now = new Date();
   const rangeStart = startOfDay(addDays(now, -(rangeDays - 1)));
   const days = Array.from({ length: rangeDays }, (_, index) => addDays(rangeStart, index));
-  const templateByTitle = new Map(props.templates.map((template) => [template.title, template]));
-  const quickTemplates = [
-    'Creatine dose',
-    'Desk mobility reset',
-    'Hypertrophy workout',
-    'DSA problem rep',
-    'System design case study',
-    'No alcohol check-in',
-    'No vape check-in',
-    'Diet check-in',
-    'Sleep log',
-    'SPF 30+'
-  ].map((title) => templateByTitle.get(title)).filter(Boolean) as ActivityTemplate[];
+  const quickTemplates = getQuickTemplates(props.templates);
   const rangeActivities = props.activities.filter((activity) => {
     const date = getActivityDate(activity);
     return date && new Date(date) >= rangeStart && new Date(date) <= endOfDay(now);
   });
-  const todayActivities = props.activities.filter((activity) => sameDay(getActivityDate(activity), now)).sort(compareActivities);
   const tracks = buildDashboardTracks(days, rangeActivities, quickTemplates, props.rules);
   const completed = rangeActivities.filter((activity) => activity.status === 'Completed').length;
   const missed = tracks.reduce((sum, track) => sum + track.missedCount, 0);
   const studyMinutes = rangeActivities
     .filter((activity) => activity.status === 'Completed' && /DSA|System design/i.test(activity.title))
     .reduce((sum, activity) => sum + activity.durationMinutes, 0);
-  const recentQuickLogs = props.activities
-    .filter((activity) => activity.status === 'Completed' && quickTemplates.some((template) => template.id === activity.templateId))
-    .sort((first, second) => new Date(getActivityDate(second) ?? 0).getTime() - new Date(getActivityDate(first) ?? 0).getTime())
-    .slice(0, 8);
 
   return (
     <section className="page-grid">
@@ -753,7 +1003,6 @@ function DashboardPage(props: {
                 <div><dt>Gaps</dt><dd>{track.missedCount}</dd></div>
                 <div><dt>Minutes</dt><dd>{track.minutes}</dd></div>
               </dl>
-              {track.template && track.title !== 'Sleep log' && <button className="secondary-button" disabled={props.busy} onClick={() => setPendingTemplate(track.template!)}>Log now</button>}
             </article>
           ))}
         </div>
@@ -764,49 +1013,6 @@ function DashboardPage(props: {
         <DashboardMomentumChart days={days} tracks={tracks} goals={props.goals} metrics={props.metrics} activities={rangeActivities} />
       </section>
 
-      <section className="work-grid two">
-        <section className="surface">
-          <SectionTitle kicker="Today" title="Quick log" />
-          <div className="quick-log-grid">
-            {quickTemplates.map((template) => (
-              <button key={template.id} className="secondary-button quick-log-button" disabled={props.busy} onClick={() => setPendingTemplate(template)}>
-                <strong>{template.title}</strong>
-                <span>{template.defaultDurationMinutes}m · {template.lifeAreaName}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="surface">
-          <SectionTitle kicker="History" title="Recent quick logs" />
-          <div className="recent-log-list">
-            {recentQuickLogs.map((activity) => (
-              <div className="recent-log-row" key={activity.id}>
-                <span><strong>{activity.title}</strong><small>{formatDateTime(getActivityDate(activity) ?? '')}</small></span>
-                <button className="danger-button" disabled={props.busy} onClick={() => confirmDelete(`Delete the ${activity.title} log?`) && props.onDeleteLog(activity)}>Delete log</button>
-              </div>
-            ))}
-            {recentQuickLogs.length === 0 && <EmptyState text="No quick logs yet." />}
-          </div>
-        </section>
-      </section>
-
-      {pendingTemplate && (
-        <div className="confirmation-backdrop" role="presentation" onMouseDown={() => setPendingTemplate(null)}>
-          <section className="confirmation-panel" role="dialog" aria-modal="true" aria-labelledby="quick-log-title" onMouseDown={(event) => event.stopPropagation()}>
-            <p className="eyebrow">Confirm log</p>
-            <h3 id="quick-log-title">Log {pendingTemplate.title} now?</h3>
-            <p>This records {pendingTemplate.defaultDurationMinutes} minutes as completed today. You can delete it from Recent quick logs.</p>
-            <div className="card-actions">
-              <button className="secondary-button" onClick={() => setPendingTemplate(null)}>Cancel</button>
-              <button disabled={props.busy} onClick={() => {
-                props.onQuickLog(pendingTemplate);
-                setPendingTemplate(null);
-              }}>Confirm log</button>
-            </div>
-          </section>
-        </div>
-      )}
     </section>
   );
 }
@@ -1031,6 +1237,7 @@ function CalendarPage(props: {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [areaFilter, setAreaFilter] = useState('');
+  const [agendaExpanded, setAgendaExpanded] = useState(false);
   const visibleDays = useMemo(() => getCalendarDays(view, anchorDate), [view, anchorDate]);
   const monthDays = useMemo(() => buildMonthGrid(anchorDate), [anchorDate]);
   const rangeLabel = useMemo(() => formatCalendarRange(view, anchorDate), [view, anchorDate]);
@@ -1048,6 +1255,7 @@ function CalendarPage(props: {
       && (!statusFilter || activity.status === statusFilter)
       && (!areaFilter || activity.lifeAreaId === areaFilter);
   });
+  const agendaActivities = agendaExpanded ? filteredActivities : filteredActivities.slice(0, 12);
 
   function move(offset: number) {
     setAnchorDate((current) => {
@@ -1080,7 +1288,7 @@ function CalendarPage(props: {
   }
 
   return (
-    <section className="workspace-grid">
+    <section className="workspace-grid drawer-workspace">
       <div className="workspace-main">
         <section className="calendar-surface">
           <div className="calendar-toolbar">
@@ -1089,6 +1297,7 @@ function CalendarPage(props: {
               <h3>{rangeLabel}</h3>
             </div>
             <div className="calendar-controls">
+              <button onClick={() => openNewActivity(anchorDate)}>New activity</button>
               <button className="secondary-button" onClick={() => move(-1)} aria-label="Previous period">‹</button>
               <button className="secondary-button" onClick={() => setAnchorDate(startOfDay(new Date()))}>Today</button>
               <button className="secondary-button" onClick={() => move(1)} aria-label="Next period">›</button>
@@ -1150,9 +1359,12 @@ function CalendarPage(props: {
         </section>
 
         <section className="surface">
-          <SectionTitle kicker={view === 'month' ? 'Selected month' : 'Visible range'} title="Agenda" />
+          <div className="collection-header flush-header">
+            <SectionTitle kicker={view === 'month' ? 'Selected month' : 'Visible range'} title="Agenda" />
+            {filteredActivities.length > 12 && <button className="secondary-button" onClick={() => setAgendaExpanded((current) => !current)}>{agendaExpanded ? 'Show less' : `Show all ${filteredActivities.length}`}</button>}
+          </div>
           <ActivityList
-            activities={filteredActivities}
+            activities={agendaActivities}
             busy={props.busy}
             onComplete={props.onComplete}
             onSkip={props.onSkip}
@@ -1162,7 +1374,7 @@ function CalendarPage(props: {
         </section>
       </div>
 
-      <aside className="editor-panel">
+      <EditorDrawer open={selected !== null} label={selected?.id ? 'Edit activity' : 'Create activity'} onClose={() => setSelected(null)}>
         <ActivityForm
           key={`${selected?.id || 'new-activity'}-${selected?.plannedStartAt ?? ''}`}
           activity={selected}
@@ -1175,7 +1387,7 @@ function CalendarPage(props: {
             setSelected(null);
           }}
         />
-      </aside>
+      </EditorDrawer>
     </section>
   );
 }
@@ -1190,7 +1402,7 @@ function TimeGridCalendar(props: {
 
   return (
     <div className="time-calendar">
-      <div className="time-header" style={{ gridTemplateColumns: `72px repeat(${props.days.length}, minmax(150px, 1fr))` }}>
+      <div className="time-header" style={{ gridTemplateColumns: `72px repeat(${props.days.length}, minmax(132px, 1fr))` }}>
         <span />
         {props.days.map((day) => (
           <button className={isToday(day) ? 'time-day-heading today' : 'time-day-heading'} key={dateKey(day)} onClick={() => props.onCreate(day, 9)}>
@@ -1199,7 +1411,7 @@ function TimeGridCalendar(props: {
           </button>
         ))}
       </div>
-      <div className="time-body" style={{ gridTemplateColumns: `72px repeat(${props.days.length}, minmax(150px, 1fr))` }}>
+      <div className="time-body" style={{ gridTemplateColumns: `72px repeat(${props.days.length}, minmax(132px, 1fr))` }}>
         <div className="time-axis">
           {hours.map((hour) => <span key={hour}>{formatHour(hour)}</span>)}
         </div>
@@ -1217,7 +1429,7 @@ function TimeGridCalendar(props: {
                 onClick={() => props.onOpen(activity)}
               >
                 <strong>{activity.title}</strong>
-                <span>{formatTime(getActivityDate(activity))} · {activity.durationMinutes}m</span>
+                <span>{formatTime(getActivityDate(activity))} · {activityDisplayMeasure(activity)}</span>
               </button>
             ))}
           </div>
@@ -1284,6 +1496,7 @@ function CalendarReviewPanel(props: {
   onSkip: (id: string) => void;
 }) {
   const sorted = [...props.activities].sort(compareActivities);
+  const visibleRows = sorted.slice(0, 10);
   const planned = sorted.filter((activity) => activity.status === 'Planned').length;
   const completed = sorted.filter((activity) => activity.status === 'Completed').length;
   const skipped = sorted.filter((activity) => activity.status === 'Skipped').length;
@@ -1302,7 +1515,7 @@ function CalendarReviewPanel(props: {
         </div>
       </div>
       <div className="review-list">
-        {sorted.map((activity) => (
+        {visibleRows.map((activity) => (
           <div className="review-row" key={activity.id}>
             <i style={{ background: activity.lifeAreaColor }} />
             <button className="review-title" onClick={() => props.onOpen(activity)}>
@@ -1316,6 +1529,7 @@ function CalendarReviewPanel(props: {
             </div>
           </div>
         ))}
+        {sorted.length > visibleRows.length && <p className="helper-copy">Showing the next {visibleRows.length} of {sorted.length} items. Use Agenda below to expand the full range.</p>}
         {sorted.length === 0 && <EmptyState text="Click a day or hour slot to plan the first activity in this range." />}
       </div>
     </div>
@@ -1329,6 +1543,7 @@ function CountdownsPage(props: {
   onDelete: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<Countdown | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [visibilityFilter, setVisibilityFilter] = useState('active');
@@ -1347,14 +1562,17 @@ function CountdownsPage(props: {
   }, [query, categoryFilter, visibilityFilter]);
 
   return (
-    <section className="workspace-grid">
+    <section className="workspace-grid drawer-workspace">
       <div className="workspace-main">
         <section className="collection-header">
           <div>
             <p className="eyebrow">Release radar</p>
             <h3>{props.countdowns.length} countdowns</h3>
           </div>
-          <button onClick={() => setSelected(null)}>New countdown</button>
+          <button onClick={() => {
+            setSelected(null);
+            setIsCreating(true);
+          }}>New countdown</button>
         </section>
 
         <div className="filter-bar">
@@ -1388,7 +1606,10 @@ function CountdownsPage(props: {
                 <div><dt>Status</dt><dd>{countdown.isArchived ? 'Archived' : 'Active'}</dd></div>
               </dl>
               <div className="card-actions">
-                <button className="secondary-button" onClick={() => setSelected(countdown)}>Edit</button>
+                <button className="secondary-button" onClick={() => {
+                  setIsCreating(false);
+                  setSelected(countdown);
+                }}>Edit</button>
                 <button className="danger-button" onClick={() => confirmDelete('Delete this countdown?') && props.onDelete(countdown.id)}>Delete</button>
               </div>
             </article>
@@ -1398,7 +1619,10 @@ function CountdownsPage(props: {
         <PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} />
       </div>
 
-      <aside className="editor-panel">
+      <EditorDrawer open={isCreating || selected !== null} label={selected ? 'Edit countdown' : 'Create countdown'} onClose={() => {
+        setSelected(null);
+        setIsCreating(false);
+      }}>
         <CountdownForm
           key={selected?.id ?? 'new-countdown'}
           countdown={selected}
@@ -1406,10 +1630,14 @@ function CountdownsPage(props: {
           onSave={(body) => {
             props.onSave(body, selected?.id);
             setSelected(null);
+            setIsCreating(false);
           }}
-          onCancel={() => setSelected(null)}
+          onCancel={() => {
+            setSelected(null);
+            setIsCreating(false);
+          }}
         />
-      </aside>
+      </EditorDrawer>
     </section>
   );
 }
@@ -1421,6 +1649,7 @@ function PhysiquePage(props: {
   onDelete: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<PhysiqueEntry | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const latest = props.entries[0];
@@ -1435,7 +1664,7 @@ function PhysiquePage(props: {
   }, [query]);
 
   return (
-    <section className="workspace-grid">
+    <section className="workspace-grid drawer-workspace">
       <div className="workspace-main">
         <section className="hero-panel physique-hero">
           <div>
@@ -1443,7 +1672,13 @@ function PhysiquePage(props: {
             <h3>{latest ? `${latest.weightKg} kg${latest.estimatedBodyFatPercent ? ` · ${latest.estimatedBodyFatPercent}% body fat` : ''}` : 'No body log yet'}</h3>
             <p>{latest?.status || 'Track weight, waist, neck, mood, and status to see body-composition direction.'}</p>
           </div>
-          <PhysiqueDiagram entry={latest} entries={props.entries} />
+          <div className="physique-hero-action">
+            <PhysiqueDiagram entry={latest} entries={props.entries} />
+            <button onClick={() => {
+              setSelected(null);
+              setIsCreating(true);
+            }}>Log physique</button>
+          </div>
         </section>
 
         <section className="surface">
@@ -1474,7 +1709,10 @@ function PhysiquePage(props: {
               </dl>
               <p>{entry.notes || entry.status || 'No notes.'}</p>
               <div className="card-actions">
-                <button className="secondary-button" onClick={() => setSelected(entry)}>Edit</button>
+                <button className="secondary-button" onClick={() => {
+                  setIsCreating(false);
+                  setSelected(entry);
+                }}>Edit</button>
                 <button className="danger-button" onClick={() => confirmDelete('Delete this physique entry?') && props.onDelete(entry.id)}>Delete</button>
               </div>
             </article>
@@ -1484,7 +1722,10 @@ function PhysiquePage(props: {
         <PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} />
       </div>
 
-      <aside className="editor-panel">
+      <EditorDrawer open={isCreating || selected !== null} label={selected ? 'Edit physique entry' : 'Log physique'} onClose={() => {
+        setSelected(null);
+        setIsCreating(false);
+      }}>
         <PhysiqueEntryForm
           key={selected?.id ?? `new-physique-${latest?.id ?? 'empty'}`}
           entry={selected}
@@ -1493,10 +1734,14 @@ function PhysiquePage(props: {
           onSave={(body) => {
             props.onSave(body, selected?.id);
             setSelected(null);
+            setIsCreating(false);
           }}
-          onCancel={() => setSelected(null)}
+          onCancel={() => {
+            setSelected(null);
+            setIsCreating(false);
+          }}
         />
-      </aside>
+      </EditorDrawer>
     </section>
   );
 }
@@ -1661,6 +1906,7 @@ function GoalsPage(props: {
   onDelete: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<Goal | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [inspectedGoal, setInspectedGoal] = useState<Goal | null>(null);
   const [selectedMilestone, setSelectedMilestone] = useState<{ goalId: string; milestone: Milestone | null } | null>(null);
   const [query, setQuery] = useState('');
@@ -1683,7 +1929,7 @@ function GoalsPage(props: {
   }, [query, statusFilter, priorityFilter]);
 
   return (
-    <section className="workspace-grid">
+    <section className="page-grid goals-page">
       <div className="workspace-main">
         <section className="collection-header">
           <div>
@@ -1692,6 +1938,7 @@ function GoalsPage(props: {
           </div>
           <button onClick={() => {
             setSelected(null);
+            setIsCreating(true);
             setInspectedGoal(null);
             setSelectedMilestone(null);
           }}>New goal</button>
@@ -1720,6 +1967,7 @@ function GoalsPage(props: {
               tabIndex={0}
               onClick={() => {
                 setInspectedGoal(goal);
+                setIsCreating(false);
                 setSelected(null);
                 setSelectedMilestone(null);
               }}
@@ -1727,6 +1975,7 @@ function GoalsPage(props: {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
                   setInspectedGoal(goal);
+                  setIsCreating(false);
                   setSelected(null);
                   setSelectedMilestone(null);
                 }
@@ -1747,7 +1996,7 @@ function GoalsPage(props: {
               </div>
               <div className="goal-health-row">
                 <span className={`status-badge ${getGoalHealth(goal).toLowerCase()}`}>{getGoalHealth(goal)}</span>
-                <small>{goal.progressType} · decay {goal.decayRatePercentPerWeek}%/week</small>
+                <small>{goal.progressType} · decay {goal.decayRatePercentPerWeek}%/day</small>
               </div>
               <dl className="compact-dl">
                 <div><dt>Maintenance</dt><dd>{goal.maintenanceThreshold}%</dd></div>
@@ -1759,6 +2008,7 @@ function GoalsPage(props: {
                   <button className="milestone-row" key={milestone.id} onClick={(event) => {
                     event.stopPropagation();
                     setInspectedGoal(null);
+                    setIsCreating(false);
                     setSelected(goal);
                     setSelectedMilestone({ goalId: goal.id, milestone });
                   }}>
@@ -1775,12 +2025,14 @@ function GoalsPage(props: {
                 <button className="secondary-button" onClick={(event) => {
                   event.stopPropagation();
                   setInspectedGoal(null);
+                  setIsCreating(false);
                   setSelected(goal);
                   setSelectedMilestone(null);
                 }}>Edit</button>
                 <button className="secondary-button" onClick={(event) => {
                   event.stopPropagation();
                   setInspectedGoal(null);
+                  setIsCreating(false);
                   setSelected(goal);
                   setSelectedMilestone({ goalId: goal.id, milestone: null });
                 }}>Milestone</button>
@@ -1798,7 +2050,8 @@ function GoalsPage(props: {
         <PaginationControls page={page} totalPages={pagedGoals.totalPages} totalItems={filteredGoals.length} onPage={setPage} />
       </div>
 
-      <aside className="editor-panel">
+      {(inspectedGoal || selected || selectedMilestone || isCreating) && <button className="goal-drawer-backdrop" aria-label="Close goal panel" onClick={() => { setInspectedGoal(null); setSelected(null); setSelectedMilestone(null); setIsCreating(false); }} />}
+      {(inspectedGoal || selected || selectedMilestone || isCreating) && <aside className="goals-editor-panel">
         {inspectedGoal && !selected && !selectedMilestone && (
           <GoalInsightPanel
             goal={inspectedGoal}
@@ -1808,7 +2061,7 @@ function GoalsPage(props: {
             onClose={() => setInspectedGoal(null)}
           />
         )}
-        <GoalForm
+        {(selected || isCreating) && <GoalForm
           key={selected?.id ?? 'new-goal'}
           goal={selected}
           areas={props.areas}
@@ -1816,14 +2069,16 @@ function GoalsPage(props: {
           onSave={(body) => {
             props.onSave(body, selected?.id);
             setSelected(null);
+            setIsCreating(false);
             setInspectedGoal(null);
             setSelectedMilestone(null);
           }}
           onCancel={() => {
             setSelected(null);
+            setIsCreating(false);
             setSelectedMilestone(null);
           }}
-        />
+        />}
         {milestoneGoal && (
           <MilestoneForm
             key={`${selectedMilestone?.goalId ?? milestoneGoal.id}-${selectedMilestone?.milestone?.id ?? 'new-milestone'}`}
@@ -1843,7 +2098,7 @@ function GoalsPage(props: {
             onCancel={() => setSelectedMilestone(null)}
           />
         )}
-      </aside>
+      </aside>}
     </section>
   );
 }
@@ -1852,7 +2107,7 @@ function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: 
   const goalActivities = props.activities.filter((activity) => activity.goalId === props.goal.id);
   const completed = goalActivities.filter((activity) => activity.status === 'Completed');
   const skipped = goalActivities.filter((activity) => activity.status === 'Skipped' || activity.status === 'Cancelled');
-  const minutes = completed.reduce((sum, activity) => sum + activity.durationMinutes, 0);
+  const minutes = completed.reduce((sum, activity) => sum + (isDurationActivity(activity.title) ? activity.durationMinutes : 0), 0);
   const lastDone = completed
     .map((activity) => getActivityDate(activity))
     .filter(Boolean)
@@ -1881,7 +2136,7 @@ function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: 
         <div className="goal-progress-copy">
           <span className={props.progress?.maintenanceSatisfied ? 'status-badge strong' : 'status-badge attention'}>{props.progress?.maintenanceSatisfied ? 'Maintenance reached' : 'Building baseline'}</span>
           <h4>{props.progress?.completedDays ?? completed.length}{props.progress?.trackingTargetDays ? ` of ${props.progress.trackingTargetDays} days` : ' completed days'}</h4>
-          <p>{props.progress?.completedThisWeek ?? 0} of {props.goal.maintenanceTargetPerWeek ?? 'flexible'} expected this week. Decay is {props.goal.decayRatePercentPerWeek}% per inactive week.</p>
+          <p>{props.progress?.completedThisWeek ?? 0} of {props.goal.maintenanceTargetPerWeek ?? 'flexible'} expected this week. Decay is {props.goal.decayRatePercentPerWeek}% per inactive day.</p>
         </div>
       </div>
       <dl className="compact-dl">
@@ -1943,6 +2198,7 @@ function AreasPage(props: {
   onDelete: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<LifeArea | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
@@ -1958,14 +2214,17 @@ function AreasPage(props: {
   }, [query, statusFilter]);
 
   return (
-    <section className="workspace-grid">
+    <section className="workspace-grid drawer-workspace">
       <div className="workspace-main">
         <section className="collection-header">
           <div>
             <p className="eyebrow">Attention architecture</p>
             <h3>{props.areas.length} life areas</h3>
           </div>
-          <button onClick={() => setSelected(null)}>New life area</button>
+          <button onClick={() => {
+            setSelected(null);
+            setIsCreating(true);
+          }}>New life area</button>
         </section>
 
         <div className="filter-bar">
@@ -1992,7 +2251,10 @@ function AreasPage(props: {
                 <div><dt>Color</dt><dd>{area.color}</dd></div>
               </dl>
               <div className="card-actions">
-                <button className="secondary-button" onClick={() => setSelected(area)}>Edit</button>
+                <button className="secondary-button" onClick={() => {
+                  setIsCreating(false);
+                  setSelected(area);
+                }}>Edit</button>
                 <button className="danger-button" onClick={() => confirmDelete('Delete this life area? Linked data may also be removed.') && props.onDelete(area.id)}>Delete</button>
               </div>
             </article>
@@ -2002,7 +2264,10 @@ function AreasPage(props: {
         <PaginationControls page={page} totalPages={pagedAreas.totalPages} totalItems={filteredAreas.length} onPage={setPage} />
       </div>
 
-      <aside className="editor-panel">
+      <EditorDrawer open={isCreating || selected !== null} label={selected ? 'Edit life area' : 'Create life area'} onClose={() => {
+        setSelected(null);
+        setIsCreating(false);
+      }}>
         <LifeAreaForm
           key={selected?.id ?? 'new-area'}
           area={selected}
@@ -2010,10 +2275,14 @@ function AreasPage(props: {
           onSave={(body) => {
             props.onSave(body, selected?.id);
             setSelected(null);
+            setIsCreating(false);
           }}
-          onCancel={() => setSelected(null)}
+          onCancel={() => {
+            setSelected(null);
+            setIsCreating(false);
+          }}
         />
-      </aside>
+      </EditorDrawer>
     </section>
   );
 }
@@ -2031,6 +2300,7 @@ function TemplatesPage(props: {
 }) {
   const [selected, setSelected] = useState<ActivityTemplate | null>(null);
   const [selectedRule, setSelectedRule] = useState<RecurrenceRule | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [query, setQuery] = useState('');
   const [areaFilter, setAreaFilter] = useState('');
   const [page, setPage] = useState(1);
@@ -2046,7 +2316,7 @@ function TemplatesPage(props: {
   }, [query, areaFilter]);
 
   return (
-    <section className="workspace-grid">
+    <section className="workspace-grid drawer-workspace">
       <div className="workspace-main">
         <section className="collection-header">
           <div>
@@ -2056,6 +2326,7 @@ function TemplatesPage(props: {
           <button onClick={() => {
             setSelected(null);
             setSelectedRule(null);
+            setIsCreating(true);
           }}>New template</button>
         </section>
 
@@ -2088,6 +2359,7 @@ function TemplatesPage(props: {
                   {templateRules.map((rule) => (
                     <div className="recurrence-row" key={rule.id}>
                       <button onClick={() => {
+                        setIsCreating(false);
                         setSelected(template);
                         setSelectedRule(rule);
                       }}>
@@ -2101,10 +2373,12 @@ function TemplatesPage(props: {
                 </div>
                 <div className="card-actions">
                   <button className="secondary-button" onClick={() => {
+                    setIsCreating(false);
                     setSelected(template);
                     setSelectedRule(null);
                   }}>Edit</button>
                   <button className="secondary-button" onClick={() => {
+                    setIsCreating(false);
                     setSelected(template);
                     setSelectedRule(null);
                   }}>Add recurrence</button>
@@ -2118,7 +2392,11 @@ function TemplatesPage(props: {
         <PaginationControls page={page} totalPages={pagedTemplates.totalPages} totalItems={filteredTemplates.length} onPage={setPage} />
       </div>
 
-      <aside className="editor-panel">
+      <EditorDrawer open={isCreating || selected !== null || selectedRule !== null} label={selectedRule ? 'Edit recurrence' : selected ? 'Edit template' : 'Create template'} onClose={() => {
+        setSelected(null);
+        setSelectedRule(null);
+        setIsCreating(false);
+      }}>
         <TemplateForm
           key={selected?.id ?? 'new-template'}
           template={selected}
@@ -2127,8 +2405,14 @@ function TemplatesPage(props: {
           onSave={(body) => {
             props.onSave(body, selected?.id);
             setSelected(null);
+            setSelectedRule(null);
+            setIsCreating(false);
           }}
-          onCancel={() => setSelected(null)}
+          onCancel={() => {
+            setSelected(null);
+            setSelectedRule(null);
+            setIsCreating(false);
+          }}
         />
         {templateForRule && (
           <RecurrenceRuleForm
@@ -2139,6 +2423,7 @@ function TemplatesPage(props: {
             onSave={(body) => {
               props.onRuleSave(body, selectedRule?.id);
               setSelectedRule(null);
+              setSelected(null);
             }}
             onDelete={selectedRule ? () => {
               if (confirmDelete('Delete this recurrence rule?')) {
@@ -2146,10 +2431,13 @@ function TemplatesPage(props: {
                 setSelectedRule(null);
               }
             } : undefined}
-            onCancel={() => setSelectedRule(null)}
+            onCancel={() => {
+              setSelectedRule(null);
+              setSelected(null);
+            }}
           />
         )}
-      </aside>
+      </EditorDrawer>
     </section>
   );
 }
@@ -2165,6 +2453,7 @@ function MetricsPage(props: {
   onDelete: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<Metric | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [historyMetric, setHistoryMetric] = useState<Metric | null>(null);
   const [historyRange, setHistoryRange] = useState('90');
   const [query, setQuery] = useState('');
@@ -2176,6 +2465,7 @@ function MetricsPage(props: {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [entryValues, setEntryValues] = useState<Record<string, string>>({});
   const [entryNotes, setEntryNotes] = useState<Record<string, string>>({});
+  const [entryTimes, setEntryTimes] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!historyMetric) {
@@ -2214,11 +2504,12 @@ function MetricsPage(props: {
 
     await props.onEntry(metric.id, {
       value: Number(value),
-      recordedAt: new Date().toISOString(),
+      recordedAt: new Date(entryTimes[metric.id] ?? Date.now()).toISOString(),
       notes: entryNotes[metric.id] ?? ''
     });
     setEntryValues({ ...entryValues, [metric.id]: '' });
     setEntryNotes({ ...entryNotes, [metric.id]: '' });
+    setEntryTimes({ ...entryTimes, [metric.id]: toLocalInput(new Date()) });
     if (historyMetric?.id === metric.id) {
       await loadMetricHistory(metric.id, historyRange);
     }
@@ -2247,14 +2538,18 @@ function MetricsPage(props: {
   }, [query, areaFilter, typeFilter]);
 
   return (
-    <section className="workspace-grid">
+    <section className="workspace-grid drawer-workspace">
       <div className="workspace-main">
         <section className="collection-header">
           <div>
             <p className="eyebrow">Measured signals</p>
             <h3>{props.metrics.length} metrics</h3>
           </div>
-          <button onClick={() => setSelected(null)}>New metric</button>
+          <button onClick={() => {
+            setSelected(null);
+            setHistoryMetric(null);
+            setIsCreating(true);
+          }}>New metric</button>
         </section>
 
         <div className="filter-bar">
@@ -2284,12 +2579,21 @@ function MetricsPage(props: {
                 void logEntry(metric);
               }}>
                 <input type="number" value={entryValues[metric.id] ?? ''} onChange={(event) => setEntryValues({ ...entryValues, [metric.id]: event.target.value })} placeholder="Value" />
+                <input aria-label={`${metric.name} recorded at`} type="datetime-local" max={toLocalInput(new Date())} value={entryTimes[metric.id] ?? toLocalInput(new Date())} onChange={(event) => setEntryTimes({ ...entryTimes, [metric.id]: event.target.value })} />
                 <input value={entryNotes[metric.id] ?? ''} onChange={(event) => setEntryNotes({ ...entryNotes, [metric.id]: event.target.value })} placeholder="Note" />
                 <button type="submit" disabled={props.busy}>Log</button>
               </form>
               <div className="card-actions">
-                <button className="secondary-button" onClick={() => setHistoryMetric(metric)}>History</button>
-                <button className="secondary-button" onClick={() => setSelected(metric)}>Edit</button>
+                <button className="secondary-button" onClick={() => {
+                  setSelected(null);
+                  setIsCreating(false);
+                  setHistoryMetric(metric);
+                }}>History</button>
+                <button className="secondary-button" onClick={() => {
+                  setHistoryMetric(null);
+                  setIsCreating(false);
+                  setSelected(metric);
+                }}>Edit</button>
                 <button className="danger-button" onClick={() => confirmDelete('Delete this metric?') && props.onDelete(metric.id)}>Delete</button>
               </div>
             </article>
@@ -2298,7 +2602,15 @@ function MetricsPage(props: {
         <PaginationControls page={page} totalPages={pagedMetrics.totalPages} totalItems={filteredMetrics.length} onPage={setPage} />
       </div>
 
-      <aside className="editor-panel">
+      <EditorDrawer
+        open={isCreating || selected !== null || historyMetric !== null}
+        label={historyMetric ? `${historyMetric.name} history` : selected ? 'Edit metric' : 'Create metric'}
+        onClose={() => {
+          setSelected(null);
+          setHistoryMetric(null);
+          setIsCreating(false);
+        }}
+      >
         {historyMetric && (
           <MetricHistoryPanel
             metric={historyMetric}
@@ -2311,7 +2623,7 @@ function MetricsPage(props: {
             onClose={() => setHistoryMetric(null)}
           />
         )}
-        <MetricForm
+        {!historyMetric && <MetricForm
           key={selected?.id ?? 'new-metric'}
           metric={selected}
           areas={props.areas}
@@ -2320,10 +2632,14 @@ function MetricsPage(props: {
           onSave={(body) => {
             props.onSave(body, selected?.id);
             setSelected(null);
+            setIsCreating(false);
           }}
-          onCancel={() => setSelected(null)}
-        />
-      </aside>
+          onCancel={() => {
+            setSelected(null);
+            setIsCreating(false);
+          }}
+        />}
+      </EditorDrawer>
     </section>
   );
 }
@@ -2434,7 +2750,7 @@ function ReviewsPage(props: { reviews: Review[]; busy: boolean; onGenerate: () =
   }, [query, typeFilter]);
 
   return (
-    <section className="workspace-grid">
+    <section className="workspace-grid drawer-workspace">
       <div className="workspace-main">
         <section className="collection-header">
           <div>
@@ -2478,7 +2794,7 @@ function ReviewsPage(props: { reviews: Review[]; busy: boolean; onGenerate: () =
         <PaginationControls page={page} totalPages={pagedReviews.totalPages} totalItems={filteredReviews.length} onPage={setPage} />
       </div>
 
-      <aside className="editor-panel">
+      <EditorDrawer open={selected !== null} label="Edit review" onClose={() => setSelected(null)}>
         <ReviewForm
           key={selected?.id ?? 'new-review-placeholder'}
           review={selected}
@@ -2491,7 +2807,7 @@ function ReviewsPage(props: { reviews: Review[]; busy: boolean; onGenerate: () =
           }}
           onCancel={() => setSelected(null)}
         />
-      </aside>
+      </EditorDrawer>
     </section>
   );
 }
@@ -2736,7 +3052,7 @@ function GoalForm(props: { goal: Goal | null; areas: LifeArea[]; busy: boolean; 
         <div className="form-grid three">
           <NumberField label="Maintenance %" value={draft.maintenanceThreshold} onChange={(maintenanceThreshold) => setDraft({ ...draft, maintenanceThreshold })} />
           <NumberOrBlankField label="Target/week" value={draft.maintenanceTargetPerWeek} onChange={(maintenanceTargetPerWeek) => setDraft({ ...draft, maintenanceTargetPerWeek })} />
-          <NumberField label="Decay %/week" value={draft.decayRatePercentPerWeek} onChange={(decayRatePercentPerWeek) => setDraft({ ...draft, decayRatePercentPerWeek })} />
+          <NumberField label="Decay %/day" value={draft.decayRatePercentPerWeek} onChange={(decayRatePercentPerWeek) => setDraft({ ...draft, decayRatePercentPerWeek })} />
         </div>
         <label className="field"><span>Target date</span><input type="date" value={draft.targetDate ?? ''} onChange={(event) => setDraft({ ...draft, targetDate: event.target.value })} /></label>
         <button disabled={props.busy}>{props.goal ? 'Save changes' : 'Create goal'}</button>
@@ -2795,6 +3111,7 @@ function MilestoneForm(props: { goal: Goal; milestone: Milestone | null; busy: b
 function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goals: Goal[]; busy: boolean; onSave: (body: unknown) => void; onCancel: () => void }) {
   const isExisting = Boolean(props.activity?.id);
   const selectedGoal = props.goals.find((goal) => goal.id === props.activity?.goalId);
+  const initialExercises = parseWorkoutExercises(props.activity?.notes ?? '');
   const [draft, setDraft] = useState({
     lifeAreaId: props.activity?.lifeAreaId ?? props.areas[0]?.id ?? '',
     goalId: props.activity?.goalId ?? '',
@@ -2809,9 +3126,11 @@ function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goa
     mentalLoad: props.activity?.mentalLoad ?? 'Medium' as LoadLevel,
     physicalLoad: props.activity?.physicalLoad ?? 'Low' as LoadLevel,
     points: props.activity?.points ?? 5,
-    notes: props.activity?.notes ?? ''
+    notes: stripWorkoutNotes(props.activity?.notes ?? '')
   });
+  const [exercises, setExercises] = useState<WorkoutExercise[]>(initialExercises.length ? initialExercises : [createExercise()]);
   const availableMilestones = props.goals.find((goal) => goal.id === draft.goalId)?.milestones ?? selectedGoal?.milestones ?? [];
+  const isWorkout = /hypertrophy workout|gym session/i.test(draft.title);
 
   return (
     <EditorShell title={isExisting ? 'Edit activity' : 'Plan activity'} onCancel={props.onCancel}>
@@ -2819,13 +3138,15 @@ function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goa
         event.preventDefault();
         const start = new Date(draft.plannedStartAt);
         const end = new Date(start.getTime() + Number(draft.durationMinutes) * 60000);
+        const completed = draft.status === 'Completed';
         props.onSave({
           ...draft,
+          notes: isWorkout ? serializeWorkoutNotes(draft.notes, exercises.filter((exercise) => exercise.name.trim())) : draft.notes,
           goalId: draft.goalId || null,
           plannedStartAt: start.toISOString(),
           plannedEndAt: end.toISOString(),
-          actualStartAt: props.activity?.actualStartAt ?? null,
-          actualEndAt: props.activity?.actualEndAt ?? null
+          actualStartAt: completed ? (props.activity?.actualStartAt ?? start.toISOString()) : null,
+          actualEndAt: completed ? (props.activity?.actualEndAt ?? end.toISOString()) : null
         });
       }}>
         <TextField label="Title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} required />
@@ -2834,7 +3155,7 @@ function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goa
         <SelectField label="Goal" value={draft.goalId} onChange={(goalId) => setDraft({ ...draft, goalId, milestoneId: null })} options={[{ value: '', label: 'No goal' }, ...props.goals.map((goal) => ({ value: goal.id, label: goal.title }))]} />
         <SelectField label="Milestone" value={draft.milestoneId ?? ''} onChange={(milestoneId) => setDraft({ ...draft, milestoneId: milestoneId || null })} options={[{ value: '', label: 'No milestone' }, ...availableMilestones.map((milestone) => ({ value: milestone.id, label: milestone.title }))]} />
         <div className="form-grid two">
-          <label className="field"><span>Start</span><input type="datetime-local" value={draft.plannedStartAt} onChange={(event) => setDraft({ ...draft, plannedStartAt: event.target.value })} /></label>
+          <label className="field"><span>{draft.status === 'Completed' ? 'Completed at' : 'Start'}</span><input type="datetime-local" value={draft.plannedStartAt} max={draft.status === 'Completed' ? toLocalInput(new Date()) : undefined} onChange={(event) => setDraft({ ...draft, plannedStartAt: event.target.value })} /></label>
           <NumberField label="Minutes" value={draft.durationMinutes} onChange={(durationMinutes) => setDraft({ ...draft, durationMinutes })} />
         </div>
         <div className="form-grid two">
@@ -2846,6 +3167,7 @@ function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goa
           <SelectField label="Mental" value={draft.mentalLoad} onChange={(mentalLoad) => setDraft({ ...draft, mentalLoad: mentalLoad as LoadLevel })} options={loadLevels.map(toOption)} />
           <SelectField label="Physical" value={draft.physicalLoad} onChange={(physicalLoad) => setDraft({ ...draft, physicalLoad: physicalLoad as LoadLevel })} options={loadLevels.map(toOption)} />
         </div>
+        {isWorkout && <WorkoutExerciseEditor exercises={exercises} onChange={setExercises} />}
         <TextArea label="Notes" value={draft.notes} onChange={(notes) => setDraft({ ...draft, notes })} />
         <button disabled={props.busy}>{isExisting ? 'Save changes' : 'Plan activity'}</button>
       </form>
@@ -3031,7 +3353,7 @@ function ActivityRow(props: {
       <span className="activity-marker" style={{ background: props.activity.lifeAreaColor }} />
       <div>
         <strong>{props.activity.title}</strong>
-        <p>{props.activity.lifeAreaName} · {props.activity.durationMinutes}m · {props.activity.status}</p>
+        <p>{props.activity.lifeAreaName} · {activityDisplayMeasure(props.activity)} · {props.activity.status}</p>
       </div>
       <div className="row-actions">
         {props.activity.status === 'Planned' && <button disabled={props.busy} onClick={() => props.onComplete(props.activity.id)}>Done</button>}
@@ -3061,6 +3383,30 @@ function SectionTitle({ kicker, title }: { kicker: string; title: string }) {
       <p className="eyebrow">{kicker}</p>
       <h3>{title}</h3>
     </div>
+  );
+}
+
+function EditorDrawer(props: { open: boolean; label: string; onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    if (!props.open) return;
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') props.onClose();
+    }
+
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [props.open, props.onClose]);
+
+  if (!props.open) return null;
+
+  return (
+    <>
+      <button className="goal-drawer-backdrop" aria-label={`Close ${props.label}`} onClick={props.onClose} />
+      <aside className="goals-editor-panel app-editor-drawer" aria-label={props.label}>
+        {props.children}
+      </aside>
+    </>
   );
 }
 
@@ -3197,7 +3543,7 @@ function PhysiqueEntryForm(props: { entry: PhysiqueEntry | null; baseline: Physi
         });
       }}>
         <div className="form-grid two">
-          <label className="field"><span>Recorded at</span><input type="datetime-local" value={draft.recordedAt} onChange={(event) => setDraft({ ...draft, recordedAt: event.target.value })} /></label>
+          <label className="field"><span>Recorded at</span><input type="datetime-local" max={toLocalInput(new Date())} value={draft.recordedAt} onChange={(event) => setDraft({ ...draft, recordedAt: event.target.value })} /></label>
           <SelectField label="Sex" value={draft.sex} onChange={(sex) => setDraft({ ...draft, sex })} options={[{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }]} />
         </div>
         <div className="form-grid three">
@@ -3380,7 +3726,63 @@ function isToday(date: Date) {
 }
 
 function getActivityDate(activity: Activity) {
-  return activity.plannedStartAt ?? activity.actualStartAt;
+  return activity.actualStartAt ?? activity.plannedStartAt;
+}
+
+function createExercise(): WorkoutExercise {
+  return { id: `exercise-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: '', muscle: 'Chest', sets: 3, reps: 10, weightKg: 0, rir: 2 };
+}
+
+function serializeWorkoutNotes(notes: string, exercises: WorkoutExercise[]) {
+  const clean = stripWorkoutNotes(notes).trim();
+  if (exercises.length === 0) return clean;
+  return `${clean}${clean ? '\n\n' : ''}${workoutMarker}${JSON.stringify(exercises)}`;
+}
+
+function stripWorkoutNotes(notes: string) {
+  const markerIndex = notes.indexOf(workoutMarker);
+  return (markerIndex >= 0 ? notes.slice(0, markerIndex) : notes).trim();
+}
+
+function parseWorkoutExercises(notes: string): WorkoutExercise[] {
+  const markerIndex = notes.indexOf(workoutMarker);
+  if (markerIndex < 0) return [];
+  try {
+    const value = JSON.parse(notes.slice(markerIndex + workoutMarker.length));
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is WorkoutExercise => item && typeof item.name === 'string' && typeof item.muscle === 'string')
+      .map((item) => ({ ...item, id: item.id || createExercise().id, sets: Number(item.sets) || 1, reps: Number(item.reps) || 1, weightKg: Number(item.weightKg) || 0, rir: Number.isFinite(Number(item.rir)) ? Number(item.rir) : 2 }));
+  } catch {
+    return [];
+  }
+}
+
+function isDurationActivity(title: string) {
+  return !['Creatine dose', 'No alcohol check-in', 'No vape check-in', 'Diet check-in', 'Sleep log', 'SPF 30+'].includes(title);
+}
+
+function activityDisplayMeasure(activity: Activity) {
+  if (isDurationActivity(activity.title)) return `${activity.durationMinutes}m`;
+  const quantity = Number(activity.notes.match(/Quantity:\s*([0-9.]+)/i)?.[1] ?? 0);
+  if (activity.title === 'Creatine dose') return quantity ? `${quantity * 5} g logged` : 'dose check-in';
+  if (activity.title === 'Sleep log') return quantity ? `${quantity}h sleep` : 'sleep check-in';
+  return 'check-in';
+}
+
+function getQuickTemplates(templates: ActivityTemplate[]) {
+  const templateByTitle = new Map(templates.map((template) => [template.title, template]));
+  return [
+    'Creatine dose',
+    'Desk mobility reset',
+    'Hypertrophy workout',
+    'DSA problem rep',
+    'System design case study',
+    'No alcohol check-in',
+    'No vape check-in',
+    'Diet check-in',
+    'Sleep log',
+    'SPF 30+'
+  ].map((title) => templateByTitle.get(title)).filter(Boolean) as ActivityTemplate[];
 }
 
 function findGoalIdForTemplate(templateTitle: string, goals: Goal[]) {

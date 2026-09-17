@@ -24,17 +24,17 @@ public sealed class ProgressCalculatorTests
     }
 
     [Fact]
-    public void ApplyWeeklyDecay_DecaysGradually()
+    public void ApplyDailyDecay_DecaysGradually()
     {
-        var progress = ProgressCalculator.ApplyWeeklyDecay(80, 5, DateTimeOffset.UtcNow.AddDays(-14), DateTimeOffset.UtcNow);
+        var progress = ProgressCalculator.ApplyDailyDecay(80, 5, DateTimeOffset.UtcNow.AddDays(-2), DateTimeOffset.UtcNow);
 
         Assert.InRange(progress, 69, 71);
     }
 
     [Fact]
-    public void ApplyWeeklyDecay_DoesNotDecayWithoutMaintenanceDate()
+    public void ApplyDailyDecay_DoesNotDecayWithoutMaintenanceDate()
     {
-        var progress = ProgressCalculator.ApplyWeeklyDecay(80, 5, null, DateTimeOffset.UtcNow);
+        var progress = ProgressCalculator.ApplyDailyDecay(80, 5, null, DateTimeOffset.UtcNow);
 
         Assert.Equal(80, progress);
     }

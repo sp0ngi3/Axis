@@ -40,17 +40,22 @@ public static class ProgressCalculator
         return RoundProgress(Math.Clamp(currentValue / targetValue * 100, 0, 100));
     }
 
-    public static decimal ApplyWeeklyDecay(decimal progress, decimal weeklyDecayPercent, DateTimeOffset? lastMaintainedAt, DateTimeOffset now)
+    public static decimal ApplyDailyDecay(decimal progress, decimal dailyDecayPercent, DateTimeOffset? lastMaintainedAt, DateTimeOffset now)
     {
-        if (weeklyDecayPercent <= 0 || lastMaintainedAt is null || progress <= 0)
+        if (dailyDecayPercent <= 0 || lastMaintainedAt is null || progress <= 0)
         {
             return RoundProgress(progress);
         }
 
-        var weeks = Math.Max(0, (decimal)(now - lastMaintainedAt.Value).TotalDays / 7);
-        var decayed = progress - weeklyDecayPercent * weeks;
+        var days = Math.Max(0, (decimal)(now - lastMaintainedAt.Value).TotalDays);
+        var decayed = progress - dailyDecayPercent * days;
 
         return RoundProgress(Math.Clamp(decayed, 0, 100));
+    }
+
+    public static decimal ApplyWeeklyDecay(decimal progress, decimal weeklyDecayPercent, DateTimeOffset? lastMaintainedAt, DateTimeOffset now)
+    {
+        return ApplyDailyDecay(progress, weeklyDecayPercent / 7, lastMaintainedAt, now);
     }
 
     private static decimal RoundProgress(decimal value)

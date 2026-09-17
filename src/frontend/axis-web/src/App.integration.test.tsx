@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 
@@ -90,6 +90,16 @@ const template = {
   isActive: true
 };
 
+const workoutTemplate = {
+  ...template,
+  id: 'template-workout',
+  lifeAreaId: area.id,
+  title: 'Hypertrophy workout',
+  description: 'Progressive resistance session',
+  defaultDurationMinutes: 75,
+  physicalLoad: 'High'
+};
+
 const recurrenceRule = {
   id: 'rule-1',
   templateId: template.id,
@@ -163,7 +173,7 @@ function installFetchMock() {
       case '/api/activities':
         return jsonResponse([activity]);
       case '/api/activity-templates':
-        return jsonResponse([template]);
+        return jsonResponse([template, workoutTemplate]);
       case '/api/recurrence-rules':
         return jsonResponse([recurrenceRule]);
       case '/api/metrics':
@@ -216,6 +226,7 @@ describe('Axis app integration workflows', () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -228,6 +239,7 @@ describe('Axis app integration workflows', () => {
     await openPage(/life areas/i);
     expect(screen.getByPlaceholderText('Search life areas')).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText('Search life areas'), { target: { value: 'career' } });
+    fireEvent.click(screen.getByRole('button', { name: 'New life area' }));
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Health' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create area' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/life-areas')).toBe(true));
@@ -264,5 +276,54 @@ describe('Axis app integration workflows', () => {
     fireEvent.change(screen.getByLabelText('What worked?'), { target: { value: 'Focus blocks.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save review' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'PUT' && call.path === '/api/reviews/review-1')).toBe(true));
+  });
+
+  it('opens calendar and metric editors in dismissible drawers', async () => {
+    render(<App />);
+    await screen.findByText('Start with the focus block.');
+
+    await openPage(/calendar/i);
+    expect(screen.queryByLabelText('Create activity')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'New activity' }));
+    expect(screen.getByLabelText('Create activity')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Create activity' }));
+    expect(screen.queryByLabelText('Create activity')).not.toBeInTheDocument();
+
+    await openPage(/metrics/i);
+    expect(screen.queryByLabelText('Create metric')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'New metric' }));
+    expect(screen.getByLabelText('Create metric')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByLabelText('Create metric')).not.toBeInTheDocument();
+  });
+
+  it('combines mood and diary backdating and stores structured workout exercises', async () => {
+    render(<App />);
+    await screen.findByText('Start with the focus block.');
+
+    await openPage(/journal/i);
+    fireEvent.click(screen.getByRole('button', { name: 'New check-in' }));
+    fireEvent.change(screen.getByLabelText('When'), { target: { value: '2026-09-15T20:30' } });
+    fireEvent.change(screen.getByLabelText('What is happening?'), { target: { value: 'Post-training reflection' } });
+    fireEvent.change(screen.getByLabelText('Diary title (optional)'), { target: { value: 'Training day' } });
+    fireEvent.change(screen.getByLabelText('Diary'), { target: { value: 'Good energy and a clear progression target.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save check-in' }));
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'POST' && call.path === '/api/mood' && call.body?.includes('2026-09-15'))).toBe(true);
+      expect(calls.some((call) => call.method === 'POST' && call.path === '/api/diary' && call.body?.includes('Training day'))).toBe(true);
+    });
+
+    await openPage(/today/i);
+    fireEvent.click(await screen.findByRole('button', { name: /hypertrophy workout/i }));
+    fireEvent.change(screen.getByLabelText('Exercise 1'), { target: { value: 'Incline press' } });
+    fireEvent.change(screen.getByLabelText('kg'), { target: { value: '70' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log completed work' }));
+
+    await waitFor(() => {
+      const workoutCall = calls.find((call) => call.method === 'POST' && call.path === '/api/activities' && call.body?.includes('Incline press'));
+      expect(workoutCall?.body).toContain('[axis-workout-v1]');
+      expect(workoutCall?.body).toContain('\\"weightKg\\":70');
+    });
   });
 });

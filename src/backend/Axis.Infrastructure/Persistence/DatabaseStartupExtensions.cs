@@ -16,7 +16,11 @@ public static class DatabaseStartupExtensions
         await SeedDefaultsAsync(dbContext, cancellationToken);
         await SeedStarterPackAsync(dbContext, cancellationToken);
         await RemoveFlexibleStudyRecurrencesAsync(dbContext, cancellationToken);
+        await NormalizeDailyDecayRatesAsync(dbContext, cancellationToken);
+        await NormalizeCheckInDurationsAsync(dbContext, cancellationToken);
+        await RemoveDuplicateGeneratedActivitiesAsync(dbContext, cancellationToken);
         await GenerateRollingRecurringActivitiesAsync(dbContext, 56, cancellationToken);
+        await RemoveDuplicateGeneratedActivitiesAsync(dbContext, cancellationToken);
         await LinkStarterActivitiesToGoalsAsync(dbContext, cancellationToken);
     }
 
@@ -192,7 +196,7 @@ public static class DatabaseStartupExtensions
             Unit = "%",
             MaintenanceThreshold = 85,
             MaintenanceTargetPerWeek = 6,
-            DecayRatePercentPerWeek = 12
+            DecayRatePercentPerWeek = 1.7m
         }, cancellationToken);
 
         var mobilityGoal = await EnsureGoalAsync(dbContext, fitness, new Goal
@@ -205,7 +209,7 @@ public static class DatabaseStartupExtensions
             Unit = "%",
             MaintenanceThreshold = 80,
             MaintenanceTargetPerWeek = 6,
-            DecayRatePercentPerWeek = 8
+            DecayRatePercentPerWeek = 1.1m
         }, cancellationToken);
 
         var hypertrophyGoal = await EnsureGoalAsync(dbContext, fitness, new Goal
@@ -218,7 +222,7 @@ public static class DatabaseStartupExtensions
             Unit = "%",
             MaintenanceThreshold = 75,
             MaintenanceTargetPerWeek = 3,
-            DecayRatePercentPerWeek = 5
+            DecayRatePercentPerWeek = 0.7m
         }, cancellationToken);
 
         await EnsureGoalAsync(dbContext, health, new Goal
@@ -231,7 +235,7 @@ public static class DatabaseStartupExtensions
             Unit = "days",
             MaintenanceThreshold = 80,
             MaintenanceTargetPerWeek = 5,
-            DecayRatePercentPerWeek = 18
+            DecayRatePercentPerWeek = 2.6m
         }, cancellationToken);
 
         await EnsureGoalAsync(dbContext, health, new Goal
@@ -244,7 +248,7 @@ public static class DatabaseStartupExtensions
             Unit = "days",
             MaintenanceThreshold = 80,
             MaintenanceTargetPerWeek = 5,
-            DecayRatePercentPerWeek = 18
+            DecayRatePercentPerWeek = 2.6m
         }, cancellationToken);
 
         var dietGoal = await EnsureGoalAsync(dbContext, fitness, new Goal
@@ -257,7 +261,7 @@ public static class DatabaseStartupExtensions
             Unit = "days",
             MaintenanceThreshold = 80,
             MaintenanceTargetPerWeek = 5,
-            DecayRatePercentPerWeek = 10
+            DecayRatePercentPerWeek = 1.4m
         }, cancellationToken);
 
         if (dietGoal.TargetValue == 100 && dietGoal.Unit == "%")
@@ -311,12 +315,12 @@ public static class DatabaseStartupExtensions
             IsPinned = true
         }, cancellationToken);
 
-        var creatineTemplate = await EnsureTemplateAsync(dbContext, health, "Creatine dose", "Take 5 g creatine monohydrate and log the metric. Loading option from the wiki: about 22 g/day split across 5-7 days.", 5, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 4, cancellationToken);
+        var creatineTemplate = await EnsureTemplateAsync(dbContext, health, "Creatine dose", "Take 5 g creatine monohydrate and log the metric. Loading option from the wiki: about 22 g/day split across 5-7 days.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 4, cancellationToken);
         var mobilityTemplate = await EnsureTemplateAsync(dbContext, fitness, "Desk mobility reset", "10 minutes: hip flexors, hamstrings, thoracic extension, pecs/neck, and one pain-free breathing/reset drill.", 10, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 6, cancellationToken);
         var strengthTemplate = await EnsureTemplateAsync(dbContext, fitness, "Hypertrophy workout", "Progressive resistance session. Aim for hard sets, clean reps, and logged progression.", 75, LoadLevel.High, LoadLevel.Medium, LoadLevel.High, 12, cancellationToken);
-        var alcoholTemplate = await EnsureTemplateAsync(dbContext, health, "No alcohol check-in", "Log whether today stayed alcohol-free and how many drinks happened if not.", 3, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 5, cancellationToken);
-        var vapeTemplate = await EnsureTemplateAsync(dbContext, health, "No vape check-in", "Log vape-free day status and any triggers.", 3, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 5, cancellationToken);
-        var dietTemplate = await EnsureTemplateAsync(dbContext, fitness, "Diet check-in", "Protein target, calories, vegetables, and evening cravings check.", 8, LoadLevel.Low, LoadLevel.Medium, LoadLevel.Low, 6, cancellationToken);
+        var alcoholTemplate = await EnsureTemplateAsync(dbContext, health, "No alcohol check-in", "Log whether today stayed alcohol-free and how many drinks happened if not.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 5, cancellationToken);
+        var vapeTemplate = await EnsureTemplateAsync(dbContext, health, "No vape check-in", "Log vape-free day status and any triggers.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 5, cancellationToken);
+        var dietTemplate = await EnsureTemplateAsync(dbContext, fitness, "Diet check-in", "Protein target, calories, vegetables, and evening cravings check.", 1, LoadLevel.Low, LoadLevel.Medium, LoadLevel.Low, 6, cancellationToken);
         var dsaTemplate = await EnsureTemplateAsync(dbContext, learning, "DSA problem rep", "Solve or review DSA problems from the 250 x6 track.", 75, LoadLevel.High, LoadLevel.High, LoadLevel.Low, 12, cancellationToken);
         var systemTemplate = await EnsureTemplateAsync(dbContext, learning, "System design case study", "Design one system aloud: requirements, scale, API, data model, architecture, bottlenecks, trade-offs.", 90, LoadLevel.High, LoadLevel.High, LoadLevel.Low, 12, cancellationToken);
         var sleepTemplate = await EnsureTemplateAsync(dbContext, health, "Sleep log", "Record the estimated number of hours slept. Axis evaluates the duration against an 8-hour target.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 4, cancellationToken);
@@ -333,7 +337,6 @@ public static class DatabaseStartupExtensions
         await EnsureRecurrenceAsync(dbContext, sleepTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, spfTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
 
-        await EnsureStarterActivitiesAsync(dbContext, today, 28, cancellationToken, creatineTemplate, mobilityTemplate, alcoholTemplate, vapeTemplate, dietTemplate, strengthTemplate, sleepTemplate, spfTemplate);
         await SeedWikiPagesAsync(dbContext, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
@@ -526,12 +529,13 @@ public static class DatabaseStartupExtensions
                 .ToListAsync(cancellationToken);
             var existingKeys = existing
                 .Where(value => value is not null)
-                .Select(value => ToMinuteKey(value!.Value))
+                .Select(value => ToDayKey(value!.Value))
                 .ToHashSet();
 
             foreach (var plannedStart in plannedDates)
             {
-                if (existingKeys.Contains(ToMinuteKey(plannedStart)))
+                var dayKey = ToDayKey(plannedStart);
+                if (existingKeys.Contains(dayKey))
                 {
                     continue;
                 }
@@ -551,7 +555,7 @@ public static class DatabaseStartupExtensions
                     PhysicalLoad = rule.Template.PhysicalLoad,
                     Points = rule.Template.DefaultPoints
                 });
-                existingKeys.Add(ToMinuteKey(plannedStart));
+                existingKeys.Add(dayKey);
             }
         }
 
@@ -613,6 +617,126 @@ public static class DatabaseStartupExtensions
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    private static async Task NormalizeDailyDecayRatesAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var dailyDefaults = new Dictionary<string, (decimal LegacyWeekly, decimal Daily)>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Creatine saturation and maintenance"] = (12, 1.7m),
+            ["Desk mobility and pain-control streak"] = (8, 1.1m),
+            ["Lean muscle recomposition"] = (5, 0.7m),
+            ["Alcohol-free baseline"] = (18, 2.6m),
+            ["Vape-free baseline"] = (18, 2.6m),
+            ["Diet adherence for leanness"] = (10, 1.4m)
+        };
+
+        var goals = await dbContext.Goals
+            .Where(goal => dailyDefaults.Keys.Contains(goal.Title))
+            .ToListAsync(cancellationToken);
+
+        foreach (var goal in goals)
+        {
+            var defaults = dailyDefaults[goal.Title];
+            if (goal.DecayRatePercentPerWeek == defaults.LegacyWeekly)
+            {
+                goal.DecayRatePercentPerWeek = defaults.Daily;
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static async Task NormalizeCheckInDurationsAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var checkInTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Creatine dose",
+            "No alcohol check-in",
+            "No vape check-in",
+            "Diet check-in",
+            "Sleep log",
+            "SPF 30+"
+        };
+
+        var templates = await dbContext.ActivityTemplates
+            .Where(template => checkInTitles.Contains(template.Title) && template.DefaultDurationMinutes != 1)
+            .ToListAsync(cancellationToken);
+        foreach (var template in templates)
+        {
+            template.DefaultDurationMinutes = 1;
+        }
+
+        var planned = await dbContext.Activities
+            .Where(activity => activity.Status == ActivityStatus.Planned && checkInTitles.Contains(activity.Title) && activity.DurationMinutes != 1)
+            .ToListAsync(cancellationToken);
+        foreach (var activity in planned)
+        {
+            var start = activity.PlannedStartAt ?? DateTimeOffset.Now;
+            activity.DurationMinutes = 1;
+            activity.PlannedEndAt = start.AddMinutes(1);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static async Task RemoveDuplicateGeneratedActivitiesAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var generatedTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Creatine dose",
+            "Desk mobility reset",
+            "Hypertrophy workout",
+            "No alcohol check-in",
+            "No vape check-in",
+            "Diet check-in",
+            "Sleep log",
+            "SPF 30+"
+        };
+
+        var candidates = await dbContext.Activities
+            .Where(activity => activity.TemplateId != null && generatedTitles.Contains(activity.Title))
+            .ToListAsync(cancellationToken);
+
+        var duplicates = candidates
+            .GroupBy(activity => new
+            {
+                Title = activity.Title.Trim().ToLowerInvariant(),
+                Day = DateOnly.FromDateTime(GetActivitySortDate(activity).LocalDateTime)
+            })
+            .SelectMany(group => group
+                .OrderBy(ActivityStatusRank)
+                .ThenBy(GetActivitySortDate)
+                .Skip(1)
+                .Where(activity => string.IsNullOrWhiteSpace(activity.Notes)))
+            .ToList();
+
+        if (duplicates.Count == 0)
+        {
+            return;
+        }
+
+        dbContext.Activities.RemoveRange(duplicates);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static int ActivityStatusRank(Activity activity)
+    {
+        return activity.Status switch
+        {
+            _ when !string.IsNullOrWhiteSpace(activity.Notes) => -1,
+            ActivityStatus.Completed => 0,
+            ActivityStatus.Planned => 1,
+            ActivityStatus.Moved => 2,
+            ActivityStatus.Skipped => 3,
+            ActivityStatus.Cancelled => 4,
+            _ => 5
+        };
+    }
+
+    private static DateTimeOffset GetActivitySortDate(Activity activity)
+    {
+        return activity.PlannedStartAt ?? activity.ActualStartAt ?? activity.CreatedAt;
+    }
+
     private static IEnumerable<DateTimeOffset> ExpandRecurrence(RecurrenceRule rule, DateOnly from, DateOnly to, int hour)
     {
         var effectiveStart = rule.StartDate > from ? rule.StartDate : from;
@@ -668,9 +792,9 @@ public static class DatabaseStartupExtensions
         return (day.Year - start.Year) * 12 + day.Month - start.Month;
     }
 
-    private static long ToMinuteKey(DateTimeOffset value)
+    private static string ToDayKey(DateTimeOffset value)
     {
-        return value.ToUniversalTime().Ticks / TimeSpan.TicksPerMinute;
+        return DateOnly.FromDateTime(value.LocalDateTime).ToString("yyyy-MM-dd");
     }
 
     private static int GetDefaultHour(ActivityTemplate template)
@@ -685,6 +809,8 @@ public static class DatabaseStartupExtensions
             "No alcohol check-in" => 20,
             "No vape check-in" => 20,
             "Diet check-in" => 21,
+            "Sleep log" => 22,
+            "SPF 30+" => 8,
             _ => 9
         };
     }

@@ -524,13 +524,14 @@ static void MapRecurrenceRules(WebApplication app)
             .ToListAsync(ct);
         var existingKeys = existing
             .Where(value => value is not null)
-            .Select(value => ToMinuteKey(value!.Value))
+            .Select(value => ToDayKey(value!.Value))
             .ToHashSet();
         var created = new List<Activity>();
 
         foreach (var plannedStart in plannedDates)
         {
-            if (existingKeys.Contains(ToMinuteKey(plannedStart)))
+            var dayKey = ToDayKey(plannedStart);
+            if (existingKeys.Contains(dayKey))
             {
                 continue;
             }
@@ -554,6 +555,7 @@ static void MapRecurrenceRules(WebApplication app)
 
             db.Activities.Add(activity);
             created.Add(activity);
+            existingKeys.Add(dayKey);
         }
 
         await db.SaveChangesAsync(ct);
@@ -1403,7 +1405,8 @@ static void MapMood(WebApplication app)
             .Where(entry => IsInRange(entry.RecordedAt, from, to)).OrderByDescending(entry => entry.RecordedAt)));
     group.MapPost("/", async (MoodEntryRequest request, AxisDbContext db, CancellationToken ct) =>
     {
-        var entry = new MoodEntry { RecordedAt = DateTimeOffset.Now };
+        if (request.RecordedAt > DateTimeOffset.Now.AddMinutes(5)) return Results.BadRequest("Mood time cannot be in the future.");
+        var entry = new MoodEntry { RecordedAt = request.RecordedAt ?? DateTimeOffset.Now };
         ApplyMood(entry, request);
         db.MoodEntries.Add(entry);
         await db.SaveChangesAsync(ct);
@@ -1413,6 +1416,7 @@ static void MapMood(WebApplication app)
     {
         var entry = await db.MoodEntries.FindAsync([id], ct);
         if (entry is null) return Results.NotFound();
+        if (request.RecordedAt > DateTimeOffset.Now.AddMinutes(5)) return Results.BadRequest("Mood time cannot be in the future.");
         ApplyMood(entry, request);
         await db.SaveChangesAsync(ct);
         return Results.Ok(entry);
@@ -1429,6 +1433,7 @@ static void MapMood(WebApplication app)
 
 static void ApplyMood(MoodEntry entry, MoodEntryRequest request)
 {
+    if (request.RecordedAt is not null) entry.RecordedAt = request.RecordedAt.Value;
     entry.Score = Math.Clamp(request.Score, 1, 10);
     entry.Energy = Math.Clamp(request.Energy, 1, 10);
     entry.Stress = Math.Clamp(request.Stress, 1, 10);
@@ -1445,7 +1450,8 @@ static void MapDiary(WebApplication app)
     group.MapPost("/", async (DiaryEntryRequest request, AxisDbContext db, CancellationToken ct) =>
     {
         if (string.IsNullOrWhiteSpace(request.Title)) return Results.BadRequest("Diary title is required.");
-        var entry = new DiaryEntry { OccurredAt = DateTimeOffset.Now };
+        if (request.OccurredAt > DateTimeOffset.Now.AddMinutes(5)) return Results.BadRequest("Diary time cannot be in the future.");
+        var entry = new DiaryEntry { OccurredAt = request.OccurredAt ?? DateTimeOffset.Now };
         ApplyDiary(entry, request);
         db.DiaryEntries.Add(entry);
         await db.SaveChangesAsync(ct);
@@ -1455,6 +1461,7 @@ static void MapDiary(WebApplication app)
     {
         var entry = await db.DiaryEntries.FindAsync([id], ct);
         if (entry is null) return Results.NotFound();
+        if (request.OccurredAt > DateTimeOffset.Now.AddMinutes(5)) return Results.BadRequest("Diary time cannot be in the future.");
         ApplyDiary(entry, request);
         await db.SaveChangesAsync(ct);
         return Results.Ok(entry);
@@ -1498,6 +1505,7 @@ static void MapDiary(WebApplication app)
 
 static void ApplyDiary(DiaryEntry entry, DiaryEntryRequest request)
 {
+    if (request.OccurredAt is not null) entry.OccurredAt = request.OccurredAt.Value;
     entry.Title = request.Title.Trim();
     entry.Body = request.Body?.Trim() ?? string.Empty;
     entry.Tags = request.Tags?.Trim() ?? string.Empty;
@@ -1666,7 +1674,7 @@ static object ToGoalProgressResponse(Goal goal, IReadOnlyCollection<Activity> co
     var lastMaintainedAt = completedActivities.Select(ActivityCompletionDate).OrderByDescending(date => date).FirstOrDefault();
     DateTimeOffset? maintainedAt = lastMaintainedAt == default ? null : lastMaintainedAt;
     var decayedProgress = goal.DecayRatePercentPerWeek > 0
-        ? ProgressCalculator.ApplyWeeklyDecay(baseProgress, goal.DecayRatePercentPerWeek, maintainedAt, DateTimeOffset.UtcNow)
+        ? ProgressCalculator.ApplyDailyDecay(baseProgress, goal.DecayRatePercentPerWeek, maintainedAt, DateTimeOffset.UtcNow)
         : baseProgress;
     var weekStart = today.AddDays(-((7 + (int)today.DayOfWeek - (int)DayOfWeek.Monday) % 7));
     var completedThisWeek = completionDates.Count(date => date >= weekStart);
@@ -1947,9 +1955,9 @@ static int MonthsBetween(DateOnly start, DateOnly day)
     return (day.Year - start.Year) * 12 + day.Month - start.Month;
 }
 
-static long ToMinuteKey(DateTimeOffset value)
+static string ToDayKey(DateTimeOffset value)
 {
-    return value.ToUniversalTime().Ticks / TimeSpan.TicksPerMinute;
+    return DateOnly.FromDateTime(value.LocalDateTime).ToString("yyyy-MM-dd");
 }
 
 static DateTimeOffset ActivityDisplayDate(Activity activity)
@@ -2006,8 +2014,8 @@ public sealed record CountdownRequest(string Title, string? Description, DateTim
 
 public sealed record PhysiqueEntryRequest(DateTimeOffset? RecordedAt, int Age, string? Sex, decimal HeightCm, decimal WeightKg, decimal? WaistCm, decimal? NeckCm, decimal? HipCm, decimal? BodyFatPercentOverride, decimal? MuscleMassKg, int MoodScore, string? Status, string? Notes);
 
-public sealed record MoodEntryRequest(int Score, int Energy, int Stress, string? Context, string? Notes);
+public sealed record MoodEntryRequest(DateTimeOffset? RecordedAt, int Score, int Energy, int Stress, string? Context, string? Notes);
 
-public sealed record DiaryEntryRequest(string Title, string? Body, string? Tags);
+public sealed record DiaryEntryRequest(DateTimeOffset? OccurredAt, string Title, string? Body, string? Tags);
 
 public sealed record ReviewRequest(string? Summary, string? WhatWorked, string? WhatDidNotWork, string? NextFocus);

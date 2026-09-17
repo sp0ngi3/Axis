@@ -27,6 +27,12 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
 
     public DbSet<DiaryEntry> DiaryEntries => Set<DiaryEntry>();
 
+    public DbSet<LifeLesson> LifeLessons => Set<LifeLesson>();
+
+    public DbSet<SavingsEntry> SavingsEntries => Set<SavingsEntry>();
+
+    public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
+
     public DbSet<WikiPage> WikiPages => Set<WikiPage>();
 
     public DbSet<Review> Reviews => Set<Review>();
@@ -53,6 +59,8 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
         ConfigurePhysiqueEntries(modelBuilder);
         ConfigureMoodEntries(modelBuilder);
         ConfigureDiaryEntries(modelBuilder);
+        ConfigureLifeLessons(modelBuilder);
+        ConfigureMoney(modelBuilder);
         ConfigureWikiPages(modelBuilder);
         ConfigureReviews(modelBuilder);
         ConfigureRecurrenceRules(modelBuilder);
@@ -209,6 +217,34 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
             entity.Property(entry => entry.Body).HasMaxLength(12000);
             entity.Property(entry => entry.Tags).HasMaxLength(500);
             entity.HasIndex(entry => entry.OccurredAt);
+        });
+    }
+
+    private static void ConfigureLifeLessons(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<LifeLesson>(entity =>
+        {
+            entity.Property(item => item.Title).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.Content).HasMaxLength(8000).IsRequired();
+            entity.Property(item => item.Category).HasMaxLength(100);
+            entity.Property(item => item.Source).HasMaxLength(500);
+            entity.HasIndex(item => item.IsPinned);
+        });
+    }
+
+    private static void ConfigureMoney(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SavingsEntry>(entity =>
+        {
+            entity.Property(item => item.Note).HasMaxLength(500);
+            entity.HasIndex(item => item.RecordedAt);
+        });
+        modelBuilder.Entity<WishlistItem>(entity =>
+        {
+            entity.Property(item => item.Name).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.Description).HasMaxLength(2000);
+            entity.HasIndex(item => item.IsPurchased);
+            entity.HasIndex(item => item.Priority);
         });
     }
 

@@ -57,6 +57,8 @@ MapPhysique(app);
 MapMood(app);
 MapDiary(app);
 MapHistory(app);
+MapLifeLessons(app);
+MapMoney(app);
 MapWiki(app);
 MapReviews(app);
 MapDashboard(app);
@@ -1069,6 +1071,84 @@ static void MapPhysique(WebApplication app)
     }
 }
 
+static void MapLifeLessons(WebApplication app)
+{
+    var group = app.MapGroup("/api/life-lessons");
+    group.MapGet("/", async (AxisDbContext db, CancellationToken ct) => Results.Ok((await db.LifeLessons.AsNoTracking().ToListAsync(ct)).OrderByDescending(item => item.IsPinned).ThenByDescending(item => item.CreatedAt)));
+    group.MapPost("/", async (LifeLessonRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Title) || string.IsNullOrWhiteSpace(request.Content)) return Results.BadRequest("Title and lesson are required.");
+        var item = new LifeLesson(); ApplyLesson(item, request); db.LifeLessons.Add(item); await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/life-lessons/{item.Id}", item);
+    });
+    group.MapPut("/{id:guid}", async (Guid id, LifeLessonRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Title) || string.IsNullOrWhiteSpace(request.Content)) return Results.BadRequest("Title and lesson are required.");
+        var item = await db.LifeLessons.FindAsync([id], ct); if (item is null) return Results.NotFound();
+        ApplyLesson(item, request); await db.SaveChangesAsync(ct); return Results.Ok(item);
+    });
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.LifeLessons.FindAsync([id], ct); if (item is null) return Results.NotFound();
+        db.LifeLessons.Remove(item); await db.SaveChangesAsync(ct); return Results.NoContent();
+    });
+}
+
+static void ApplyLesson(LifeLesson item, LifeLessonRequest request)
+{
+    item.Title = request.Title.Trim(); item.Content = request.Content.Trim(); item.Category = request.Category?.Trim() ?? string.Empty;
+    item.Source = request.Source?.Trim() ?? string.Empty; item.IsPinned = request.IsPinned;
+}
+
+static void MapMoney(WebApplication app)
+{
+    var savings = app.MapGroup("/api/money/savings");
+    savings.MapGet("/", async (AxisDbContext db, CancellationToken ct) => Results.Ok((await db.SavingsEntries.AsNoTracking().ToListAsync(ct)).OrderByDescending(item => item.RecordedAt)));
+    savings.MapPost("/", async (SavingsEntryRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = new SavingsEntry { RecordedAt = DateTimeOffset.Now, Amount = Math.Max(0, request.Amount), Note = request.Note?.Trim() ?? string.Empty };
+        db.SavingsEntries.Add(item); await db.SaveChangesAsync(ct); return Results.Created($"/api/money/savings/{item.Id}", item);
+    });
+    savings.MapPut("/{id:guid}", async (Guid id, SavingsEntryRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.SavingsEntries.FindAsync([id], ct); if (item is null) return Results.NotFound();
+        item.Amount = Math.Max(0, request.Amount); item.Note = request.Note?.Trim() ?? string.Empty; await db.SaveChangesAsync(ct); return Results.Ok(item);
+    });
+    savings.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.SavingsEntries.FindAsync([id], ct); if (item is null) return Results.NotFound();
+        db.SavingsEntries.Remove(item); await db.SaveChangesAsync(ct); return Results.NoContent();
+    });
+
+    var wishlist = app.MapGroup("/api/money/wishlist");
+    wishlist.MapGet("/", async (AxisDbContext db, CancellationToken ct) => Results.Ok((await db.WishlistItems.AsNoTracking().ToListAsync(ct)).OrderBy(item => item.IsPurchased).ThenBy(item => item.Priority).ThenByDescending(item => item.CreatedAt)));
+    wishlist.MapPost("/", async (WishlistItemRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest("Name is required.");
+        var item = new WishlistItem(); ApplyWishlist(item, request); db.WishlistItems.Add(item); await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/money/wishlist/{item.Id}", item);
+    });
+    wishlist.MapPut("/{id:guid}", async (Guid id, WishlistItemRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest("Name is required.");
+        var item = await db.WishlistItems.FindAsync([id], ct); if (item is null) return Results.NotFound();
+        ApplyWishlist(item, request); await db.SaveChangesAsync(ct); return Results.Ok(item);
+    });
+    wishlist.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.WishlistItems.FindAsync([id], ct); if (item is null) return Results.NotFound();
+        db.WishlistItems.Remove(item); await db.SaveChangesAsync(ct); return Results.NoContent();
+    });
+}
+
+static void ApplyWishlist(WishlistItem item, WishlistItemRequest request)
+{
+    var wasPurchased = item.IsPurchased;
+    item.Name = request.Name.Trim(); item.Description = request.Description?.Trim() ?? string.Empty; item.Price = Math.Max(0, request.Price);
+    item.Priority = Math.Clamp(request.Priority, 1, 5); item.IsPurchased = request.IsPurchased;
+    item.PurchasedAt = request.IsPurchased ? item.PurchasedAt ?? DateTimeOffset.Now : wasPurchased ? null : item.PurchasedAt;
+}
+
 static void MapWiki(WebApplication app)
 {
     app.MapGet("/api/wiki-pages", async (AxisDbContext db, CancellationToken ct) =>
@@ -1232,16 +1312,34 @@ static void MapDashboard(WebApplication app)
         var today = DateOnly.FromDateTime(DateTimeOffset.Now.DateTime);
         var start = new DateTimeOffset(today.ToDateTime(TimeOnly.MinValue), DateTimeOffset.Now.Offset);
         var end = new DateTimeOffset(today.ToDateTime(TimeOnly.MaxValue), DateTimeOffset.Now.Offset);
+        var recentStart = start.AddDays(-2);
 
-        var activities = (await db.Activities.Include(activity => activity.LifeArea).Include(activity => activity.Goal)
+        var recentActivities = (await db.Activities.Include(activity => activity.LifeArea).Include(activity => activity.Goal)
             .ToListAsync(ct))
-            .Where(activity => IsInRange(ActivityTodayDate(activity), start, end))
+            .Where(activity => IsInRange(ActivityTodayDate(activity), recentStart, end))
             .OrderBy(ActivityTodayDate)
+            .ToList();
+        var activities = recentActivities
+            .Where(activity => IsInRange(ActivityTodayDate(activity), start, end))
             .ToList();
         var primaryGoal = await db.Goals.Include(goal => goal.LifeArea).FirstOrDefaultAsync(goal => goal.Status == GoalStatus.Active && goal.Priority == GoalPriority.Primary, ct);
         var mainFocus = activities.FirstOrDefault(activity => activity.Status == ActivityStatus.Planned && activity.EnergyCost == LoadLevel.High)
             ?? activities.FirstOrDefault(activity => activity.Status == ActivityStatus.Planned);
         var recoveryTask = activities.FirstOrDefault(activity => activity.Status == ActivityStatus.Planned && activity.EnergyCost == LoadLevel.Low);
+        var recentDays = Enumerable.Range(0, 3).Select(daysAgo =>
+        {
+            var day = today.AddDays(-daysAgo);
+            var dayStart = new DateTimeOffset(day.ToDateTime(TimeOnly.MinValue), DateTimeOffset.Now.Offset);
+            var dayEnd = new DateTimeOffset(day.ToDateTime(TimeOnly.MaxValue), DateTimeOffset.Now.Offset);
+            return new
+            {
+                Date = day,
+                IsToday = daysAgo == 0,
+                Activities = recentActivities
+                    .Where(activity => IsInRange(ActivityTodayDate(activity), dayStart, dayEnd))
+                    .Select(ToActivityResponse)
+            };
+        });
 
         return Results.Ok(new
         {
@@ -1251,6 +1349,7 @@ static void MapDashboard(WebApplication app)
             supportTasks = activities.Where(activity => activity.Id != mainFocus?.Id && activity.Id != recoveryTask?.Id).Take(2).Select(ToActivityResponse),
             recoveryTask = recoveryTask is null ? null : ToActivityResponse(recoveryTask),
             timeline = activities.Select(ToActivityResponse),
+            recentDays,
             suggestion = mainFocus is null
                 ? "Keep today light: choose one useful next action."
                 : $"Start with {mainFocus.Title}; make it complete, not perfect."
@@ -1269,8 +1368,9 @@ static void MapDashboard(WebApplication app)
         var areas = await db.LifeAreas.Where(area => area.IsActive).ToListAsync(ct);
         var suggestions = new List<object>();
 
+        var overdueThreshold = dayStart.AddDays(-2);
         var overdue = activities
-            .Where(activity => activity.Status == ActivityStatus.Planned && activity.PlannedStartAt is not null && activity.PlannedStartAt < dayStart)
+            .Where(activity => activity.Status == ActivityStatus.Planned && activity.PlannedStartAt is not null && activity.PlannedStartAt >= overdueThreshold && activity.PlannedStartAt < dayStart)
             .OrderBy(activity => activity.PlannedStartAt)
             .FirstOrDefault();
         if (overdue is not null)
@@ -1697,8 +1797,10 @@ static object ToGoalProgressResponse(Goal goal, IReadOnlyCollection<Activity> co
         : ProgressCalculator.CalculateGoalProgress(goal);
     var lastMaintainedAt = completedActivities.Select(ActivityCompletionDate).OrderByDescending(date => date).FirstOrDefault();
     DateTimeOffset? maintainedAt = lastMaintainedAt == default ? null : lastMaintainedAt;
+    var decayGraceDays = goal.Title.Equals("Lean muscle recomposition", StringComparison.OrdinalIgnoreCase) ? 14 : 0;
+    var decayAnchor = maintainedAt?.AddDays(decayGraceDays);
     var decayedProgress = goal.DecayRatePercentPerWeek > 0
-        ? ProgressCalculator.ApplyDailyDecay(baseProgress, goal.DecayRatePercentPerWeek, maintainedAt, DateTimeOffset.UtcNow)
+        ? ProgressCalculator.ApplyDailyDecay(baseProgress, goal.DecayRatePercentPerWeek, decayAnchor, DateTimeOffset.UtcNow)
         : baseProgress;
     var weekStart = today.AddDays(-((7 + (int)today.DayOfWeek - (int)DayOfWeek.Monday) % 7));
     var completedThisWeek = completionDates.Count(date => date >= weekStart);
@@ -1718,6 +1820,7 @@ static object ToGoalProgressResponse(Goal goal, IReadOnlyCollection<Activity> co
         JourneyProgress = journeyProgress,
         CurrentStreakDays = currentStreak,
         LongestStreakDays = longestStreak,
+        DecayGraceDays = decayGraceDays,
         FirstTrackedAt = completedActivities.Select(ActivityCompletionDate).OrderBy(date => date).Cast<DateTimeOffset?>().FirstOrDefault(),
         MaintenanceSatisfied = decayedProgress >= goal.MaintenanceThreshold
             && (goal.MaintenanceTargetPerWeek is null || completedThisWeek >= goal.MaintenanceTargetPerWeek)
@@ -2147,6 +2250,12 @@ public sealed record PhysiqueEntryRequest(DateTimeOffset? RecordedAt, int Age, s
 public sealed record MoodEntryRequest(DateTimeOffset? RecordedAt, int Score, int Energy, int Stress, string? Context, string? Notes);
 
 public sealed record DiaryEntryRequest(DateTimeOffset? OccurredAt, string Title, string? Body, string? Tags);
+
+public sealed record LifeLessonRequest(string Title, string Content, string? Category, string? Source, bool IsPinned);
+
+public sealed record SavingsEntryRequest(decimal Amount, string? Note);
+
+public sealed record WishlistItemRequest(string Name, string? Description, decimal Price, int Priority, bool IsPurchased);
 
 public sealed record ReviewRequest(string? Summary, string? WhatWorked, string? WhatDidNotWork, string? NextFocus);
 

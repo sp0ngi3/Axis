@@ -264,6 +264,32 @@ public sealed class DiaryEntry : Entity
     public string Tags { get; set; } = string.Empty;
 }
 
+public sealed class LifeLesson : Entity
+{
+    public string Title { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string Source { get; set; } = string.Empty;
+    public bool IsPinned { get; set; }
+}
+
+public sealed class SavingsEntry : Entity
+{
+    public DateTimeOffset RecordedAt { get; set; } = DateTimeOffset.UtcNow;
+    public decimal Amount { get; set; }
+    public string Note { get; set; } = string.Empty;
+}
+
+public sealed class WishlistItem : Entity
+{
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public int Priority { get; set; } = 3;
+    public bool IsPurchased { get; set; }
+    public DateTimeOffset? PurchasedAt { get; set; }
+}
+
 public sealed class WikiPage : Entity
 {
     public string Slug { get; set; } = string.Empty;

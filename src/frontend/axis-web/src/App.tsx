@@ -34,10 +34,13 @@ import type {
   MoodEntry,
   DiaryEntry,
   HistoryDay,
+  LifeLesson,
+  SavingsEntry,
+  WishlistItem,
   WikiPage
 } from './types';
 
-type Page = 'today' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
+type Page = 'today' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'lessons' | 'money' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
 type Theme = 'light' | 'dark';
 type CalendarView = 'day' | 'week' | 'month';
 type WorkoutExercise = {
@@ -66,6 +69,8 @@ const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = 
   { id: 'physique', label: 'Physique', kicker: 'Body lab', icon: '^^' },
   { id: 'journal', label: 'Journal', kicker: 'Mind + diary', icon: '|>' },
   { id: 'history', label: 'History', kicker: 'Recall', icon: '<<' },
+  { id: 'lessons', label: 'Life Lessons', kicker: 'Wisdom', icon: '**' },
+  { id: 'money', label: 'Money', kicker: 'Capital', icon: '$$' },
   { id: 'goals', label: 'Goals', kicker: 'Outcomes', icon: '<>' },
   { id: 'areas', label: 'Life Areas', kicker: 'Balance', icon: '##' },
   { id: 'templates', label: 'Templates', kicker: 'Repeat', icon: '~~' },
@@ -111,6 +116,9 @@ export default function App() {
   const [physiqueEntries, setPhysiqueEntries] = useState<PhysiqueEntry[]>([]);
   const [moodEntries, setMoodEntries] = useState<MoodEntry[]>([]);
   const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
+  const [lifeLessons, setLifeLessons] = useState<LifeLesson[]>([]);
+  const [savingsEntries, setSavingsEntries] = useState<SavingsEntry[]>([]);
+  const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [today, setToday] = useState<TodayDashboard | null>(null);
@@ -132,7 +140,7 @@ export default function App() {
     setIsLoading(true);
     try {
       setError('');
-      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
+      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, lessonRows, savingsRows, wishlistRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
         api.get<LifeArea[]>('/api/life-areas'),
         api.get<Goal[]>('/api/goals'),
         api.get<GoalProgress[]>('/api/dashboard/progress'),
@@ -144,6 +152,9 @@ export default function App() {
         api.get<PhysiqueEntry[]>('/api/physique'),
         api.get<MoodEntry[]>('/api/mood'),
         api.get<DiaryEntry[]>('/api/diary'),
+        api.get<LifeLesson[]>('/api/life-lessons'),
+        api.get<SavingsEntry[]>('/api/money/savings'),
+        api.get<WishlistItem[]>('/api/money/wishlist'),
         api.get<WikiPage[]>('/api/wiki-pages'),
         api.get<Review[]>('/api/reviews'),
         api.get<TodayDashboard>('/api/dashboard/today'),
@@ -163,6 +174,9 @@ export default function App() {
       setPhysiqueEntries(physiqueRows);
       setMoodEntries(moodRows);
       setDiaryEntries(diaryRows);
+      setLifeLessons(lessonRows);
+      setSavingsEntries(savingsRows);
+      setWishlistItems(wishlistRows);
       setWikiPages(wikiRows);
       setReviews(reviewRows);
       setToday(todayData);
@@ -380,7 +394,7 @@ export default function App() {
           <CalendarPage
             areas={areas}
             goals={goals}
-            activities={activities}
+            activities={activities.filter((activity) => !activity.templateId)}
             busy={isBusy}
             onSave={(activity, id) => runAction(
               () => id ? api.put(`/api/activities/${id}`, activity) : api.post('/api/activities', activity),
@@ -429,6 +443,8 @@ export default function App() {
           />
         )}
         {page === 'history' && <HistoryPage />}
+        {page === 'lessons' && <LifeLessonsPage lessons={lifeLessons} busy={isBusy} onSave={(body, id) => runAction(() => id ? api.put(`/api/life-lessons/${id}`, body) : api.post('/api/life-lessons', body), id ? 'Life lesson updated.' : 'Life lesson saved.')} onDelete={(id) => runAction(() => api.delete(`/api/life-lessons/${id}`), 'Life lesson deleted.')} />}
+        {page === 'money' && <MoneyPage savings={savingsEntries} wishlist={wishlistItems} busy={isBusy} onSaveSavings={(body, id) => runAction(() => id ? api.put(`/api/money/savings/${id}`, body) : api.post('/api/money/savings', body), id ? 'Savings entry updated.' : 'Savings balance recorded.')} onDeleteSavings={(id) => runAction(() => api.delete(`/api/money/savings/${id}`), 'Savings entry deleted.')} onSaveWish={(body, id) => runAction(() => id ? api.put(`/api/money/wishlist/${id}`, body) : api.post('/api/money/wishlist', body), id ? 'Wishlist item updated.' : 'Wishlist item added.')} onDeleteWish={(id) => runAction(() => api.delete(`/api/money/wishlist/${id}`), 'Wishlist item deleted.')} />}
         {page === 'goals' && (
           <GoalsPage
             areas={areas}
@@ -670,7 +686,7 @@ function TodayPage(props: {
   onDeleteActivity: (id: string) => void;
 }) {
   const [focusDraft, setFocusDraft] = useState<Activity | null>(null);
-  const [expandedStatus, setExpandedStatus] = useState<'open' | 'done' | 'skipped' | null>('open');
+  const [expandedStatus, setExpandedStatus] = useState<'open' | 'done' | 'skipped' | null>(null);
   const primary = props.today?.primaryGoal ?? props.goals.find((goal) => goal.priority === 'Primary');
   const plannedToday = props.today?.timeline ?? [];
   const quickTemplates = getQuickTemplates(props.templates);
@@ -736,6 +752,9 @@ function TodayPage(props: {
         <button className={expandedStatus === 'skipped' ? 'active' : ''} aria-expanded={expandedStatus === 'skipped'} onClick={() => setExpandedStatus((current) => current === 'skipped' ? null : 'skipped')}><span>Skipped</span><strong>{todaySkipped}</strong></button>
         <div><span>Completion</span><strong>{plannedToday.length ? Math.round(todayDone / plannedToday.length * 100) : 0}%</strong></div>
       </section>
+
+      <RecentExecutionPanel days={props.today?.recentDays ?? []} busy={props.busy} onComplete={props.onComplete} onSkip={props.onSkip} />
+
       {expandedStatus && <section className="surface today-status-detail">
         <div className="collection-header flush-header">
           <SectionTitle kicker="Today" title={expandedStatus === 'open' ? 'Open activities' : expandedStatus === 'done' ? 'Completed activities' : 'Skipped activities'} />
@@ -804,6 +823,85 @@ function TodayPage(props: {
       </EditorDrawer>
     </section>
   );
+}
+
+function RecentExecutionPanel(props: {
+  days: TodayDashboard['recentDays'];
+  busy: boolean;
+  onComplete: (id: string) => void;
+  onSkip: (id: string) => void;
+}) {
+  return (
+    <section className="surface recent-execution">
+      <div className="collection-header flush-header">
+        <SectionTitle kicker="Today + 2 days" title="Execution ledger" />
+        <div className="execution-key" aria-label="Activity status legend">
+          <span className="done"><i />Done</span>
+          <span className="open"><i />Open</span>
+          <span className="missed"><i />Missed</span>
+          <span className="skipped"><i />Skipped</span>
+        </div>
+      </div>
+      <p className="helper-copy">Everything expected today, plus unresolved and completed routines from the previous two days. Older plans stay out of this view.</p>
+      <div className="execution-days">
+        {props.days.map((day, index) => {
+          const done = day.activities.filter((activity) => activity.status === 'Completed').length;
+          const skipped = day.activities.filter((activity) => activity.status === 'Skipped' || activity.status === 'Cancelled').length;
+          const unresolved = day.activities.length - done - skipped;
+          return (
+            <article className={`execution-day ${day.isToday ? 'today' : ''}`} key={day.date}>
+              <header>
+                <div>
+                  <span>{day.isToday ? 'Today' : index === 1 ? 'Yesterday' : '2 days ago'}</span>
+                  <strong>{formatRecentDay(day.date)}</strong>
+                </div>
+                <div className="execution-day-score" title={`${done} completed out of ${day.activities.length}`}>
+                  <strong>{done}/{day.activities.length}</strong>
+                  <small>done</small>
+                </div>
+              </header>
+              <div className="execution-day-counts">
+                <span className="done">{done} done</span>
+                <span className={day.isToday ? 'open' : 'missed'}>{unresolved} {day.isToday ? 'open' : 'missed'}</span>
+                <span className="skipped">{skipped} skipped</span>
+              </div>
+              <div className="execution-activity-list">
+                {day.activities.map((activity) => <RecentExecutionRow key={activity.id} activity={activity} isToday={day.isToday} busy={props.busy} onComplete={props.onComplete} onSkip={props.onSkip} />)}
+                {day.activities.length === 0 && <div className="execution-empty"><strong>Nothing expected</strong><span>No routines or manual activities were scheduled.</span></div>}
+              </div>
+            </article>
+          );
+        })}
+        {props.days.length === 0 && <EmptyState text="The three-day activity ledger is not available yet." />}
+      </div>
+    </section>
+  );
+}
+
+function RecentExecutionRow(props: { activity: Activity; isToday: boolean; busy: boolean; onComplete: (id: string) => void; onSkip: (id: string) => void }) {
+  const isOpen = props.activity.status === 'Planned' || props.activity.status === 'Moved';
+  const isDone = props.activity.status === 'Completed';
+  const isSkipped = props.activity.status === 'Skipped' || props.activity.status === 'Cancelled';
+  const label = isDone ? 'Done' : isSkipped ? 'Skipped' : props.isToday ? 'Open' : 'Missed';
+  const tone = label.toLowerCase();
+  return (
+    <div className={`execution-activity ${tone}`}>
+      <span className="execution-activity-marker" style={{ background: props.activity.lifeAreaColor }} />
+      <div className="execution-activity-copy">
+        <strong>{props.activity.title}</strong>
+        <small>{props.activity.lifeAreaName} · {activityDisplayMeasure(props.activity)}</small>
+      </div>
+      <span className={`status-badge ${tone}`}>{label}</span>
+      <div className="execution-activity-actions">
+        {(isOpen || isSkipped) && <button disabled={props.busy || !canCompleteActivity(props.activity)} onClick={() => props.onComplete(props.activity.id)}>{props.isToday && isOpen ? 'Done' : 'Mark done'}</button>}
+        {(isOpen || isDone) && <button className="secondary-button" disabled={props.busy} onClick={() => props.onSkip(props.activity.id)}>{isDone ? 'Mark skipped' : 'Skip'}</button>}
+      </div>
+    </div>
+  );
+}
+
+function formatRecentDay(value: string) {
+  return new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(`${value}T12:00:00`));
 }
 
 function TodayQuickLogPanel(props: {
@@ -1676,6 +1774,59 @@ function CalendarReviewPanel(props: {
   );
 }
 
+function LifeLessonsPage(props: { lessons: LifeLesson[]; busy: boolean; onSave: (body: unknown, id?: string) => void; onDelete: (id: string) => void }) {
+  const [selected, setSelected] = useState<LifeLesson | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('');
+  const [page, setPage] = useState(1);
+  const categories = Array.from(new Set(props.lessons.map((item) => item.category).filter(Boolean))).sort();
+  const filtered = props.lessons.filter((item) => (!query || `${item.title} ${item.content} ${item.source}`.toLowerCase().includes(query.toLowerCase())) && (!category || item.category === category));
+  const paged = paginate(filtered, page, defaultPageSize);
+  useEffect(() => setPage(1), [query, category]);
+  return <section className="workspace-grid drawer-workspace"><div className="workspace-main"><section className="collection-header"><div><p className="eyebrow">Personal operating manual</p><h3>{props.lessons.length} life lessons</h3></div><button onClick={() => { setSelected(null); setCreating(true); }}>Add lesson</button></section>
+    <div className="filter-bar"><input placeholder="Search lessons" value={query} onChange={(event) => setQuery(event.target.value)} /><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></div>
+    <div className="lesson-grid">{paged.items.map((item) => <article className={`entity-card lesson-card ${item.isPinned ? 'pinned' : ''}`} key={item.id}><div className="entity-card-top"><span className="color-chip">{item.category || 'Life'}</span>{item.isPinned && <strong>PINNED</strong>}</div><h3>{item.title}</h3><blockquote>{item.content}</blockquote>{item.source && <p className="muted-copy">Source: {item.source}</p>}<small>{formatShortDate(item.createdAt)}</small><div className="card-actions"><button className="secondary-button" onClick={() => { setSelected(item); setCreating(false); }}>Edit</button><button className="danger-button" onClick={() => confirmDelete('Delete this lesson?') && props.onDelete(item.id)}>Delete</button></div></article>)}</div>
+    {filtered.length === 0 && <EmptyState text="No lessons match this search." />}<PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} /></div>
+    <EditorDrawer open={creating || selected !== null} label={selected ? 'Edit life lesson' : 'Add life lesson'} onClose={() => { setCreating(false); setSelected(null); }}><LifeLessonForm lesson={selected} busy={props.busy} onSave={(body) => { props.onSave(body, selected?.id); setCreating(false); setSelected(null); }} /></EditorDrawer></section>;
+}
+
+function LifeLessonForm(props: { lesson: LifeLesson | null; busy: boolean; onSave: (body: unknown) => void }) {
+  const [draft, setDraft] = useState({ title: props.lesson?.title ?? '', content: props.lesson?.content ?? '', category: props.lesson?.category ?? '', source: props.lesson?.source ?? '', isPinned: props.lesson?.isPinned ?? false });
+  return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}><TextField label="Lesson title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} required /><TextArea label="Advice to future me" value={draft.content} onChange={(content) => setDraft({ ...draft, content })} /><TextField label="Category" value={draft.category} onChange={(category) => setDraft({ ...draft, category })} /><TextField label="Source or situation" value={draft.source} onChange={(source) => setDraft({ ...draft, source })} /><label className="toggle-field"><input type="checkbox" checked={draft.isPinned} onChange={(event) => setDraft({ ...draft, isPinned: event.target.checked })} /><span>Pin this lesson</span></label><button disabled={props.busy}>Save lesson</button></form>;
+}
+
+function MoneyPage(props: { savings: SavingsEntry[]; wishlist: WishlistItem[]; busy: boolean; onSaveSavings: (body: unknown, id?: string) => void; onDeleteSavings: (id: string) => void; onSaveWish: (body: unknown, id?: string) => void; onDeleteWish: (id: string) => void }) {
+  const [mode, setMode] = useState<'wishlist' | 'savings'>('wishlist');
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('active');
+  const [page, setPage] = useState(1);
+  const [wish, setWish] = useState<WishlistItem | null>(null);
+  const [saving, setSaving] = useState<SavingsEntry | null>(null);
+  const [creating, setCreating] = useState(false);
+  const currentSavings = props.savings[0]?.amount ?? 0;
+  const activeTotal = props.wishlist.filter((item) => !item.isPurchased).reduce((sum, item) => sum + item.price, 0);
+  const purchasedTotal = props.wishlist.filter((item) => item.isPurchased).reduce((sum, item) => sum + item.price, 0);
+  const coverage = activeTotal <= 0 ? 0 : Math.min(100, Math.round(currentSavings / activeTotal * 100));
+  const filteredWish = props.wishlist.filter((item) => (!query || `${item.name} ${item.description}`.toLowerCase().includes(query.toLowerCase())) && (filter === 'all' || (filter === 'done' ? item.isPurchased : !item.isPurchased)));
+  const filteredSavings = props.savings.filter((item) => !query || item.note.toLowerCase().includes(query.toLowerCase()));
+  const pagedWish = paginate(filteredWish, page, defaultPageSize);
+  const pagedSavings = paginate(filteredSavings, page, defaultPageSize);
+  useEffect(() => setPage(1), [query, filter, mode]);
+  return <section className="workspace-grid drawer-workspace"><div className="workspace-main"><section className="money-hero"><div><p className="eyebrow">Capital dashboard</p><h3>{formatMoney(currentSavings)} saved</h3><p>{coverage}% of the active wishlist is covered.</p></div><div className="money-orbit" style={{ '--money-progress': `${coverage * 3.6}deg` } as React.CSSProperties}><strong>{coverage}%</strong><span>coverage</span></div></section>
+    <div className="money-metrics"><SummaryPill label="Saved" value={formatMoney(currentSavings)} /><SummaryPill label="Wishlist" value={formatMoney(activeTotal)} /><SummaryPill label="Purchased" value={formatMoney(purchasedTotal)} /><SummaryPill label="Items" value={props.wishlist.length} /></div>
+    <section className="surface money-trend"><SectionTitle kicker="Savings history" title="Capital trajectory" /><svg viewBox="0 0 100 36" preserveAspectRatio="none" aria-label="Savings trend"><polyline points={moneySparklinePoints(props.savings)} /></svg></section>
+    <div className="collection-header"><div className="segmented-control"><button className={mode === 'wishlist' ? 'active' : ''} onClick={() => setMode('wishlist')}>Wishlist</button><button className={mode === 'savings' ? 'active' : ''} onClick={() => setMode('savings')}>Savings log</button></div><button onClick={() => { setWish(null); setSaving(null); setCreating(true); }}>{mode === 'wishlist' ? 'Add wish' : 'Record balance'}</button></div>
+    <div className="filter-bar"><input placeholder={`Search ${mode}`} value={query} onChange={(event) => setQuery(event.target.value)} />{mode === 'wishlist' && <select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="active">Wishlist</option><option value="done">Purchased</option><option value="all">All</option></select>}</div>
+    {mode === 'wishlist' ? <div className="entity-grid">{pagedWish.items.map((item) => <article className={`entity-card money-item ${item.isPurchased ? 'purchased' : ''}`} key={item.id}><div className="entity-card-top"><span>Priority {item.priority}</span><strong>{formatMoney(item.price)}</strong></div><h3>{item.name}</h3><p>{item.description || 'No notes.'}</p><div className="meter"><i style={{ width: `${Math.min(100, currentSavings / Math.max(1, item.price) * 100)}%` }} /></div><small>{item.isPurchased ? `Purchased ${formatShortDate(item.purchasedAt ?? undefined)}` : currentSavings >= item.price ? 'Affordable from current savings' : `${formatMoney(item.price - currentSavings)} still needed`}</small><div className="card-actions"><button onClick={() => props.onSaveWish({ name: item.name, description: item.description, price: item.price, priority: item.priority, isPurchased: !item.isPurchased }, item.id)}>{item.isPurchased ? 'Return to wishlist' : 'Mark purchased'}</button><button className="secondary-button" onClick={() => { setWish(item); setSaving(null); setCreating(false); }}>Edit</button><button className="danger-button" onClick={() => props.onDeleteWish(item.id)}>Delete</button></div></article>)}</div> : <div className="history-timeline">{pagedSavings.items.map((item) => <article className="timeline-entry" key={item.id}><time>{formatShortDate(item.recordedAt)}</time><div><h4>{formatMoney(item.amount)}</h4><p>{item.note || 'Balance update'}</p></div><div className="row-actions"><button className="secondary-button" onClick={() => { setSaving(item); setWish(null); setCreating(false); }}>Edit</button><button className="danger-button" onClick={() => props.onDeleteSavings(item.id)}>Delete</button></div></article>)}</div>}
+    {(mode === 'wishlist' ? pagedWish.items.length : pagedSavings.items.length) === 0 && <EmptyState text="Nothing matches this view." />}<PaginationControls page={page} totalPages={mode === 'wishlist' ? pagedWish.totalPages : pagedSavings.totalPages} totalItems={mode === 'wishlist' ? filteredWish.length : filteredSavings.length} onPage={setPage} /></div>
+    <EditorDrawer open={creating || wish !== null || saving !== null} label={mode === 'wishlist' ? 'Wishlist item' : 'Savings balance'} onClose={() => { setCreating(false); setWish(null); setSaving(null); }}>{mode === 'wishlist' ? <WishlistForm item={wish} busy={props.busy} onSave={(body) => { props.onSaveWish(body, wish?.id); setCreating(false); setWish(null); }} /> : <SavingsForm entry={saving} busy={props.busy} onSave={(body) => { props.onSaveSavings(body, saving?.id); setCreating(false); setSaving(null); }} />}</EditorDrawer>
+  </section>;
+}
+
+function WishlistForm(props: { item: WishlistItem | null; busy: boolean; onSave: (body: unknown) => void }) { const [draft, setDraft] = useState({ name: props.item?.name ?? '', description: props.item?.description ?? '', price: props.item?.price ?? 0, priority: props.item?.priority ?? 3, isPurchased: props.item?.isPurchased ?? false }); return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}><TextField label="Item" value={draft.name} onChange={(name) => setDraft({ ...draft, name })} required /><TextArea label="Why I want it" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} /><NumberField label="Price" value={draft.price} onChange={(price) => setDraft({ ...draft, price })} /><NumberField label="Priority 1-5" value={draft.priority} onChange={(priority) => setDraft({ ...draft, priority })} /><label className="toggle-field"><input type="checkbox" checked={draft.isPurchased} onChange={(event) => setDraft({ ...draft, isPurchased: event.target.checked })} /><span>Purchased</span></label><button disabled={props.busy}>Save item</button></form>; }
+function SavingsForm(props: { entry: SavingsEntry | null; busy: boolean; onSave: (body: unknown) => void }) { const [amount, setAmount] = useState(props.entry?.amount ?? 0); const [note, setNote] = useState(props.entry?.note ?? ''); return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave({ amount, note }); }}><NumberField label="Current saved amount" value={amount} onChange={setAmount} /><TextField label="Note" value={note} onChange={setNote} /><small className="helper-copy">A new balance creates a point on the savings chart.</small><button disabled={props.busy}>Record balance</button></form>; }
+
 function CountdownsPage(props: {
   countdowns: Countdown[];
   busy: boolean;
@@ -1730,14 +1881,15 @@ function CountdownsPage(props: {
 
         <div className="entity-grid countdown-grid">
           {paged.items.map((countdown) => (
-            <article className={countdown.isPast ? 'entity-card countdown-card elapsed' : 'entity-card countdown-card'} key={countdown.id}>
+            <article className={countdown.isPast ? 'entity-card countdown-card elapsed' : 'entity-card countdown-card'} style={{ '--countdown-color': countdown.color, '--countdown-progress': `${countdownProgress(countdown) * 3.6}deg` } as React.CSSProperties} key={countdown.id}>
+              <i className="countdown-scan" aria-hidden="true" />
               <div className="entity-card-top">
                 <strong>{countdown.title}</strong>
                 <span>{countdown.category || 'Countdown'}</span>
               </div>
-              <div className="countdown-clock" style={{ borderColor: countdown.color }}>
-                <strong>{countdown.isPast ? 'Released' : countdown.daysRemaining}</strong>
-                <span>{countdown.isPast ? 'target passed' : `days ${countdown.hoursRemaining}h ${countdown.minutesRemaining}m`}</span>
+              <div className="countdown-stage">
+                <div className="countdown-orbit"><span>{countdown.isPast ? '✓' : countdown.daysRemaining}</span><small>{countdown.isPast ? 'arrived' : 'days'}</small></div>
+                <div className="countdown-clock"><div><strong>{String(countdown.hoursRemaining).padStart(2, '0')}</strong><span>hours</span></div><b>:</b><div><strong>{String(countdown.minutesRemaining).padStart(2, '0')}</strong><span>minutes</span></div></div>
               </div>
               <p>{countdown.description || 'No notes yet.'}</p>
               <dl className="compact-dl">
@@ -2299,7 +2451,7 @@ function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: 
         <div className="goal-progress-copy">
           <span className={props.progress?.maintenanceSatisfied ? 'status-badge strong' : 'status-badge attention'}>{props.progress?.maintenanceSatisfied ? 'Maintenance reached' : 'Building baseline'}</span>
           <h4>{props.progress?.completedDays ?? completed.length}{props.progress?.trackingTargetDays ? ` of ${props.progress.trackingTargetDays} days` : ' completed days'}</h4>
-          <p>{props.progress?.completedThisWeek ?? 0} of {props.goal.maintenanceTargetPerWeek ?? 'flexible'} expected this week. Decay is {props.goal.decayRatePercentPerWeek}% per inactive day.</p>
+          <p>{props.progress?.completedThisWeek ?? 0} of {props.goal.maintenanceTargetPerWeek ?? 'flexible'} expected this week. Decay is {props.goal.decayRatePercentPerWeek}% per inactive day{props.progress?.decayGraceDays ? ` after a ${props.progress.decayGraceDays}-day grace period` : ''}.</p>
         </div>
       </div>
       <dl className="compact-dl">
@@ -4152,6 +4304,27 @@ function formatShortDate(value: string | undefined) {
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(value);
+}
+
+function countdownProgress(countdown: Countdown) {
+  if (countdown.isPast) return 100;
+  const start = countdown.createdAt ? new Date(countdown.createdAt).getTime() : Date.now();
+  const target = new Date(countdown.targetAt).getTime();
+  if (target <= start) return 0;
+  return Math.max(0, Math.min(100, (Date.now() - start) / (target - start) * 100));
+}
+
+function moneySparklinePoints(entries: SavingsEntry[]) {
+  const rows = [...entries].sort((first, second) => new Date(first.recordedAt).getTime() - new Date(second.recordedAt).getTime());
+  if (rows.length === 0) return '0,34 100,34';
+  const min = Math.min(...rows.map((item) => item.amount));
+  const max = Math.max(...rows.map((item) => item.amount));
+  const range = Math.max(1, max - min);
+  return rows.map((item, index) => `${rows.length === 1 ? 50 : index / (rows.length - 1) * 100},${32 - (item.amount - min) / range * 28}`).join(' ');
 }
 
 function localDateKey(value: string) {

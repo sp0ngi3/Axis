@@ -54,6 +54,7 @@ export interface GoalProgress {
   journeyProgress?: number | null;
   currentStreakDays: number;
   longestStreakDays: number;
+  decayGraceDays?: number;
   maintenanceSatisfied: boolean;
 }
 
@@ -157,6 +158,7 @@ export interface Countdown {
   hoursRemaining: number;
   minutesRemaining: number;
   isPast: boolean;
+  createdAt?: string;
 }
 
 export interface PhysiqueEntry {
@@ -187,6 +189,18 @@ export interface MoodEntry {
 
 export interface DiaryEntry {
   id: string; occurredAt: string; title: string; body: string; tags: string;
+}
+
+export interface LifeLesson {
+  id: string; title: string; content: string; category: string; source: string; isPinned: boolean; createdAt: string; updatedAt: string;
+}
+
+export interface SavingsEntry {
+  id: string; recordedAt: string; amount: number; note: string;
+}
+
+export interface WishlistItem {
+  id: string; name: string; description: string; price: number; priority: number; isPurchased: boolean; purchasedAt?: string | null; createdAt: string;
 }
 
 export interface HistoryDay {
@@ -224,6 +238,7 @@ export interface TodayDashboard {
   supportTasks: Activity[];
   recoveryTask?: Activity;
   timeline: Activity[];
+  recentDays: Array<{ date: string; isToday: boolean; activities: Activity[] }>;
   suggestion: string;
 }
 

@@ -99,6 +99,36 @@ public sealed class ActivityApiIntegrationTests
         await factory.AssertDatabaseIntegrityAsync();
     }
 
+    [Fact]
+    public async Task Today_dashboard_limits_execution_ledger_to_today_and_previous_two_days()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+        var areaId = await GetFirstIdAsync(client, "/api/life-areas");
+        var offset = DateTimeOffset.Now.Offset;
+        var yesterday = new DateTimeOffset(DateTime.Today.AddDays(-1).AddHours(9), offset);
+        var twoDaysAgo = new DateTimeOffset(DateTime.Today.AddDays(-2).AddHours(9), offset);
+        var threeDaysAgo = new DateTimeOffset(DateTime.Today.AddDays(-3).AddHours(9), offset);
+
+        var completedId = await CreateActivityAsync(client, areaId, yesterday, title: "Recent completed marker");
+        var skippedId = await CreateActivityAsync(client, areaId, twoDaysAgo, title: "Recent skipped marker");
+        await CreateActivityAsync(client, areaId, threeDaysAgo, title: "Old hidden marker");
+        await AssertStatusAsync(await client.PostAsync($"/api/activities/{completedId}/complete", null), HttpStatusCode.OK);
+        await AssertStatusAsync(await client.PostAsync($"/api/activities/{skippedId}/skip", null), HttpStatusCode.OK);
+
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/api/dashboard/today"));
+        var recentDays = document.RootElement.GetProperty("recentDays").EnumerateArray().ToList();
+        var activities = recentDays
+            .SelectMany(day => day.GetProperty("activities").EnumerateArray())
+            .Select(item => (Title: item.GetProperty("title").GetString(), Status: item.GetProperty("status").GetString()))
+            .ToList();
+
+        Assert.Equal(3, recentDays.Count);
+        Assert.Contains(activities, item => item.Title == "Recent completed marker" && item.Status == "Completed");
+        Assert.Contains(activities, item => item.Title == "Recent skipped marker" && item.Status == "Skipped");
+        Assert.DoesNotContain(activities, item => item.Title == "Old hidden marker");
+    }
+
     private static async Task<Guid> GetFirstIdAsync(HttpClient client, string path)
     {
         using var document = JsonDocument.Parse(await client.GetStringAsync(path));
@@ -134,7 +164,7 @@ public sealed class ActivityApiIntegrationTests
         return document.RootElement.GetProperty("currentValue").GetDecimal();
     }
 
-    private static async Task<Guid> CreateActivityAsync(HttpClient client, Guid lifeAreaId, DateTimeOffset plannedStart, string status = "Planned", Guid? goalId = null)
+    private static async Task<Guid> CreateActivityAsync(HttpClient client, Guid lifeAreaId, DateTimeOffset plannedStart, string status = "Planned", Guid? goalId = null, string title = "Hypertrophy workout integration test")
     {
         var response = await client.PostAsJsonAsync("/api/activities", new
         {
@@ -142,7 +172,7 @@ public sealed class ActivityApiIntegrationTests
             goalId,
             milestoneId = (Guid?)null,
             templateId = (Guid?)null,
-            title = "Hypertrophy workout integration test",
+            title,
             description = "SQLite lifecycle test",
             plannedStartAt = plannedStart,
             plannedEndAt = plannedStart.AddMinutes(60),

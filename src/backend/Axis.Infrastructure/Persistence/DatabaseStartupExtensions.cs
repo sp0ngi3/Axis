@@ -150,6 +150,30 @@ public static class DatabaseStartupExtensions
             """, cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "LifeLessons" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_LifeLessons" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL,
+                "Title" TEXT NOT NULL, "Content" TEXT NOT NULL, "Category" TEXT NOT NULL,
+                "Source" TEXT NOT NULL, "IsPinned" INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_LifeLessons_IsPinned" ON "LifeLessons" ("IsPinned");
+            CREATE TABLE IF NOT EXISTS "SavingsEntries" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_SavingsEntries" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL, "RecordedAt" TEXT NOT NULL,
+                "Amount" TEXT NOT NULL, "Note" TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_SavingsEntries_RecordedAt" ON "SavingsEntries" ("RecordedAt");
+            CREATE TABLE IF NOT EXISTS "WishlistItems" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_WishlistItems" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL,
+                "Name" TEXT NOT NULL, "Description" TEXT NOT NULL, "Price" TEXT NOT NULL,
+                "Priority" INTEGER NOT NULL, "IsPurchased" INTEGER NOT NULL, "PurchasedAt" TEXT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_WishlistItems_IsPurchased" ON "WishlistItems" ("IsPurchased");
+            CREATE INDEX IF NOT EXISTS "IX_WishlistItems_Priority" ON "WishlistItems" ("Priority");
+            """, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS "WikiPages" (
                 "Id" TEXT NOT NULL CONSTRAINT "PK_WikiPages" PRIMARY KEY,
                 "CreatedAt" TEXT NOT NULL,
@@ -274,15 +298,23 @@ public static class DatabaseStartupExtensions
         var hypertrophyGoal = await EnsureGoalAsync(dbContext, fitness, new Goal
         {
             Title = "Lean muscle recomposition",
-            Description = "Build muscle while staying lean: train major muscle groups 3-4 days/week, keep protein around 1.6 g/kg/day or more, and track weight, waist, body fat estimate, mood, and consistency.",
+            Description = "Glow-up hypertrophy target: 4 hard sessions/week, roughly 10-16 challenging sets per muscle group/week, mostly 1-3 reps in reserve, progressive overload, and at least 1.6 g protein/kg/day.",
             Priority = GoalPriority.Secondary,
             ProgressType = ProgressType.Maintenance,
             TargetValue = 100,
             Unit = "%",
-            MaintenanceThreshold = 75,
-            MaintenanceTargetPerWeek = 3,
-            DecayRatePercentPerWeek = 0.7m
+            MaintenanceThreshold = 85,
+            MaintenanceTargetPerWeek = 4,
+            DecayRatePercentPerWeek = 0.5m
         }, cancellationToken);
+
+        if (hypertrophyGoal.MaintenanceTargetPerWeek == 3 && hypertrophyGoal.MaintenanceThreshold == 75)
+        {
+            hypertrophyGoal.Description = "Glow-up hypertrophy target: 4 hard sessions/week, roughly 10-16 challenging sets per muscle group/week, mostly 1-3 reps in reserve, progressive overload, and at least 1.6 g protein/kg/day.";
+            hypertrophyGoal.MaintenanceTargetPerWeek = 4;
+            hypertrophyGoal.MaintenanceThreshold = 85;
+            hypertrophyGoal.DecayRatePercentPerWeek = 0.5m;
+        }
 
         await EnsureGoalAsync(dbContext, health, new Goal
         {
@@ -384,17 +416,25 @@ public static class DatabaseStartupExtensions
         var systemTemplate = await EnsureTemplateAsync(dbContext, learning, "System design case study", "Design one system aloud: requirements, scale, API, data model, architecture, bottlenecks, trade-offs.", 90, LoadLevel.High, LoadLevel.High, LoadLevel.Low, 12, cancellationToken);
         var sleepTemplate = await EnsureTemplateAsync(dbContext, health, "Sleep log", "Record the estimated number of hours slept. Axis evaluates the duration against an 8-hour target.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 4, cancellationToken);
         var spfTemplate = await EnsureTemplateAsync(dbContext, health, "SPF 30+", "Confirm broad-spectrum SPF 30+ use for exposed skin during daylight.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 3, cancellationToken);
+        var retinoidTemplate = await EnsureTemplateAsync(dbContext, health, "Night retinoid", "Use a pea-sized amount at night on dry skin. Start 2-3 nights/week, moisturize, and reduce frequency if irritated.", 2, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 4, cancellationToken);
+        var flossTemplate = await EnsureTemplateAsync(dbContext, health, "Floss teeth", "Clean between teeth once today; consistency matters more than perfect technique.", 3, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 3, cancellationToken);
+        var walkTemplate = await EnsureTemplateAsync(dbContext, health, "Outdoor walk", "Low-intensity outdoor walk for movement, daylight, and recovery.", 30, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 5, cancellationToken);
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await EnsureRecurrenceAsync(dbContext, creatineTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, mobilityTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
-        await EnsureRecurrenceAsync(dbContext, strengthTemplate, RecurrenceFrequency.Weekly, 1, "Monday,Wednesday,Friday", today, cancellationToken);
+        var oldStrengthRule = await dbContext.RecurrenceRules.FirstOrDefaultAsync(rule => rule.TemplateId == strengthTemplate.Id && rule.Frequency == RecurrenceFrequency.Weekly && rule.DaysOfWeek == "Monday,Wednesday,Friday", cancellationToken);
+        if (oldStrengthRule is not null) oldStrengthRule.DaysOfWeek = "Monday,Tuesday,Thursday,Saturday";
+        await EnsureRecurrenceAsync(dbContext, strengthTemplate, RecurrenceFrequency.Weekly, 1, "Monday,Tuesday,Thursday,Saturday", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, alcoholTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, vapeTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, dietTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, sleepTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, spfTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
+        await EnsureRecurrenceAsync(dbContext, retinoidTemplate, RecurrenceFrequency.Weekly, 1, "Monday,Wednesday,Friday", today, cancellationToken);
+        await EnsureRecurrenceAsync(dbContext, flossTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
+        await EnsureRecurrenceAsync(dbContext, walkTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
 
         await SeedWikiPagesAsync(dbContext, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -563,6 +603,7 @@ public static class DatabaseStartupExtensions
     private static async Task GenerateRollingRecurringActivitiesAsync(AxisDbContext dbContext, int horizonDays, CancellationToken cancellationToken)
     {
         var today = DateOnly.FromDateTime(DateTimeOffset.Now.DateTime);
+        var recentStart = today.AddDays(-2);
         var endDate = today.AddDays(Math.Max(1, horizonDays));
         var rules = await dbContext.RecurrenceRules
             .Include(rule => rule.Template)
@@ -576,7 +617,7 @@ public static class DatabaseStartupExtensions
                 continue;
             }
 
-            var plannedDates = ExpandRecurrence(rule, today, endDate, GetDefaultHour(rule.Template)).ToList();
+            var plannedDates = ExpandRecurrence(rule, recentStart, endDate, GetDefaultHour(rule.Template)).ToList();
             if (plannedDates.Count == 0)
             {
                 continue;
@@ -869,6 +910,9 @@ public static class DatabaseStartupExtensions
             "No alcohol check-in" => 20,
             "No vape check-in" => 20,
             "Diet check-in" => 21,
+            "Night retinoid" => 22,
+            "Floss teeth" => 22,
+            "Outdoor walk" => 13,
             "Sleep log" => 22,
             "SPF 30+" => 8,
             _ => 9

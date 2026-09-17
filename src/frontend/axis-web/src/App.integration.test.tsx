@@ -75,6 +75,32 @@ const activity = {
   notes: ''
 };
 
+const completedRecentActivity = {
+  ...activity,
+  id: 'activity-completed-recent',
+  title: 'Yesterday creatine',
+  plannedStartAt: new Date('2026-09-15T08:00:00.000Z').toISOString(),
+  plannedEndAt: new Date('2026-09-15T08:01:00.000Z').toISOString(),
+  status: 'Completed'
+};
+
+const missedRecentActivity = {
+  ...activity,
+  id: 'activity-missed-recent',
+  title: 'Yesterday stretching',
+  plannedStartAt: new Date('2026-09-15T18:00:00.000Z').toISOString(),
+  plannedEndAt: new Date('2026-09-15T18:15:00.000Z').toISOString()
+};
+
+const skippedRecentActivity = {
+  ...activity,
+  id: 'activity-skipped-recent',
+  title: 'Earlier workout',
+  plannedStartAt: new Date('2026-09-14T17:00:00.000Z').toISOString(),
+  plannedEndAt: new Date('2026-09-14T18:00:00.000Z').toISOString(),
+  status: 'Skipped'
+};
+
 const template = {
   id: 'template-1',
   lifeAreaId: area.id,
@@ -187,6 +213,9 @@ function installFetchMock() {
       case '/api/countdowns':
       case '/api/physique':
       case '/api/wiki-pages':
+      case '/api/life-lessons':
+      case '/api/money/savings':
+      case '/api/money/wishlist':
         return jsonResponse([]);
       case '/api/dashboard/today':
         return jsonResponse({
@@ -196,6 +225,11 @@ function installFetchMock() {
           supportTasks: [],
           recoveryTask: null,
           timeline: [activity],
+          recentDays: [
+            { date: '2026-09-16', isToday: true, activities: [activity] },
+            { date: '2026-09-15', isToday: false, activities: [completedRecentActivity, missedRecentActivity] },
+            { date: '2026-09-14', isToday: false, activities: [skippedRecentActivity] }
+          ],
           suggestion: 'Start with the focus block.'
         });
       case '/api/dashboard/suggestions':
@@ -295,6 +329,42 @@ describe('Axis app integration workflows', () => {
     expect(screen.getByLabelText('Create metric')).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByLabelText('Create metric')).not.toBeInTheDocument();
+  });
+
+  it('shows today and the previous two days with open, done, missed, and skipped outcomes', async () => {
+    render(<App />);
+
+    await screen.findByText('Execution ledger');
+    const todayActivity = screen.getAllByText('Deep work').find((element) => element.closest('.execution-activity'));
+    expect(todayActivity?.closest('.execution-activity')).toHaveTextContent('Open');
+    expect(screen.getByText('Yesterday creatine').closest('.execution-activity')).toHaveTextContent('Done');
+    expect(screen.getByText('Yesterday stretching').closest('.execution-activity')).toHaveTextContent('Missed');
+    expect(screen.getByText('Earlier workout').closest('.execution-activity')).toHaveTextContent('Skipped');
+    expect(document.querySelector('.execution-day.today')).toHaveTextContent('Today');
+    expect(screen.getByText('Yesterday')).toBeInTheDocument();
+    expect(screen.getByText('2 days ago')).toBeInTheDocument();
+  });
+
+  it('creates searchable life lessons and money records while hiding repeatables from calendar', async () => {
+    render(<App />);
+    await screen.findByText('Start with the focus block.');
+
+    await openPage(/life lessons/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Add lesson' }));
+    fireEvent.change(screen.getByLabelText('Lesson title'), { target: { value: 'Protect deep work' } });
+    fireEvent.change(screen.getByLabelText('Advice to future me'), { target: { value: 'Do the important thing before opening chat.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save lesson' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/life-lessons')).toBe(true));
+
+    await openPage(/money/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Savings log' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Record balance' }).at(-1)!);
+    fireEvent.change(screen.getByLabelText('Current saved amount'), { target: { value: '5000' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Record balance' }).at(-1)!);
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/money/savings')).toBe(true));
+
+    await openPage(/calendar/i);
+    expect(screen.queryByText('Deep work')).not.toBeInTheDocument();
   });
 
   it('combines mood and diary backdating and stores structured workout exercises', async () => {

@@ -598,7 +598,7 @@ static void MapActivities(WebApplication app)
 
     group.MapPost("/", async (ActivityRequest request, AxisDbContext db, CancellationToken ct) =>
     {
-        if (request.Status == ActivityStatus.Completed && request.PlannedStartAt is { } plannedStartAt && plannedStartAt > DateTimeOffset.Now.AddMinutes(5))
+        if (request.Status == ActivityStatus.Completed && request.PlannedStartAt is { } plannedStartAt && IsFutureLocalDay(plannedStartAt))
         {
             return Results.BadRequest("A future activity cannot be completed.");
         }
@@ -613,6 +613,8 @@ static void MapActivities(WebApplication app)
         }
 
         db.Activities.Add(activity);
+        await db.SaveChangesAsync(ct);
+        await SyncActivityMetricAsync(db, activity, ct);
         await db.SaveChangesAsync(ct);
         return Results.Created($"/api/activities/{activity.Id}", ToActivityResponse(activity));
     });
@@ -649,6 +651,7 @@ static void MapActivities(WebApplication app)
             activity.ActualEndAt = null;
         }
 
+        await SyncActivityMetricAsync(db, activity, ct);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToActivityResponse(activity));
     });
@@ -677,6 +680,7 @@ static void MapActivities(WebApplication app)
         }
 
         ApplyActivityStatusTransition(activity, previousStatus, ActivityStatus.Completed, DateTimeOffset.UtcNow);
+        await SyncActivityMetricAsync(db, activity, ct);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToActivityResponse(activity));
     });
@@ -690,6 +694,7 @@ static void MapActivities(WebApplication app)
         }
 
         ApplyActivityStatusTransition(activity, activity.Status, ActivityStatus.Skipped, DateTimeOffset.UtcNow);
+        await SyncActivityMetricAsync(db, activity, ct);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToActivityResponse(activity));
     });
@@ -705,6 +710,7 @@ static void MapActivities(WebApplication app)
         activity.PlannedStartAt = request.PlannedStartAt;
         activity.PlannedEndAt = request.PlannedEndAt;
         ApplyActivityStatusTransition(activity, activity.Status, ActivityStatus.Moved, DateTimeOffset.UtcNow);
+        await SyncActivityMetricAsync(db, activity, ct);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToActivityResponse(activity));
     });
@@ -723,6 +729,7 @@ static void MapActivities(WebApplication app)
             RevertActivityProgress(activity);
         }
 
+        await RemoveLinkedMetricEntriesAsync(db, $"[activity:{activity.Id}]", ct);
         db.Activities.Remove(activity);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
@@ -1534,6 +1541,8 @@ static void MapMood(WebApplication app)
         ApplyMood(entry, request);
         db.MoodEntries.Add(entry);
         await db.SaveChangesAsync(ct);
+        await SyncMoodMetricAsync(db, entry, ct);
+        await db.SaveChangesAsync(ct);
         return Results.Created($"/api/mood/{entry.Id}", entry);
     });
     group.MapPut("/{id:guid}", async (Guid id, MoodEntryRequest request, AxisDbContext db, CancellationToken ct) =>
@@ -1542,6 +1551,7 @@ static void MapMood(WebApplication app)
         if (entry is null) return Results.NotFound();
         if (request.RecordedAt > DateTimeOffset.Now.AddMinutes(5)) return Results.BadRequest("Mood time cannot be in the future.");
         ApplyMood(entry, request);
+        await SyncMoodMetricAsync(db, entry, ct);
         await db.SaveChangesAsync(ct);
         return Results.Ok(entry);
     });
@@ -1549,6 +1559,7 @@ static void MapMood(WebApplication app)
     {
         var entry = await db.MoodEntries.FindAsync([id], ct);
         if (entry is null) return Results.NotFound();
+        await RemoveLinkedMetricEntriesAsync(db, $"[mood:{entry.Id}]", ct);
         db.MoodEntries.Remove(entry);
         await db.SaveChangesAsync(ct);
         return Results.NoContent();
@@ -1911,6 +1922,11 @@ static object ToCountdownResponse(Countdown countdown)
 {
     var remaining = countdown.TargetAt - DateTimeOffset.UtcNow;
     var totalSeconds = Math.Max(0, remaining.TotalSeconds);
+    var createdDate = DateOnly.FromDateTime(countdown.CreatedAt.LocalDateTime);
+    var targetDate = DateOnly.FromDateTime(countdown.TargetAt.LocalDateTime);
+    var totalDurationDays = Math.Max(0, targetDate.DayNumber - createdDate.DayNumber);
+    var elapsedDays = Math.Clamp(DateOnly.FromDateTime(DateTime.Now).DayNumber - createdDate.DayNumber, 0, totalDurationDays);
+    var (calendarMonths, calendarDays) = CalendarMonthDayDifference(createdDate, targetDate);
 
     return new
     {
@@ -1925,6 +1941,10 @@ static object ToCountdownResponse(Countdown countdown)
         DaysRemaining = (int)Math.Floor(totalSeconds / 86400),
         HoursRemaining = (int)Math.Floor(totalSeconds % 86400 / 3600),
         MinutesRemaining = (int)Math.Floor(totalSeconds % 3600 / 60),
+        TotalDurationDays = totalDurationDays,
+        ElapsedDays = elapsedDays,
+        CalendarMonths = calendarMonths,
+        CalendarDays = calendarDays,
         IsPast = remaining.TotalSeconds < 0,
         countdown.CreatedAt,
         countdown.UpdatedAt
@@ -2112,7 +2132,123 @@ static bool CanCompleteActivity(Activity activity, ActivityStatus previousStatus
         return true;
     }
 
-    return plannedStartAt is null || plannedStartAt <= DateTimeOffset.Now.AddMinutes(5);
+    return plannedStartAt is null || !IsFutureLocalDay(plannedStartAt.Value);
+}
+
+static bool IsFutureLocalDay(DateTimeOffset value)
+{
+    return value.LocalDateTime.Date > DateTime.Now.Date;
+}
+
+static async Task SyncActivityMetricAsync(AxisDbContext db, Activity activity, CancellationToken cancellationToken)
+{
+    var marker = $"[activity:{activity.Id}]";
+    await RemoveLinkedMetricEntriesAsync(db, marker, cancellationToken);
+
+    if (activity.Status is not (ActivityStatus.Completed or ActivityStatus.Skipped or ActivityStatus.Cancelled))
+    {
+        return;
+    }
+
+    var completed = activity.Status == ActivityStatus.Completed;
+    var quantity = ParseActivityQuantity(activity.Notes);
+    (string Name, decimal Value)? mapped = activity.Title switch
+    {
+        "Creatine dose" => ("Creatine dose", completed ? 5m * quantity : 0m),
+        "Desk mobility reset" => ("Mobility session", completed ? 1m : 0m),
+        "Hypertrophy workout" => ("Strength training session", completed ? 1m : 0m),
+        "No alcohol check-in" => ("Alcohol-free day", completed ? 1m : 0m),
+        "No vape check-in" => ("Vape-free day", completed ? 1m : 0m),
+        "Diet check-in" => ("Diet adherence", completed ? 1m : 0m),
+        "SPF 30+" => ("SPF 30+", completed ? 1m : 0m),
+        "Night retinoid" => ("Night retinoid", completed ? 1m : 0m),
+        "Floss teeth" => ("Flossing", completed ? 1m : 0m),
+        "Outdoor walk" => ("Outdoor walk", completed ? activity.DurationMinutes : 0m),
+        "Sleep log" when completed && HasActivityQuantity(activity.Notes) => ("Sleep duration", quantity),
+        _ => null
+    };
+
+    if (mapped is null)
+    {
+        return;
+    }
+
+    var metric = await db.Metrics.FirstOrDefaultAsync(item => item.Name == mapped.Value.Name, cancellationToken);
+    if (metric is null)
+    {
+        return;
+    }
+
+    db.MetricEntries.Add(new MetricEntry
+    {
+        MetricId = metric.Id,
+        Value = mapped.Value.Value,
+        RecordedAt = activity.ActualEndAt ?? activity.PlannedStartAt ?? DateTimeOffset.UtcNow,
+        Notes = $"{marker} Synced from {activity.Title}."
+    });
+}
+
+static async Task SyncMoodMetricAsync(AxisDbContext db, MoodEntry mood, CancellationToken cancellationToken)
+{
+    var marker = $"[mood:{mood.Id}]";
+    await RemoveLinkedMetricEntriesAsync(db, marker, cancellationToken);
+    var metric = await db.Metrics.FirstOrDefaultAsync(item => item.Name == "Mood", cancellationToken);
+    if (metric is null)
+    {
+        return;
+    }
+
+    db.MetricEntries.Add(new MetricEntry
+    {
+        MetricId = metric.Id,
+        Value = mood.Score,
+        RecordedAt = mood.RecordedAt,
+        Notes = $"{marker} Mood log · energy {mood.Energy}/10 · stress {mood.Stress}/10."
+    });
+}
+
+static async Task RemoveLinkedMetricEntriesAsync(AxisDbContext db, string marker, CancellationToken cancellationToken)
+{
+    var linked = await db.MetricEntries.Where(entry => entry.Notes.Contains(marker)).ToListAsync(cancellationToken);
+    if (linked.Count > 0)
+    {
+        db.MetricEntries.RemoveRange(linked);
+    }
+}
+
+static bool HasActivityQuantity(string notes)
+{
+    return notes.Contains("Quantity:", StringComparison.OrdinalIgnoreCase);
+}
+
+static decimal ParseActivityQuantity(string notes)
+{
+    var markerIndex = notes.IndexOf("Quantity:", StringComparison.OrdinalIgnoreCase);
+    if (markerIndex < 0)
+    {
+        return 1m;
+    }
+
+    var value = notes[(markerIndex + "Quantity:".Length)..].TrimStart().Split([' ', '·', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+    return decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+        ? Math.Max(0, parsed)
+        : 1m;
+}
+
+static (int Months, int Days) CalendarMonthDayDifference(DateOnly start, DateOnly end)
+{
+    if (end <= start)
+    {
+        return (0, 0);
+    }
+
+    var months = Math.Max(0, MonthsBetween(start, end));
+    while (months > 0 && start.AddMonths(months) > end)
+    {
+        months--;
+    }
+
+    return (months, end.DayNumber - start.AddMonths(months).DayNumber);
 }
 
 static void ApplyActivityStatusTransition(Activity activity, ActivityStatus previousStatus, ActivityStatus nextStatus, DateTimeOffset now)

@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, Fragment, type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import { buildDashboardTracks, getDayStatus } from './signals';
 import type { DashboardTrack } from './signals';
@@ -257,54 +257,10 @@ export default function App() {
     } else {
       await api.post('/api/activities', body);
     }
-
-    await logCompanionMetric(template.title, end, quantity);
-  }
-
-  async function logCompanionMetric(templateTitle: string, recordedAt: Date, quantity: number) {
-    const metricMap: Record<string, { name: string; value: number; notes: string }> = {
-      'Creatine dose': { name: 'Creatine dose', value: 5 * quantity, notes: 'Quick logged default maintenance dose.' },
-      'No alcohol check-in': { name: 'Alcohol drinks', value: 0, notes: 'Quick logged alcohol-free day.' },
-      'No vape check-in': { name: 'Vape-free day', value: 1, notes: 'Quick logged vape-free day.' },
-      'Sleep log': { name: 'Sleep duration', value: quantity, notes: 'Quick logged sleep duration.' },
-      'SPF 30+': { name: 'SPF 30+', value: 1, notes: 'Quick logged daily SPF.' }
-    };
-    const config = metricMap[templateTitle];
-    const metric = config ? metrics.find((item) => item.name === config.name) : null;
-    if (!metric || !config) {
-      return;
-    }
-
-    await api.post(`/api/metrics/${metric.id}/entries`, {
-      value: config.value,
-      recordedAt: recordedAt.toISOString(),
-      notes: config.notes
-    });
   }
 
   async function deleteQuickLog(activity: Activity) {
     await api.delete(`/api/activities/${activity.id}`);
-
-    const metricNameByTemplate: Record<string, string> = {
-      'Creatine dose': 'Creatine dose',
-      'No alcohol check-in': 'Alcohol drinks',
-      'No vape check-in': 'Vape-free day',
-      'Sleep log': 'Sleep duration',
-      'SPF 30+': 'SPF 30+'
-    };
-    const metric = metrics.find((item) => item.name === metricNameByTemplate[activity.title]);
-    if (!metric) return;
-
-    const entries = await api.get<MetricEntry[]>(`/api/metrics/${metric.id}/entries`);
-    const activityTime = new Date(activity.actualEndAt ?? activity.plannedEndAt ?? getActivityDate(activity) ?? 0).getTime();
-    const companionEntry = entries
-      .filter((entry) => entry.notes.startsWith('Quick logged'))
-      .map((entry) => ({ entry, distance: Math.abs(new Date(entry.recordedAt).getTime() - activityTime) }))
-      .filter((candidate) => candidate.distance <= 10 * 60 * 1000)
-      .sort((first, second) => first.distance - second.distance)[0]?.entry;
-    if (companionEntry) {
-      await api.delete(`/api/metrics/${metric.id}/entries/${companionEntry.id}`);
-    }
   }
 
   const activePage = pages.find((item) => item.id === page) ?? pages[0];
@@ -608,7 +564,7 @@ function JournalPage(props: {
     }
   };
 
-  return <section className="workspace-grid drawer-workspace journal-workspace">
+  return <section className="workspace-grid drawer-workspace journal-workspace journal-page">
     <div className="page-grid">
       <section className="surface journal-summary">
         <div className="collection-header flush-header"><SectionTitle kicker="Last 28 check-ins" title="Mind trend" /><div className="journal-summary-metrics"><SummaryPill label="Mood" value={`${moodAverage}/10`} /><SummaryPill label="Energy" value={`${energyAverage}/10`} /><SummaryPill label="Stress" value={`${stressAverage}/10`} /></div></div>
@@ -653,9 +609,21 @@ function JournalPage(props: {
 }
 
 function JournalMoodChart({ entries }: { entries: MoodEntry[] }) {
+  const [mode, setMode] = useState<'lines' | 'bands'>('lines');
+  const [selected, setSelected] = useState<MoodEntry | null>(null);
   const sorted = [...entries].sort((first, second) => new Date(first.recordedAt).getTime() - new Date(second.recordedAt).getTime());
   const points = (field: 'score' | 'energy' | 'stress') => sorted.map((entry, index) => `${sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100},${92 - entry[field] / 10 * 78}`).join(' ');
-  return <div className="journal-chart"><div className="chart-legend"><span className="mood">Mood</span><span className="energy">Energy</span><span className="stress">Stress</span></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Mood, energy, and stress trend over recent check-ins"><line x1="0" x2="100" y1="53" y2="53" className="chart-axis" />{sorted.length > 0 && <><polyline className="mood" points={points('score')} /><polyline className="energy" points={points('energy')} /><polyline className="stress" points={points('stress')} /></>}{sorted.map((entry, index) => <circle key={entry.id} cx={sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100} cy={92 - entry.score / 10 * 78} r="1.6"><title>{formatDateTime(entry.recordedAt)}: mood {entry.score}, energy {entry.energy}, stress {entry.stress}</title></circle>)}</svg></div>;
+  const latest = selected ?? sorted.at(-1);
+  const average = (field: 'score' | 'energy' | 'stress') => sorted.length ? roundNumber(sorted.reduce((sum, item) => sum + item[field], 0) / sorted.length) : 0;
+  return <div className="journal-chart professional-chart">
+    <div className="chart-control-row"><div className="chart-legend"><span className="mood">Mood</span><span className="energy">Energy</span><span className="stress">Stress</span></div><div className="segmented-control compact"><button className={mode === 'lines' ? 'active' : ''} onClick={() => setMode('lines')}>Lines</button><button className={mode === 'bands' ? 'active' : ''} onClick={() => setMode('bands')}>Bands</button></div></div>
+    <div className="chart-insight-strip"><span><small>Mood avg</small><strong>{average('score')}/10</strong></span><span><small>Energy avg</small><strong>{average('energy')}/10</strong></span><span><small>Stress avg</small><strong>{average('stress')}/10</strong></span><span><small>Selected</small><strong>{latest ? `${latest.score}/${latest.energy}/${latest.stress}` : '-'}</strong></span></div>
+    <div className="journal-plot-shell">
+      <div className="journal-y-axis"><span>10</span><span>5</span><span>1</span></div>
+      <div className="journal-plot"><span className="plot-unit">score / 10</span><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Mood, energy, and stress trend over recent check-ins"><line x1="0" x2="100" y1="14" y2="14" className="chart-grid" /><line x1="0" x2="100" y1="53" y2="53" className="chart-grid" /><line x1="0" x2="100" y1="92" y2="92" className="chart-axis" />{mode === 'lines' && sorted.length > 0 && <><polyline className="mood" points={points('score')} /><polyline className="energy" points={points('energy')} /><polyline className="stress" points={points('stress')} /></>}{mode === 'bands' && sorted.map((entry, index) => { const x = sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100; const width = Math.min(2.2, 62 / Math.max(1, sorted.length)); return <g key={entry.id} className="journal-bands"><rect x={x - width * 1.6} y={92 - entry.score / 10 * 78} width={width} height={entry.score / 10 * 78} className="mood" /><rect x={x - width / 2} y={92 - entry.energy / 10 * 78} width={width} height={entry.energy / 10 * 78} className="energy" /><rect x={x + width * .6} y={92 - entry.stress / 10 * 78} width={width} height={entry.stress / 10 * 78} className="stress" /></g>; })}{sorted.map((entry, index) => <g className="journal-hit" key={`hit-${entry.id}`} onClick={() => setSelected(entry)}><rect x={Math.max(0, (sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100) - 2)} y="0" width="4" height="96" /><circle cx={sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100} cy={92 - entry.score / 10 * 78} r="1.6"><title>{formatDateTime(entry.recordedAt)}: mood {entry.score}, energy {entry.energy}, stress {entry.stress}</title></circle></g>)}</svg></div>
+    </div>
+    <div className="chart-range"><span>{sorted[0] ? formatShortDate(sorted[0].recordedAt) : 'No data'}</span><span>{latest ? `${formatShortDate(latest.recordedAt)} · ${latest.context || 'No context'}` : ''}</span><span>{sorted.at(-1) ? formatShortDate(sorted.at(-1)!.recordedAt) : ''}</span></div>
+  </div>;
 }
 
 function HistoryPage() {
@@ -663,9 +631,12 @@ function HistoryPage() {
   const [date, setDate] = useState(today);
   const [day, setDay] = useState<HistoryDay | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [kind, setKind] = useState('All');
   useEffect(() => { setExpanded(false); void api.get<HistoryDay>(`/api/history?date=${date}`).then(setDay); }, [date]);
-  const visible = expanded ? day?.timeline : day?.timeline.slice(0, 16);
-  return <section className="page-grid"><section className="surface"><div className="collection-header"><SectionTitle kicker="Life history" title="Reconstruct a day" /><label className="field compact-field"><span>Day</span><input type="date" max={today} value={date} onChange={(event) => setDate(event.target.value)} /></label></div><p className="helper-copy">Activities, measurements, mood and journal notes share one chronological view.</p><div className="history-timeline">{visible?.map((item, index) => <article className={`timeline-entry kind-${item.kind.toLowerCase()}`} key={`${item.at}-${index}`}><time>{new Date(item.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><div><small>{item.kind}</small><h4>{item.title}</h4><p>{item.detail}</p></div></article>)}</div>{day && day.timeline.length > 16 && <button className="secondary-button" onClick={() => setExpanded((current) => !current)}>{expanded ? 'Show less' : `Show all ${day.timeline.length}`}</button>}{day && day.timeline.length === 0 && <EmptyState text="No recorded signals for this day." />}</section></section>;
+  const kinds = ['All', ...Array.from(new Set(day?.timeline.map((item) => item.kind) ?? []))];
+  const filtered = day?.timeline.filter((item) => kind === 'All' || item.kind === kind) ?? [];
+  const visible = expanded ? filtered : filtered.slice(0, 12);
+  return <section className="page-grid history-page"><section className="surface history-console"><div className="collection-header"><SectionTitle kicker="Life history" title="Reconstruct a day" /><label className="field compact-field"><span>Day</span><input type="date" max={today} value={date} onChange={(event) => setDate(event.target.value)} /></label></div><div className="history-pulse"><strong>{day?.timeline.length ?? 0}</strong><span>recorded signals</span>{kinds.slice(1).map((item) => <i key={item}>{item}: {day?.timeline.filter((entry) => entry.kind === item).length}</i>)}</div><div className="history-kind-filter">{kinds.map((item) => <button key={item} className={kind === item ? 'active' : ''} onClick={() => { setKind(item); setExpanded(false); }}>{item}</button>)}</div><div className="history-timeline">{visible.map((item, index) => <article className={`timeline-entry kind-${item.kind.toLowerCase()}`} key={`${item.at}-${index}`}><time>{new Date(item.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><div><small>{item.kind}</small><h4>{item.title}</h4><p>{item.detail}</p></div></article>)}</div>{filtered.length > 12 && <button className="secondary-button" onClick={() => setExpanded((current) => !current)}>{expanded ? 'Show less' : `Show all ${filtered.length}`}</button>}{day && filtered.length === 0 && <EmptyState text="No recorded signals for this view." />}</section></section>;
 }
 
 function TodayPage(props: {
@@ -728,7 +699,7 @@ function TodayPage(props: {
   }
 
   return (
-    <section className="page-grid">
+    <section className="page-grid today-page">
       <div className="hero-panel">
         <div>
           <p className="eyebrow">Suggested next move</p>
@@ -997,6 +968,7 @@ function WorkoutExerciseEditor(props: { exercises: WorkoutExercise[]; onChange: 
 }
 
 function TodayTrendsPanel({ activities }: { activities: Activity[] }) {
+  const [view, setView] = useState<'charts' | 'cards'>('charts');
   const start = startOfDay(addDays(new Date(), -27));
   const recent = activities.filter((activity) => {
     const at = getActivityDate(activity);
@@ -1038,13 +1010,13 @@ function TodayTrendsPanel({ activities }: { activities: Activity[] }) {
   const maxFitnessSets = Math.max(1, ...fitnessWeeks.map((week) => week.sets));
 
   return <section className="surface today-trends">
-    <SectionTitle kicker="Last 28 days" title="Execution at a glance" />
-    <div className="today-chart-grid">
+    <div className="collection-header flush-header"><SectionTitle kicker="Last 28 days" title="Execution at a glance" /><div className="segmented-control compact" aria-label="Today trend visualization"><button className={view === 'charts' ? 'active' : ''} onClick={() => setView('charts')}>Charts</button><button className={view === 'cards' ? 'active' : ''} onClick={() => setView('cards')}>Cards</button></div></div>
+    {view === 'charts' ? <div className="today-chart-grid">
       <article className="compact-chart"><div className="chart-heading"><strong>Done vs skipped</strong><span>Weekly actions</span></div><div className="stacked-week-chart">{weeks.map((week) => <div key={week.label}><div className="stacked-bars" title={`${week.done} done, ${week.skipped} skipped`}><i className="done" style={{ height: `${week.done / maxCount * 100}%` }} /><i className="skipped" style={{ height: `${week.skipped / maxCount * 100}%` }} /></div><small>{week.label}</small></div>)}</div></article>
       <article className="compact-chart"><div className="chart-heading"><strong>Focused minutes</strong><span>Check-ins excluded</span></div><div className="simple-bar-chart">{weeks.map((week) => <div key={week.label}><span><i style={{ height: `${week.minutes / maxMinutes * 100}%` }} /></span><strong>{week.minutes}</strong><small>{week.label}</small></div>)}</div></article>
       <article className="compact-chart"><div className="chart-heading"><strong>Attention by area</strong><span>Minutes or check-ins</span></div><div className="horizontal-bars">{areaRows.slice(0, 5).map((row) => <div key={row.name}><span>{row.name}</span><div><i style={{ width: `${(row.minutes || row.count) / maxArea * 100}%`, background: row.color }} /></div><strong>{row.minutes ? `${row.minutes}m` : `${row.count}x`}</strong></div>)}{areaRows.length === 0 && <EmptyState text="No completed work in this range." />}</div></article>
       <article className="compact-chart fitness-trend"><div className="chart-heading"><strong>Training load</strong><span>Workouts and hard sets</span></div><div className="simple-bar-chart">{fitnessWeeks.map((week) => <div key={week.label} title={`${week.workouts} workouts, ${week.sets} sets, ${Math.round(week.volume)} kg volume`}><span><i style={{ height: `${week.sets / maxFitnessSets * 100}%` }} /></span><strong>{week.sets}</strong><small>{week.label}</small></div>)}</div><p className="chart-footnote">Latest week: {fitnessWeeks.at(-1)?.workouts ?? 0} workouts · {fitnessWeeks.at(-1)?.sets ?? 0} hard sets · {Math.round(fitnessWeeks.at(-1)?.volume ?? 0)} kg volume</p></article>
-    </div>
+    </div> : <div className="today-week-cards">{weeks.map((week, index) => <article key={week.label}><div><span>Week of {week.label}</span><strong>{week.done + week.skipped ? Math.round(week.done / (week.done + week.skipped) * 100) : 0}%</strong></div><dl><div><dt>Done</dt><dd>{week.done}</dd></div><div><dt>Skipped</dt><dd>{week.skipped}</dd></div><div><dt>Focus</dt><dd>{week.minutes}m</dd></div><div><dt>Hard sets</dt><dd>{fitnessWeeks[index].sets}</dd></div><div><dt>Volume</dt><dd>{Math.round(fitnessWeeks[index].volume)}kg</dd></div></dl><i><b style={{ width: `${week.done + week.skipped ? week.done / (week.done + week.skipped) * 100 : 0}%` }} /></i></article>)}</div>}
   </section>;
 }
 
@@ -1154,7 +1126,13 @@ function DashboardPage(props: {
     const date = getActivityDate(activity);
     return date && new Date(date) >= rangeStart && new Date(date) <= endOfDay(now);
   });
-  const tracks = buildDashboardTracks(days, rangeActivities, quickTemplates, props.rules);
+  const tracks = buildDashboardTracks(days, rangeActivities, quickTemplates, props.rules).map((track) => {
+    if (!track.template || !['DSA problem rep', 'System design case study'].includes(track.template.title)) return track;
+    const goalId = findGoalIdForTemplate(track.template.title, props.goals);
+    const goal = props.goals.find((item) => item.id === goalId);
+    const milestone = goal?.milestones.filter((item) => item.status === 'Active').sort((a, b) => a.sortOrder - b.sortOrder)[0];
+    return milestone ? { ...track, title: milestone.title, cadence: `Current milestone · ${goal?.title}` } : track;
+  });
   const completed = rangeActivities.filter((activity) => activity.status === 'Completed').length;
   const missed = tracks.reduce((sum, track) => sum + track.missedCount, 0);
   const studyMinutes = rangeActivities
@@ -1162,7 +1140,7 @@ function DashboardPage(props: {
     .reduce((sum, activity) => sum + activity.durationMinutes, 0);
 
   return (
-    <section className="page-grid">
+    <section className="page-grid signals-page">
       <section className="hero-panel">
         <div>
           <p className="eyebrow">Signal dashboard</p>
@@ -1185,6 +1163,11 @@ function DashboardPage(props: {
               </button>
             ))}
           </div>
+        </div>
+        <div className="current-milestones">
+          {tracks.filter((track) => track.cadence.startsWith('Current milestone')).map((track) => (
+            <article key={track.title}><span>NOW BUILDING</span><strong>{track.title}</strong><small>{track.cadence.replace('Current milestone · ', '')}</small></article>
+          ))}
         </div>
         <div className="track-grid">
           {tracks.map((track) => (
@@ -1226,6 +1209,8 @@ function DashboardPage(props: {
 
 function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[]; goals: Goal[]; metrics: Metric[]; activities: Activity[] }) {
   const [mode, setMode] = useState<'overview' | 'goals' | 'metrics'>('overview');
+  const [visualization, setVisualization] = useState<'lines' | 'bars' | 'routines'>('routines');
+  const [selectedRoutines, setSelectedRoutines] = useState<string[]>(() => props.tracks.slice(0, 4).map((track) => track.title));
   const [selectedDayKey, setSelectedDayKey] = useState(() => dateKey(props.days.at(-1) ?? new Date()));
   const [visibleSeries, setVisibleSeries] = useState({ done: true, missed: true, planned: true });
   const points = props.days.map((day, index) => {
@@ -1254,10 +1239,6 @@ function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[];
   }
   const totalMinutes = props.tracks.reduce((sum, track) => sum + track.minutes, 0);
   const completedLogs = props.activities.filter((activity) => activity.status === 'Completed').length;
-  const timeRows = [...props.tracks]
-    .filter((track) => track.minutes > 0)
-    .sort((first, second) => second.minutes - first.minutes)
-    .slice(0, 6);
   const selectedPoint = points.find((point) => dateKey(point.day) === selectedDayKey) ?? points.at(-1);
   const effectiveSelectedDayKey = selectedPoint ? dateKey(selectedPoint.day) : selectedDayKey;
   const selectedTrackRows = props.tracks.map((track) => ({
@@ -1300,6 +1281,13 @@ function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[];
     setVisibleSeries((current) => ({ ...current, [series]: !current[series] }));
   }
 
+  function toggleRoutine(title: string) {
+    setSelectedRoutines((current) => current.includes(title)
+      ? current.filter((item) => item !== title)
+      : current.length < 6 ? [...current, title] : current);
+  }
+
+  const routineColors = ['#39d9e6', '#ff4da6', '#f5c451', '#8b7dff', '#63dfa1', '#ff7a72'];
   return (
     <div className="momentum-dashboard">
       <div className="signal-command-bar">
@@ -1310,6 +1298,13 @@ function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[];
           ))}
         </div>
       </div>
+      <div className="signal-view-bar">
+        <div><strong>Visualization</strong><span>Switch the chart without changing the selected range</span></div>
+        <div className="segmented-control" aria-label="Signal visualization">
+          {(['lines', 'bars', 'routines'] as const).map((item) => <button key={item} className={visualization === item ? 'active' : ''} onClick={() => setVisualization(item)}>{item[0].toUpperCase() + item.slice(1)}</button>)}
+        </div>
+      </div>
+      {visualization === 'routines' && <div className="routine-series-picker"><span>Select up to 6 routines</span>{props.tracks.map((track, index) => <button key={track.title} className={selectedRoutines.includes(track.title) ? 'active' : ''} disabled={!selectedRoutines.includes(track.title) && selectedRoutines.length >= 6} style={{ '--series-color': routineColors[index % routineColors.length] } as React.CSSProperties} onClick={() => toggleRoutine(track.title)}><i />{track.title}</button>)}</div>}
       <div className="signal-summary-grid">
         <div className="signal-summary cyan"><span>Completion rate</span><strong>{completionRate}%</strong><i><b style={{ width: `${completionRate}%` }} /></i></div>
         <div className="signal-summary violet"><span>Current streak</span><strong>{currentStreak}d</strong><small>days with a completion</small></div>
@@ -1320,32 +1315,56 @@ function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[];
       <div className="momentum-visual-grid">
         <section className="signal-chart-card">
           <div className="signal-card-heading">
-            <div><strong>Daily execution</strong><span>Activity count by day</span></div>
-            <div className="chart-legend interactive">
+            <div><strong>{visualization === 'routines' ? 'Routine performance' : 'Daily execution'}</strong><span>{visualization === 'routines' ? 'Done, planned and missed by routine' : 'Activity count by day'}</span></div>
+            {visualization !== 'routines' && <div className="chart-legend interactive">
               <button className={`done ${visibleSeries.done ? 'active' : ''}`} onClick={() => toggleSeries('done')}>Completed</button>
               <button className={`missed ${visibleSeries.missed ? 'active' : ''}`} onClick={() => toggleSeries('missed')}>Gaps</button>
               <button className={`planned ${visibleSeries.planned ? 'active' : ''}`} onClick={() => toggleSeries('planned')}>Planned</button>
-            </div>
+            </div>}
           </div>
-          <div className="chart-frame">
+          {visualization === 'routines' ? (
+            <div className="routine-matrix" role="grid" aria-label="Routine status by day">
+              <div className="routine-matrix-inner" style={{ '--day-count': props.days.length } as CSSProperties}>
+                <strong className="routine-matrix-corner">Routine</strong>
+                {props.days.map((day) => <button className={`routine-day-label ${selectedDayKey === dateKey(day) ? 'selected' : ''}`} key={`header-${dateKey(day)}`} onClick={() => setSelectedDayKey(dateKey(day))}><span>{day.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 1)}</span><small>{day.getDate()}</small></button>)}
+                {props.tracks.filter((track) => selectedRoutines.includes(track.title)).map((track, trackIndex) => <Fragment key={track.title}>
+                  <div className="routine-row-label" title={track.title}><i style={{ background: routineColors[trackIndex % routineColors.length] }} /><span>{track.title}</span></div>
+                  {track.days.map((day) => {
+                    const status = day.status ?? 'empty';
+                    return <button className={`routine-status-cell ${status} ${selectedDayKey === day.key ? 'selected' : ''}`} key={`${track.title}-${day.key}`} aria-label={`${track.title}, ${day.label}: ${status}`} title={`${day.label} · ${track.title}: ${status}`} onClick={() => setSelectedDayKey(day.key)}><span /></button>;
+                  })}
+                </Fragment>)}
+              </div>
+            </div>
+          ) : <div className="chart-frame">
             <div className="chart-scale"><span>{ceiling}</span><span>{roundNumber(ceiling / 2)}</span><span>0</span></div>
             <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Completed, missed, and planned activities over the selected range">
               <line x1="0" y1="90" x2="100" y2="90" className="chart-axis" />
-              {visibleSeries.planned && <polyline points={line('planned')} className="chart-line planned" />}
-              {visibleSeries.missed && <polyline points={line('missed')} className="chart-line missed" />}
-              {visibleSeries.done && <polyline points={line('done')} className="chart-line done" />}
+              {visualization === 'lines' && visibleSeries.planned && <polyline points={line('planned')} className="chart-line planned" />}
+              {visualization === 'lines' && visibleSeries.missed && <polyline points={line('missed')} className="chart-line missed" />}
+              {visualization === 'lines' && visibleSeries.done && <polyline points={line('done')} className="chart-line done" />}
+              {visualization === 'bars' && points.map((point, index) => {
+                const width = Math.min(5, 72 / Math.max(1, points.length));
+                const offset = width * 1.1;
+                return <g key={`bars-${dateKey(point.day)}`} className="signal-bars">
+                  {visibleSeries.done && <rect x={point.x - offset} y={chartY(point.done)} width={width} height={90 - chartY(point.done)} className="done" />}
+                  {visibleSeries.missed && <rect x={point.x - width / 2} y={chartY(point.missed)} width={width} height={90 - chartY(point.missed)} className="missed" />}
+                  {visibleSeries.planned && <rect x={point.x + offset - width} y={chartY(point.planned)} width={width} height={90 - chartY(point.planned)} className="planned" />}
+                  <title>{props.days[index].toLocaleDateString()}</title>
+                </g>;
+              })}
               {points.map((point) => (
                 <g key={dateKey(point.day)} className={`chart-day-hit ${selectedDayKey === dateKey(point.day) ? 'selected' : ''}`} onClick={() => setSelectedDayKey(dateKey(point.day))}>
                   <title>{`${point.day.toLocaleDateString()}: ${point.done} completed, ${point.missed} gaps, ${point.planned} planned`}</title>
                   <rect x={Math.max(0, point.x - Math.max(1.5, 45 / points.length))} y="0" width={Math.max(3, 90 / points.length)} height="94" className="chart-hit-zone" />
                   {selectedDayKey === dateKey(point.day) && <line x1={point.x} y1="0" x2={point.x} y2="94" className="chart-selection-line" />}
-                  {visibleSeries.planned && <circle cx={point.x} cy={chartY(point.planned)} r="1.5" className="chart-point planned" />}
-                  {visibleSeries.missed && <circle cx={point.x} cy={chartY(point.missed)} r="1.7" className="chart-point missed" />}
-                  {visibleSeries.done && <circle cx={point.x} cy={chartY(point.done)} r="1.9" className="chart-point done" />}
+                  {visualization === 'lines' && visibleSeries.planned && <circle cx={point.x} cy={chartY(point.planned)} r="1.5" className="chart-point planned" />}
+                  {visualization === 'lines' && visibleSeries.missed && <circle cx={point.x} cy={chartY(point.missed)} r="1.7" className="chart-point missed" />}
+                  {visualization === 'lines' && visibleSeries.done && <circle cx={point.x} cy={chartY(point.done)} r="1.9" className="chart-point done" />}
                 </g>
               ))}
             </svg>
-          </div>
+          </div>}
           <div className="chart-range"><span>{props.days[0]?.toLocaleDateString()}</span><span>{props.days.at(-1)?.toLocaleDateString()}</span></div>
           <div className="status-color-key">
             <span className="done"><i />Done</span>
@@ -1355,20 +1374,20 @@ function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[];
           </div>
         </section>
 
-        <section className="signal-chart-card allocation-card">
-          <div className="signal-card-heading"><div><strong>Time allocation</strong><span>Where completed minutes went</span></div></div>
-          <div className="allocation-list">
-            {timeRows.map((track, index) => {
-              const percentage = totalMinutes === 0 ? 0 : Math.round(track.minutes / totalMinutes * 100);
-              return (
-                <div className={`allocation-row signal-${index}`} key={track.title}>
-                  <div><span><i />{track.title}</span><strong>{track.minutes}m</strong></div>
-                  <b><i style={{ width: `${percentage}%` }} /></b>
-                  <small>{percentage}% of tracked time</small>
-                </div>
-              );
+        <section className="signal-chart-card decision-card">
+          <div className="signal-card-heading"><div><strong>Decision queue</strong><span>What to protect and what to repair</span></div></div>
+          <div className="signal-action-list">
+            {attentionTracks.slice(0, 6).map((track, index) => {
+              const resolved = track.completedCount + track.missedCount;
+              const rate = resolved === 0 ? 0 : Math.round(track.completedCount / resolved * 100);
+              const state = resolved === 0 ? 'untracked' : track.missedCount > 0 ? 'attention' : 'stable';
+              return <article className={state} key={track.title}>
+                <b>{String(index + 1).padStart(2, '0')}</b>
+                <span><strong>{track.title}</strong><small>{resolved === 0 ? 'No resolved check-ins' : `${track.completedCount} done · ${track.missedCount} gaps`}</small><i><em style={{ width: `${rate}%` }} /></i></span>
+                <div><strong>{rate}%</strong><small>{state === 'stable' ? 'Keep' : state === 'attention' ? 'Improve' : 'Log'}</small></div>
+              </article>;
             })}
-            {timeRows.length === 0 && <EmptyState text="Complete an activity to reveal time allocation." />}
+            {attentionTracks.length === 0 && <EmptyState text="Log a routine to generate a decision queue." />}
           </div>
           <div className="decision-strip">
             <div><span>Done signals</span><strong>{totalDone}</strong></div>
@@ -1725,13 +1744,13 @@ function CalendarReviewPanel(props: {
   onComplete: (id: string) => void;
   onSkip: (id: string) => void;
 }) {
-  const now = Date.now() + 5 * 60 * 1000;
+  const today = startOfDay(new Date()).getTime();
   const sorted = props.activities
     .filter((activity) => {
       const isSkipped = activity.status === 'Skipped' || activity.status === 'Cancelled';
       const isOpen = activity.status === 'Planned' || activity.status === 'Moved';
       const activityDate = getActivityDate(activity);
-      return isSkipped || (isOpen && (!activityDate || new Date(activityDate).getTime() <= now));
+      return isSkipped || (isOpen && (!activityDate || startOfDay(new Date(activityDate)).getTime() <= today));
     })
     .sort(compareActivities);
   const visibleRows = sorted.slice(0, 12);
@@ -1784,7 +1803,7 @@ function LifeLessonsPage(props: { lessons: LifeLesson[]; busy: boolean; onSave: 
   const filtered = props.lessons.filter((item) => (!query || `${item.title} ${item.content} ${item.source}`.toLowerCase().includes(query.toLowerCase())) && (!category || item.category === category));
   const paged = paginate(filtered, page, defaultPageSize);
   useEffect(() => setPage(1), [query, category]);
-  return <section className="workspace-grid drawer-workspace"><div className="workspace-main"><section className="collection-header"><div><p className="eyebrow">Personal operating manual</p><h3>{props.lessons.length} life lessons</h3></div><button onClick={() => { setSelected(null); setCreating(true); }}>Add lesson</button></section>
+  return <section className="workspace-grid drawer-workspace lessons-page"><div className="workspace-main"><section className="collection-header"><div><p className="eyebrow">Personal operating manual</p><h3>{props.lessons.length} life lessons</h3></div><button onClick={() => { setSelected(null); setCreating(true); }}>Add lesson</button></section>
     <div className="filter-bar"><input placeholder="Search lessons" value={query} onChange={(event) => setQuery(event.target.value)} /><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></div>
     <div className="lesson-grid">{paged.items.map((item) => <article className={`entity-card lesson-card ${item.isPinned ? 'pinned' : ''}`} key={item.id}><div className="entity-card-top"><span className="color-chip">{item.category || 'Life'}</span>{item.isPinned && <strong>PINNED</strong>}</div><h3>{item.title}</h3><blockquote>{item.content}</blockquote>{item.source && <p className="muted-copy">Source: {item.source}</p>}<small>{formatShortDate(item.createdAt)}</small><div className="card-actions"><button className="secondary-button" onClick={() => { setSelected(item); setCreating(false); }}>Edit</button><button className="danger-button" onClick={() => confirmDelete('Delete this lesson?') && props.onDelete(item.id)}>Delete</button></div></article>)}</div>
     {filtered.length === 0 && <EmptyState text="No lessons match this search." />}<PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} /></div>
@@ -1813,15 +1832,28 @@ function MoneyPage(props: { savings: SavingsEntry[]; wishlist: WishlistItem[]; b
   const pagedWish = paginate(filteredWish, page, defaultPageSize);
   const pagedSavings = paginate(filteredSavings, page, defaultPageSize);
   useEffect(() => setPage(1), [query, filter, mode]);
-  return <section className="workspace-grid drawer-workspace"><div className="workspace-main"><section className="money-hero"><div><p className="eyebrow">Capital dashboard</p><h3>{formatMoney(currentSavings)} saved</h3><p>{coverage}% of the active wishlist is covered.</p></div><div className="money-orbit" style={{ '--money-progress': `${coverage * 3.6}deg` } as React.CSSProperties}><strong>{coverage}%</strong><span>coverage</span></div></section>
+  return <section className="workspace-grid drawer-workspace money-page"><div className="workspace-main"><section className="money-hero"><div><p className="eyebrow">Capital dashboard</p><h3>{formatMoney(currentSavings)} saved</h3><p>{coverage}% of the active wishlist is covered.</p></div><div className="money-orbit" style={{ '--money-progress': `${coverage * 3.6}deg` } as React.CSSProperties}><strong>{coverage}%</strong><span>coverage</span></div></section>
     <div className="money-metrics"><SummaryPill label="Saved" value={formatMoney(currentSavings)} /><SummaryPill label="Wishlist" value={formatMoney(activeTotal)} /><SummaryPill label="Purchased" value={formatMoney(purchasedTotal)} /><SummaryPill label="Items" value={props.wishlist.length} /></div>
-    <section className="surface money-trend"><SectionTitle kicker="Savings history" title="Capital trajectory" /><svg viewBox="0 0 100 36" preserveAspectRatio="none" aria-label="Savings trend"><polyline points={moneySparklinePoints(props.savings)} /></svg></section>
+    <MoneyTrajectoryChart entries={props.savings} wishlistTotal={activeTotal} />
     <div className="collection-header"><div className="segmented-control"><button className={mode === 'wishlist' ? 'active' : ''} onClick={() => setMode('wishlist')}>Wishlist</button><button className={mode === 'savings' ? 'active' : ''} onClick={() => setMode('savings')}>Savings log</button></div><button onClick={() => { setWish(null); setSaving(null); setCreating(true); }}>{mode === 'wishlist' ? 'Add wish' : 'Record balance'}</button></div>
     <div className="filter-bar"><input placeholder={`Search ${mode}`} value={query} onChange={(event) => setQuery(event.target.value)} />{mode === 'wishlist' && <select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="active">Wishlist</option><option value="done">Purchased</option><option value="all">All</option></select>}</div>
     {mode === 'wishlist' ? <div className="entity-grid">{pagedWish.items.map((item) => <article className={`entity-card money-item ${item.isPurchased ? 'purchased' : ''}`} key={item.id}><div className="entity-card-top"><span>Priority {item.priority}</span><strong>{formatMoney(item.price)}</strong></div><h3>{item.name}</h3><p>{item.description || 'No notes.'}</p><div className="meter"><i style={{ width: `${Math.min(100, currentSavings / Math.max(1, item.price) * 100)}%` }} /></div><small>{item.isPurchased ? `Purchased ${formatShortDate(item.purchasedAt ?? undefined)}` : currentSavings >= item.price ? 'Affordable from current savings' : `${formatMoney(item.price - currentSavings)} still needed`}</small><div className="card-actions"><button onClick={() => props.onSaveWish({ name: item.name, description: item.description, price: item.price, priority: item.priority, isPurchased: !item.isPurchased }, item.id)}>{item.isPurchased ? 'Return to wishlist' : 'Mark purchased'}</button><button className="secondary-button" onClick={() => { setWish(item); setSaving(null); setCreating(false); }}>Edit</button><button className="danger-button" onClick={() => props.onDeleteWish(item.id)}>Delete</button></div></article>)}</div> : <div className="history-timeline">{pagedSavings.items.map((item) => <article className="timeline-entry" key={item.id}><time>{formatShortDate(item.recordedAt)}</time><div><h4>{formatMoney(item.amount)}</h4><p>{item.note || 'Balance update'}</p></div><div className="row-actions"><button className="secondary-button" onClick={() => { setSaving(item); setWish(null); setCreating(false); }}>Edit</button><button className="danger-button" onClick={() => props.onDeleteSavings(item.id)}>Delete</button></div></article>)}</div>}
     {(mode === 'wishlist' ? pagedWish.items.length : pagedSavings.items.length) === 0 && <EmptyState text="Nothing matches this view." />}<PaginationControls page={page} totalPages={mode === 'wishlist' ? pagedWish.totalPages : pagedSavings.totalPages} totalItems={mode === 'wishlist' ? filteredWish.length : filteredSavings.length} onPage={setPage} /></div>
     <EditorDrawer open={creating || wish !== null || saving !== null} label={mode === 'wishlist' ? 'Wishlist item' : 'Savings balance'} onClose={() => { setCreating(false); setWish(null); setSaving(null); }}>{mode === 'wishlist' ? <WishlistForm item={wish} busy={props.busy} onSave={(body) => { props.onSaveWish(body, wish?.id); setCreating(false); setWish(null); }} /> : <SavingsForm entry={saving} busy={props.busy} onSave={(body) => { props.onSaveSavings(body, saving?.id); setCreating(false); setSaving(null); }} />}</EditorDrawer>
   </section>;
+}
+
+function MoneyTrajectoryChart({ entries, wishlistTotal }: { entries: SavingsEntry[]; wishlistTotal: number }) {
+  const [mode, setMode] = useState<'line' | 'bars'>('line');
+  const rows = [...entries].sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
+  const values = rows.map((item) => item.amount);
+  const min = values.length ? Math.min(...values) : 0;
+  const max = values.length ? Math.max(...values, wishlistTotal) : Math.max(1, wishlistTotal);
+  const range = Math.max(1, max - Math.min(0, min));
+  const y = (value: number) => 34 - (value - Math.min(0, min)) / range * 30;
+  const x = (index: number) => rows.length <= 1 ? 50 : index / (rows.length - 1) * 100;
+  const delta = rows.length > 1 ? rows.at(-1)!.amount - rows[0].amount : 0;
+  return <section className="surface money-trend professional-chart"><div className="collection-header flush-header"><SectionTitle kicker="Savings history" title="Capital trajectory" /><div className="segmented-control compact"><button className={mode === 'line' ? 'active' : ''} onClick={() => setMode('line')}>Line</button><button className={mode === 'bars' ? 'active' : ''} onClick={() => setMode('bars')}>Bars</button></div></div><div className="chart-insight-strip"><span><small>Current</small><strong>{formatMoney(rows.at(-1)?.amount ?? 0)}</strong></span><span><small>Change</small><strong>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</strong></span><span><small>Highest</small><strong>{formatMoney(values.length ? Math.max(...values) : 0)}</strong></span><span><small>Wishlist target</small><strong>{formatMoney(wishlistTotal)}</strong></span></div><div className="axis-chart money-axis"><div className="axis-labels"><span>{formatMoney(max)}</span><span>{formatMoney(max / 2)}</span><span>{formatMoney(0)}</span></div><svg viewBox="0 0 100 36" preserveAspectRatio="none" aria-label="Savings balance in EUR over time"><line x1="0" x2="100" y1={y(wishlistTotal)} y2={y(wishlistTotal)} className="sparkline-target"><title>Wishlist target {formatMoney(wishlistTotal)}</title></line>{mode === 'line' ? <polyline points={moneySparklinePoints(rows)} /> : rows.map((item, index) => <rect key={item.id} x={x(index) - Math.min(2, 35 / Math.max(1, rows.length))} y={y(item.amount)} width={Math.min(4, 70 / Math.max(1, rows.length))} height={34 - y(item.amount)}><title>{formatShortDate(item.recordedAt)}: {formatMoney(item.amount)}</title></rect>)}{rows.map((item, index) => <circle key={`point-${item.id}`} cx={x(index)} cy={y(item.amount)} r="1.1"><title>{formatDateTime(item.recordedAt)}: {formatMoney(item.amount)}</title></circle>)}</svg></div><div className="chart-range"><span>{rows[0] ? formatShortDate(rows[0].recordedAt) : 'No balances yet'}</span><span>EUR · {rows.length} balance records</span><span>{rows.at(-1) ? formatShortDate(rows.at(-1)!.recordedAt) : ''}</span></div></section>;
 }
 
 function WishlistForm(props: { item: WishlistItem | null; busy: boolean; onSave: (body: unknown) => void }) { const [draft, setDraft] = useState({ name: props.item?.name ?? '', description: props.item?.description ?? '', price: props.item?.price ?? 0, priority: props.item?.priority ?? 3, isPurchased: props.item?.isPurchased ?? false }); return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}><TextField label="Item" value={draft.name} onChange={(name) => setDraft({ ...draft, name })} required /><TextArea label="Why I want it" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} /><NumberField label="Price" value={draft.price} onChange={(price) => setDraft({ ...draft, price })} /><NumberField label="Priority 1-5" value={draft.priority} onChange={(priority) => setDraft({ ...draft, priority })} /><label className="toggle-field"><input type="checkbox" checked={draft.isPurchased} onChange={(event) => setDraft({ ...draft, isPurchased: event.target.checked })} /><span>Purchased</span></label><button disabled={props.busy}>Save item</button></form>; }
@@ -1853,7 +1885,7 @@ function CountdownsPage(props: {
   }, [query, categoryFilter, visibilityFilter]);
 
   return (
-    <section className="workspace-grid drawer-workspace">
+    <section className="workspace-grid drawer-workspace countdowns-page">
       <div className="workspace-main">
         <section className="collection-header">
           <div>
@@ -1892,6 +1924,7 @@ function CountdownsPage(props: {
                 <div className="countdown-clock"><div><strong>{String(countdown.hoursRemaining).padStart(2, '0')}</strong><span>hours</span></div><b>:</b><div><strong>{String(countdown.minutesRemaining).padStart(2, '0')}</strong><span>minutes</span></div></div>
               </div>
               <p>{countdown.description || 'No notes yet.'}</p>
+              <div className="countdown-interval"><strong>{countdown.totalDurationDays ?? Math.max(0, Math.round((new Date(countdown.targetAt).getTime() - new Date(countdown.createdAt ?? Date.now()).getTime()) / 86400000))} days total</strong><span>{countdown.calendarMonths ?? 0} months, {countdown.calendarDays ?? 0} days · {countdown.elapsedDays ?? 0} elapsed</span></div>
               <dl className="compact-dl">
                 <div><dt>Target</dt><dd>{formatDateTime(countdown.targetAt)}</dd></div>
                 <div><dt>Pinned</dt><dd>{countdown.isPinned ? 'Yes' : 'No'}</dd></div>
@@ -1969,14 +2002,14 @@ function PhysiquePage(props: {
       && (!fromDate || entryDate >= fromDate)
       && (!toDate || entryDate <= toDate);
   });
-  const paged = paginate(filtered, page, defaultPageSize);
+  const paged = paginate(filtered, page, 6);
 
   useEffect(() => {
     setPage(1);
   }, [query, fromDate, toDate]);
 
   return (
-    <section className="workspace-grid drawer-workspace">
+    <section className="workspace-grid drawer-workspace physique-page">
       <div className="workspace-main">
         <section className="hero-panel physique-hero">
           <div>
@@ -2854,7 +2887,7 @@ function MetricsPage(props: {
     from.setDate(from.getDate() - 30);
     void Promise.all(pagedMetrics.items.map(async (metric) => {
       const entries = await api.get<MetricEntry[]>(`/api/metrics/${metric.id}/entries?from=${encodeURIComponent(from.toISOString())}`);
-      return [metric.id, Array.isArray(entries) ? entries.slice(0, 60) : []] as const;
+      return [metric.id, Array.isArray(entries) ? entries.slice(0, 36) : []] as const;
     })).then((rows) => setMetricPreviews((current) => ({ ...current, ...Object.fromEntries(rows) }))).catch(() => undefined);
   }, [page, query, areaFilter, typeFilter, props.metrics]);
 
@@ -2863,7 +2896,7 @@ function MetricsPage(props: {
   }, [query, areaFilter, typeFilter]);
 
   return (
-    <section className="workspace-grid drawer-workspace">
+    <section className="workspace-grid drawer-workspace metrics-page">
       <div className="workspace-main">
         <section className="collection-header">
           <div>
@@ -2989,7 +3022,7 @@ function MetricHistoryPanel(props: {
   const delta = latest && previous ? latest.value - previous.value : null;
   const average = sorted.length ? sorted.reduce((sum, entry) => sum + entry.value, 0) / sorted.length : null;
   const newestFirst = [...props.entries].sort((first, second) => new Date(second.recordedAt).getTime() - new Date(first.recordedAt).getTime());
-  const pagedEntries = paginate(newestFirst, page, 20);
+  const pagedEntries = paginate(newestFirst, page, 12);
 
   useEffect(() => setPage(1), [props.range, props.metric.id]);
 
@@ -3047,20 +3080,35 @@ function formatMetricValue(metric: Metric, value: number) {
 
 function MetricSparkline(props: { entries: MetricEntry[]; metric: Metric; large?: boolean }) {
   const sorted = [...props.entries].sort((first, second) => new Date(first.recordedAt).getTime() - new Date(second.recordedAt).getTime());
-  const path = buildSparklinePath(sorted);
-  const targetY = props.metric.targetValue == null ? null : getSparklineY(sorted, props.metric.targetValue);
   const values = sorted.map((entry) => entry.value);
+  const domain = props.metric.targetValue == null ? values : [...values, props.metric.targetValue];
+  const min = domain.length ? Math.min(...domain) : 0;
+  const max = domain.length ? Math.max(...domain) : 1;
+  const y = (value: number) => min === max ? 36 : 60 - (value - min) / (max - min) * 48;
+  const x = (index: number) => sorted.length <= 1 ? 110 : index / (sorted.length - 1) * 220;
+  const path = sorted.length < 2 ? '' : sorted.map((entry, index) => `${index ? 'L' : 'M'} ${roundNumber(x(index))} ${roundNumber(y(entry.value))}`).join(' ');
+  const targetY = props.metric.targetValue == null ? null : y(props.metric.targetValue);
   const yesCount = values.filter((value) => value >= .5).length;
+  const latest = sorted.at(-1);
+  const previous = sorted.at(-2);
+  const delta = latest && previous ? latest.value - previous.value : null;
 
   return (
-    <div className={props.large ? 'sparkline large' : 'sparkline'}>
-      <svg viewBox="0 0 220 72" role="img" aria-label="Metric trend">
-        {targetY !== null && <line x1="0" x2="220" y1={targetY} y2={targetY} className="sparkline-target" />}
-        {path ? <path d={path} /> : <line x1="0" x2="220" y1="58" y2="58" className="sparkline-empty" />}
-      </svg>
+    <div className={props.large ? 'metric-chart large professional-chart' : 'metric-chart professional-chart'}>
+      <div className="metric-chart-head"><span>Current</span><strong>{latest ? formatMetricValue(props.metric, latest.value) : 'No data'}</strong>{delta !== null && props.metric.valueType !== 'Boolean' && <em>{delta >= 0 ? '+' : ''}{roundNumber(delta)}{props.metric.unit ? ` ${props.metric.unit}` : ''}</em>}</div>
+      <div className="metric-plot-shell">
+        <div className="metric-y-axis"><span>{roundNumber(max)}</span><span>{roundNumber((max + min) / 2)}</span><span>{roundNumber(min)}</span></div>
+        <div className="metric-plot"><span className="plot-unit">{props.metric.unit || (props.metric.valueType === 'Boolean' ? 'yes / no' : 'value')}</span><svg viewBox="0 0 220 72" preserveAspectRatio="none" role="img" aria-label={`${props.metric.name} trend in ${props.metric.unit || 'units'}`}>
+          <line x1="0" x2="220" y1="12" y2="12" className="chart-grid" /><line x1="0" x2="220" y1="36" y2="36" className="chart-grid" /><line x1="0" x2="220" y1="60" y2="60" className="chart-grid" />
+          {targetY !== null && <line x1="0" x2="220" y1={targetY} y2={targetY} className="sparkline-target" />}
+          {path ? <path d={path} /> : <line x1="0" x2="220" y1="58" y2="58" className="sparkline-empty" />}
+          {sorted.map((entry, index) => <circle key={entry.id} cx={x(index)} cy={y(entry.value)} r={props.large ? 2.4 : 2}><title>{formatDateTime(entry.recordedAt)}: {formatMetricValue(props.metric, entry.value)}{entry.notes ? ` · ${entry.notes}` : ''}</title></circle>)}
+        </svg></div>
+      </div>
+      <div className="metric-chart-range"><span>{sorted[0] ? formatShortDate(sorted[0].recordedAt) : 'No data'}</span>{props.metric.targetValue != null && <span>Target {formatMetricValue(props.metric, props.metric.targetValue)}</span>}<span>{latest ? formatShortDate(latest.recordedAt) : ''}</span></div>
       {values.length > 0 && (props.metric.valueType === 'Boolean'
-        ? <div className="sparkline-stats"><span>{yesCount} yes</span><span>{values.length} logs / 30d</span><span>{Math.round(yesCount / values.length * 100)}% success</span></div>
-        : <div className="sparkline-stats"><span>Low {roundNumber(Math.min(...values))}</span><span>{values.length} logs / 30d</span><span>High {roundNumber(Math.max(...values))}</span></div>)}
+        ? <div className="metric-chart-stats"><span>{yesCount} yes</span><span>{values.length} logs</span><span>{Math.round(yesCount / values.length * 100)}% success</span></div>
+        : <div className="metric-chart-stats"><span>Low {formatMetricValue(props.metric, Math.min(...values))}</span><span>{values.length} logs</span><span>High {formatMetricValue(props.metric, Math.max(...values))}</span></div>)}
     </div>
   );
 }
@@ -4127,7 +4175,7 @@ function getActivityDate(activity: Activity) {
 function canCompleteActivity(activity: Activity) {
   if (activity.status === 'Skipped' || activity.status === 'Cancelled') return true;
   const activityDate = getActivityDate(activity);
-  return !activityDate || new Date(activityDate).getTime() <= Date.now() + 5 * 60 * 1000;
+  return !activityDate || startOfDay(new Date(activityDate)).getTime() <= startOfDay(new Date()).getTime();
 }
 
 function createExercise(): WorkoutExercise {
@@ -4163,7 +4211,7 @@ function isDurationActivity(title: string) {
 }
 
 function isBinaryCheckIn(title: string) {
-  return ['Creatine dose', 'Desk mobility reset', 'No alcohol check-in', 'No vape check-in', 'Diet check-in', 'SPF 30+'].includes(title);
+  return ['Creatine dose', 'Desk mobility reset', 'No alcohol check-in', 'No vape check-in', 'Diet check-in', 'SPF 30+', 'Night retinoid', 'Floss teeth'].includes(title);
 }
 
 function activityDisplayMeasure(activity: Activity) {
@@ -4186,7 +4234,10 @@ function getQuickTemplates(templates: ActivityTemplate[]) {
     'No vape check-in',
     'Diet check-in',
     'Sleep log',
-    'SPF 30+'
+    'SPF 30+',
+    'Night retinoid',
+    'Floss teeth',
+    'Outdoor walk'
   ].map((title) => templateByTitle.get(title)).filter(Boolean) as ActivityTemplate[];
 }
 

@@ -100,6 +100,69 @@ public sealed class ActivityApiIntegrationTests
     }
 
     [Fact]
+    public async Task Activity_later_today_can_be_completed_while_tomorrows_activity_stays_locked()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+        var areaId = await GetFirstIdAsync(client, "/api/life-areas");
+        var offset = DateTimeOffset.Now.Offset;
+        var laterToday = new DateTimeOffset(DateTime.Today.AddHours(23).AddMinutes(30), offset);
+        var tomorrow = new DateTimeOffset(DateTime.Today.AddDays(1).AddHours(8), offset);
+        var todayId = await CreateActivityAsync(client, areaId, laterToday, title: "Same-day routine");
+        var tomorrowId = await CreateActivityAsync(client, areaId, tomorrow, title: "Tomorrow routine");
+
+        await AssertStatusAsync(await client.PostAsync($"/api/activities/{todayId}/complete", null), HttpStatusCode.OK);
+        await AssertStatusAsync(await client.PostAsync($"/api/activities/{tomorrowId}/complete", null), HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Routine_status_changes_upsert_one_linked_metric_entry_and_delete_cleans_it_up()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+        var areaId = await GetFirstIdAsync(client, "/api/life-areas");
+        var activityId = await CreateActivityAsync(client, areaId, DateTimeOffset.Now, title: "Night retinoid");
+
+        await AssertStatusAsync(await client.PostAsync($"/api/activities/{activityId}/complete", null), HttpStatusCode.OK);
+        var metricId = await GetMetricIdAsync(client, "Night retinoid");
+        var entries = await GetMetricEntriesAsync(client, metricId);
+        Assert.Single(entries);
+        Assert.Equal(1m, entries[0].GetProperty("value").GetDecimal());
+
+        await AssertStatusAsync(await client.PostAsync($"/api/activities/{activityId}/skip", null), HttpStatusCode.OK);
+        entries = await GetMetricEntriesAsync(client, metricId);
+        Assert.Single(entries);
+        Assert.Equal(0m, entries[0].GetProperty("value").GetDecimal());
+
+        await AssertStatusAsync(await client.DeleteAsync($"/api/activities/{activityId}"), HttpStatusCode.NoContent);
+        Assert.Empty(await GetMetricEntriesAsync(client, metricId));
+    }
+
+    [Fact]
+    public async Task Mood_create_update_and_delete_stay_synchronized_with_mood_metric()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/mood", new { recordedAt = DateTimeOffset.Now, score = 8, energy = 7, stress = 3, context = "Integration", notes = "Synced" });
+        await AssertStatusAsync(response, HttpStatusCode.Created);
+        using var created = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var moodId = created.RootElement.GetProperty("id").GetGuid();
+        var metricId = await GetMetricIdAsync(client, "Mood");
+        var entries = await GetMetricEntriesAsync(client, metricId);
+        Assert.Contains(entries, item => item.GetProperty("notes").GetString()!.Contains($"[mood:{moodId}]"));
+
+        await AssertStatusAsync(await client.PutAsJsonAsync($"/api/mood/{moodId}", new { recordedAt = DateTimeOffset.Now, score = 9, energy = 8, stress = 2, context = "Updated", notes = "Synced" }), HttpStatusCode.OK);
+        entries = await GetMetricEntriesAsync(client, metricId);
+        var linked = entries.Where(item => item.GetProperty("notes").GetString()!.Contains($"[mood:{moodId}]")).ToList();
+        Assert.Single(linked);
+        Assert.Equal(9m, linked[0].GetProperty("value").GetDecimal());
+
+        await AssertStatusAsync(await client.DeleteAsync($"/api/mood/{moodId}"), HttpStatusCode.NoContent);
+        entries = await GetMetricEntriesAsync(client, metricId);
+        Assert.DoesNotContain(entries, item => item.GetProperty("notes").GetString()!.Contains($"[mood:{moodId}]"));
+    }
+
+    [Fact]
     public async Task Today_dashboard_limits_execution_ledger_to_today_and_previous_two_days()
     {
         await using var factory = new AxisApiFactory();
@@ -133,6 +196,18 @@ public sealed class ActivityApiIntegrationTests
     {
         using var document = JsonDocument.Parse(await client.GetStringAsync(path));
         return document.RootElement[0].GetProperty("id").GetGuid();
+    }
+
+    private static async Task<Guid> GetMetricIdAsync(HttpClient client, string name)
+    {
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/api/metrics"));
+        return document.RootElement.EnumerateArray().Single(item => item.GetProperty("name").GetString() == name).GetProperty("id").GetGuid();
+    }
+
+    private static async Task<List<JsonElement>> GetMetricEntriesAsync(HttpClient client, Guid metricId)
+    {
+        using var document = JsonDocument.Parse(await client.GetStringAsync($"/api/metrics/{metricId}/entries"));
+        return document.RootElement.EnumerateArray().Select(item => item.Clone()).ToList();
     }
 
     private static async Task<Guid> CreateCountGoalAsync(HttpClient client, Guid lifeAreaId)

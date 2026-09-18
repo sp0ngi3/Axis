@@ -157,6 +157,10 @@ export interface Countdown {
   daysRemaining: number;
   hoursRemaining: number;
   minutesRemaining: number;
+  totalDurationDays?: number;
+  elapsedDays?: number;
+  calendarMonths?: number;
+  calendarDays?: number;
   isPast: boolean;
   createdAt?: string;
 }

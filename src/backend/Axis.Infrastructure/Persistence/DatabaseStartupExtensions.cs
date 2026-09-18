@@ -25,6 +25,107 @@ public static class DatabaseStartupExtensions
         await GenerateRollingRecurringActivitiesAsync(dbContext, 56, cancellationToken);
         await RemoveDuplicateGeneratedActivitiesAsync(dbContext, cancellationToken);
         await LinkStarterActivitiesToGoalsAsync(dbContext, cancellationToken);
+        await BackfillLinkedSignalMetricsAsync(dbContext, cancellationToken);
+    }
+
+    private static async Task BackfillLinkedSignalMetricsAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var metrics = await dbContext.Metrics.ToDictionaryAsync(item => item.Name, StringComparer.OrdinalIgnoreCase, cancellationToken);
+        var entries = await dbContext.MetricEntries.ToListAsync(cancellationToken);
+        var moods = await dbContext.MoodEntries.AsNoTracking().ToListAsync(cancellationToken);
+
+        foreach (var mood in moods)
+        {
+            var marker = $"[mood:{mood.Id}]";
+            if (!metrics.TryGetValue("Mood", out var metric) || entries.Any(entry => entry.Notes.Contains(marker, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            var linked = new MetricEntry
+            {
+                MetricId = metric.Id,
+                Value = mood.Score,
+                RecordedAt = mood.RecordedAt,
+                Notes = $"{marker} Mood log · energy {mood.Energy}/10 · stress {mood.Stress}/10."
+            };
+            dbContext.MetricEntries.Add(linked);
+            entries.Add(linked);
+        }
+
+        var activities = await dbContext.Activities.AsNoTracking()
+            .Where(activity => activity.Status == ActivityStatus.Completed || activity.Status == ActivityStatus.Skipped || activity.Status == ActivityStatus.Cancelled)
+            .ToListAsync(cancellationToken);
+
+        foreach (var activity in activities)
+        {
+            var marker = $"[activity:{activity.Id}]";
+            if (entries.Any(entry => entry.Notes.Contains(marker, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            var completed = activity.Status == ActivityStatus.Completed;
+            var quantity = ParseBackfillQuantity(activity.Notes);
+            (string Name, decimal Value)? mapped = activity.Title switch
+            {
+                "Creatine dose" => ("Creatine dose", completed ? 5m * quantity : 0m),
+                "Desk mobility reset" => ("Mobility session", completed ? 1m : 0m),
+                "Hypertrophy workout" => ("Strength training session", completed ? 1m : 0m),
+                "No alcohol check-in" => ("Alcohol-free day", completed ? 1m : 0m),
+                "No vape check-in" => ("Vape-free day", completed ? 1m : 0m),
+                "Diet check-in" => ("Diet adherence", completed ? 1m : 0m),
+                "SPF 30+" => ("SPF 30+", completed ? 1m : 0m),
+                "Night retinoid" => ("Night retinoid", completed ? 1m : 0m),
+                "Floss teeth" => ("Flossing", completed ? 1m : 0m),
+                "Outdoor walk" => ("Outdoor walk", completed ? activity.DurationMinutes : 0m),
+                "Sleep log" when completed && activity.Notes.Contains("Quantity:", StringComparison.OrdinalIgnoreCase) => ("Sleep duration", quantity),
+                _ => null
+            };
+
+            if (mapped is null || !metrics.TryGetValue(mapped.Value.Name, out var metric))
+            {
+                continue;
+            }
+
+            var recordedAt = activity.ActualEndAt ?? activity.PlannedStartAt ?? activity.CreatedAt;
+            var legacy = entries.FirstOrDefault(entry => entry.MetricId == metric.Id
+                && entry.Notes.StartsWith("Quick logged", StringComparison.OrdinalIgnoreCase)
+                && Math.Abs((entry.RecordedAt - recordedAt).TotalMinutes) <= 10);
+            if (legacy is not null)
+            {
+                legacy.Value = mapped.Value.Value;
+                legacy.RecordedAt = recordedAt;
+                legacy.Notes = $"{marker} Synced from {activity.Title}.";
+                continue;
+            }
+
+            var linked = new MetricEntry
+            {
+                MetricId = metric.Id,
+                Value = mapped.Value.Value,
+                RecordedAt = recordedAt,
+                Notes = $"{marker} Synced from {activity.Title}."
+            };
+            dbContext.MetricEntries.Add(linked);
+            entries.Add(linked);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static decimal ParseBackfillQuantity(string notes)
+    {
+        var markerIndex = notes.IndexOf("Quantity:", StringComparison.OrdinalIgnoreCase);
+        if (markerIndex < 0)
+        {
+            return 1m;
+        }
+
+        var value = notes[(markerIndex + "Quantity:".Length)..].TrimStart().Split([' ', '·', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        return decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            ? Math.Max(0, parsed)
+            : 1m;
     }
 
     private static async Task VerifyDatabaseIntegrityAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
@@ -381,6 +482,13 @@ public static class DatabaseStartupExtensions
         await EnsureMetricAsync(dbContext, fitness, null, "Protein intake", "g", MetricValueType.Number, 120, 9, null, null, cancellationToken);
         await EnsureMetricAsync(dbContext, health, null, "Sleep duration", "h", MetricValueType.Number, 8, 10, null, null, cancellationToken);
         await EnsureMetricAsync(dbContext, health, null, "SPF 30+", "0/1", MetricValueType.Boolean, 1, 11, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, fitness, null, "Mobility session", "0/1", MetricValueType.Boolean, 1, 12, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, fitness, hypertrophyGoal, "Strength training session", "0/1", MetricValueType.Boolean, 1, 13, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, health, null, "Alcohol-free day", "0/1", MetricValueType.Boolean, 1, 14, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, fitness, null, "Diet adherence", "0/1", MetricValueType.Boolean, 1, 15, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, health, null, "Night retinoid", "0/1", MetricValueType.Boolean, 1, 16, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, health, null, "Flossing", "0/1", MetricValueType.Boolean, 1, 17, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, health, null, "Outdoor walk", "min", MetricValueType.Duration, 30, 18, null, null, cancellationToken);
 
         if (!await dbContext.PhysiqueEntries.AnyAsync(cancellationToken))
         {

@@ -22,7 +22,9 @@ const checkInTitles = new Set([
   'No alcohol check-in',
   'No vape check-in',
   'Diet check-in',
-  'SPF 30+'
+  'SPF 30+',
+  'Night retinoid',
+  'Floss teeth'
 ]);
 
 function trackKind(title: string): DashboardTrack['kind'] {

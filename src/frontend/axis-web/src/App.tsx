@@ -234,7 +234,11 @@ export default function App() {
   async function quickLogTemplate(template: ActivityTemplate, draft?: QuickLogDraft) {
     const end = draft?.recordedAt ? new Date(draft.recordedAt) : new Date();
     const durationMinutes = Math.max(1, draft?.durationMinutes ?? template.defaultDurationMinutes);
-    const quantity = isBinaryCheckIn(template.title) ? 1 : Math.max(1, draft?.quantity ?? 1);
+    const quantity = isBinaryCheckIn(template.title)
+      ? 1
+      : template.title === 'Sleep log'
+        ? normalizeSleepHours(draft?.quantity ?? 0)
+        : Math.max(1, draft?.quantity ?? 1);
     const start = new Date(end.getTime() - durationMinutes * 60000);
     const humanNotes = [
       'Quick logged from Today.',
@@ -266,7 +270,7 @@ export default function App() {
       energyCost: template.energyCost,
       mentalLoad: template.mentalLoad,
       physicalLoad: template.physicalLoad,
-      points: template.defaultPoints * quantity,
+      points: calculateActivityPoints(template, quantity),
       notes
     };
 
@@ -286,6 +290,7 @@ export default function App() {
   return (
     <div className={`app-shell page-${page} ${isBusy ? 'is-busy' : ''}`} onClickCapture={captureActionPulse}>
       {actionPulse && <div key={actionPulse.id} className={`action-burst ${actionPulse.tone}`} style={{ '--burst-x': `${actionPulse.x}px`, '--burst-y': `${actionPulse.y}px` } as CSSProperties} onAnimationEnd={(event) => event.currentTarget === event.target && setActionPulse((current) => current?.id === actionPulse.id ? null : current)} aria-hidden="true"><i /><i /><i /><b /></div>}
+      {(notice || error) && <AppNotification key={`${feedbackId}-${error || notice}`} message={error || notice} isError={Boolean(error)} onDismiss={() => error ? setError('') : setNotice('')} />}
       <aside className="app-sidebar">
         <div className="brand-block">
           <span className="brand-mark">AX</span>
@@ -329,7 +334,6 @@ export default function App() {
           </div>
         </header>
 
-        {(notice || error) && <div key={`${feedbackId}-${error || notice}`} className={error ? 'notice error feedback-failure' : `notice ${feedbackTone(notice)}`}><span className="feedback-glyph" aria-hidden="true" />{error || notice}</div>}
         {isLoading && <div className="loading-strip"><span /> Syncing local data</div>}
 
         {page === 'today' && (
@@ -514,7 +518,9 @@ function JournalPage(props: {
   onDeleteDiary: (id: string) => void;
   onDeleteDiaryRange: (ids: string[]) => void;
 }) {
-  const today = localDateKey(new Date().toISOString());
+  const now = new Date();
+  const today = localDateKey(now.toISOString());
+  const yearProgress = getYearProgress(now);
   const [selectedDate, setSelectedDate] = useState(today);
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
@@ -588,6 +594,7 @@ function JournalPage(props: {
     <div className="page-grid">
       <section className="surface journal-summary">
         <div className="collection-header flush-header"><SectionTitle kicker="Last 28 check-ins" title="Mind trend" /><div className="journal-summary-metrics"><SummaryPill label="Mood" value={`${moodAverage}/10`} /><SummaryPill label="Energy" value={`${energyAverage}/10`} /><SummaryPill label="Stress" value={`${stressAverage}/10`} /></div></div>
+        <YearProgress progress={yearProgress} />
         <JournalMoodChart entries={recentMood} />
       </section>
       <section className="surface">
@@ -644,6 +651,27 @@ function JournalMoodChart({ entries }: { entries: MoodEntry[] }) {
     </div>
     <div className="chart-range"><span>{sorted[0] ? formatShortDate(sorted[0].recordedAt) : 'No data'}</span><span>{latest ? `${formatShortDate(latest.recordedAt)} · ${latest.context || 'No context'}` : ''}</span><span>{sorted.at(-1) ? formatShortDate(sorted.at(-1)!.recordedAt) : ''}</span></div>
   </div>;
+}
+
+function YearProgress({ progress }: { progress: ReturnType<typeof getYearProgress> }) {
+  const percentLabel = progress.percent.toFixed(2);
+  return (
+    <div className="year-progress" aria-label={`${percentLabel}% of ${progress.year} complete`}>
+      <div className="year-progress-readout">
+        <span>{progress.year}</span>
+        <strong>{percentLabel}%</strong>
+        <small>year complete</small>
+      </div>
+      <div className="year-progress-data">
+        <div><strong>Day {progress.dayOfYear} of {progress.daysInYear}</strong><span>{progress.daysRemaining} days remaining after today</span></div>
+        <div className="year-progress-track" aria-hidden="true">
+          <i style={{ width: `${progress.percent}%` }} />
+          <b style={{ left: '25%' }} /><b style={{ left: '50%' }} /><b style={{ left: '75%' }} />
+        </div>
+        <div className="year-progress-scale" aria-hidden="true"><span>JAN</span><span>Q2</span><span>Q3</span><span>DEC</span></div>
+      </div>
+    </div>
+  );
 }
 
 function HistoryPage() {
@@ -916,7 +944,8 @@ function TodayQuickLogPanel(props: {
   const recoveryHits = muscles.filter((muscle) => recentMuscles.some((item) => item.notes.includes(muscle)));
   const isSleep = template?.title === 'Sleep log';
   const isCheckIn = template ? isBinaryCheckIn(template.title) : false;
-  const sleepScore = quantity >= 8 ? { label: 'Optimal recovery', tone: 'good', copy: 'At or above the 8-hour target.' } : quantity >= 7 ? { label: 'Acceptable, not optimal', tone: 'okay', copy: 'A workable night, but some sleep debt may remain.' } : quantity >= 6 ? { label: 'Recovery compromised', tone: 'warning', copy: 'Training, attention, appetite, and appearance may suffer.' } : { label: 'Severe sleep deficit', tone: 'danger', copy: 'Prioritize recovery and avoid making this a pattern.' };
+  const sleepScore = assessSleepDuration(quantity);
+  const sleepParts = splitSleepDuration(quantity);
 
   useEffect(() => {
     if (!template && props.templates[0]) {
@@ -943,10 +972,14 @@ function TodayQuickLogPanel(props: {
       {template && (
         <>
           <div className="form-grid three">
-            {!isCheckIn && <NumberField label={isSleep ? 'Hours slept' : 'Quantity'} value={quantity} onChange={(value) => setQuantity(Math.max(isSleep ? 0 : 1, value))} />}
+            {isSleep && <>
+              <NumberField label="Sleep hours" value={sleepParts.hours} min={0} max={24} onChange={(hours) => setQuantity(sleepHoursFromParts(hours, sleepParts.minutes))} />
+              <NumberField label="Extra minutes" value={sleepParts.minutes} min={0} max={59} step={5} onChange={(minutes) => setQuantity(sleepHoursFromParts(sleepParts.hours, minutes))} />
+            </>}
+            {!isCheckIn && !isSleep && <NumberField label="Quantity" value={quantity} step="any" onChange={(value) => setQuantity(Math.max(1, value))} />}
             {isDurationActivity(template.title) && <NumberField label="Total minutes" value={duration} onChange={(value) => setDuration(Math.max(1, value))} />}
           </div>
-          {isSleep && <div className={`sleep-assessment ${sleepScore.tone}`}><strong>{quantity}h · {sleepScore.label}</strong><span>{sleepScore.copy}</span></div>}
+          {isSleep && <div className={`sleep-assessment ${sleepScore.tone}`}><strong>{formatSleepDuration(quantity)} · {sleepScore.label}</strong><span>{sleepScore.copy}</span></div>}
           {template.title === 'Hypertrophy workout' && <><div className="muscle-picker">{muscleOptions.map((muscle) => <button key={muscle} className={muscles.includes(muscle) ? 'active' : ''} onClick={() => setMuscles((current) => current.includes(muscle) ? current.filter((item) => item !== muscle) : [...current, muscle])}>{muscle}</button>)}</div><WorkoutExerciseEditor exercises={exercises} onChange={setExercises} />{recoveryHits.length > 0 && <div className="recovery-warning"><strong>Recovery check</strong><span>{recoveryHits.join(', ')} appeared in a workout during the last 72 hours.</span></div>}</>}
           <TextArea label="Notes" value={notes} onChange={setNotes} />
           <button disabled={props.busy} onClick={() => props.onQuickLog(template, { recordedAt, durationMinutes: isDurationActivity(template.title) ? duration : 1, quantity: isCheckIn ? 1 : quantity, notes, muscles, exercises: template.title === 'Hypertrophy workout' ? exercises.filter((exercise) => exercise.name.trim()) : [] })}>
@@ -979,7 +1012,7 @@ function WorkoutExerciseEditor(props: { exercises: WorkoutExercise[]; onChange: 
         <label className="field"><span>Muscle</span><select value={exercise.muscle} onChange={(event) => update(exercise.id, 'muscle', event.target.value)}>{workoutMuscles.map((muscle) => <option key={muscle}>{muscle}</option>)}</select></label>
         <label className="field"><span>Sets</span><input type="number" min="1" max="20" value={exercise.sets} onChange={(event) => update(exercise.id, 'sets', Number(event.target.value))} /></label>
         <label className="field"><span>Reps</span><input type="number" min="1" max="100" value={exercise.reps} onChange={(event) => update(exercise.id, 'reps', Number(event.target.value))} /></label>
-        <label className="field"><span>kg</span><input type="number" min="0" step="0.5" value={exercise.weightKg} onChange={(event) => update(exercise.id, 'weightKg', Number(event.target.value))} /></label>
+        <label className="field"><span>kg</span><input type="number" min="0" step="0.1" inputMode="decimal" value={exercise.weightKg} onChange={(event) => update(exercise.id, 'weightKg', Number(event.target.value))} /></label>
         <label className="field"><span>RIR</span><input type="number" min="0" max="10" value={exercise.rir} onChange={(event) => update(exercise.id, 'rir', Number(event.target.value))} /></label>
         <button type="button" className="danger-button icon-button exercise-remove" aria-label={`Remove exercise ${index + 1}`} onClick={() => props.onChange(props.exercises.length === 1 ? [createExercise()] : props.exercises.filter((item) => item.id !== exercise.id))}>x</button>
       </div>)}
@@ -1211,7 +1244,7 @@ function DashboardPage(props: {
                 <div><dt>Gaps</dt><dd>{track.missedCount}</dd></div>
                 {track.kind === 'duration' && <div><dt>Time</dt><dd>{track.minutes} min</dd></div>}
                 {track.kind === 'checkin' && <div><dt>Check-ins</dt><dd>{track.completedCount}</dd></div>}
-                {track.kind === 'quantity' && <div><dt>Logged</dt><dd>{roundNumber(track.quantityTotal)} {track.quantityUnit}</dd></div>}
+                {track.kind === 'quantity' && <div><dt>Logged</dt><dd>{track.quantityUnit === 'h' ? formatSleepDuration(track.quantityTotal) : `${roundNumber(track.quantityTotal)} ${track.quantityUnit}`}</dd></div>}
               </dl>
             </article>
           ))}
@@ -1457,7 +1490,7 @@ function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[];
                 <i />
                 <span><strong>{metric.name}</strong><small>{metric.latestEntry ? `Updated ${formatShortDate(metric.latestEntry.recordedAt)}` : 'No data logged'}</small></span>
                 <div><b style={{ width: `${metric.latestEntry && metric.targetValue ? Math.min(100, Math.abs(metric.latestEntry.value / metric.targetValue * 100)) : 0}%` }} /></div>
-                <em>{metric.latestEntry ? `${metric.latestEntry.value} ${metric.unit}${delta == null ? '' : ` · ${delta > 0 ? '+' : ''}${roundNumber(delta)} vs target`}` : 'Missing'}</em>
+                <em>{metric.latestEntry ? `${formatMetricValue(metric, metric.latestEntry.value)}${delta == null ? '' : ` · ${formatMetricDelta(metric, delta)} vs target`}` : 'Missing'}</em>
               </article>
             ))}
           </div>
@@ -1876,8 +1909,8 @@ function MoneyTrajectoryChart({ entries, wishlistTotal }: { entries: SavingsEntr
   return <section className="surface money-trend professional-chart"><div className="collection-header flush-header"><SectionTitle kicker="Savings history" title="Capital trajectory" /><div className="segmented-control compact"><button className={mode === 'line' ? 'active' : ''} onClick={() => setMode('line')}>Line</button><button className={mode === 'bars' ? 'active' : ''} onClick={() => setMode('bars')}>Bars</button></div></div><div className="chart-insight-strip"><span><small>Current</small><strong>{formatMoney(rows.at(-1)?.amount ?? 0)}</strong></span><span><small>Change</small><strong>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</strong></span><span><small>Highest</small><strong>{formatMoney(values.length ? Math.max(...values) : 0)}</strong></span><span><small>Wishlist target</small><strong>{formatMoney(wishlistTotal)}</strong></span></div><div className="axis-chart money-axis"><div className="axis-labels"><span>{formatMoney(max)}</span><span>{formatMoney(max / 2)}</span><span>{formatMoney(0)}</span></div><svg viewBox="0 0 100 36" preserveAspectRatio="none" aria-label="Savings balance in EUR over time"><line x1="0" x2="100" y1={y(wishlistTotal)} y2={y(wishlistTotal)} className="sparkline-target"><title>Wishlist target {formatMoney(wishlistTotal)}</title></line>{mode === 'line' ? <polyline points={moneySparklinePoints(rows)} /> : rows.map((item, index) => <rect key={item.id} x={x(index) - Math.min(2, 35 / Math.max(1, rows.length))} y={y(item.amount)} width={Math.min(4, 70 / Math.max(1, rows.length))} height={34 - y(item.amount)}><title>{formatShortDate(item.recordedAt)}: {formatMoney(item.amount)}</title></rect>)}{rows.map((item, index) => <circle key={`point-${item.id}`} cx={x(index)} cy={y(item.amount)} r="1.1"><title>{formatDateTime(item.recordedAt)}: {formatMoney(item.amount)}</title></circle>)}</svg></div><div className="chart-range"><span>{rows[0] ? formatShortDate(rows[0].recordedAt) : 'No balances yet'}</span><span>EUR · {rows.length} balance records</span><span>{rows.at(-1) ? formatShortDate(rows.at(-1)!.recordedAt) : ''}</span></div></section>;
 }
 
-function WishlistForm(props: { item: WishlistItem | null; busy: boolean; onSave: (body: unknown) => void }) { const [draft, setDraft] = useState({ name: props.item?.name ?? '', description: props.item?.description ?? '', price: props.item?.price ?? 0, priority: props.item?.priority ?? 3, isPurchased: props.item?.isPurchased ?? false }); return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}><TextField label="Item" value={draft.name} onChange={(name) => setDraft({ ...draft, name })} required /><TextArea label="Why I want it" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} /><NumberField label="Price" value={draft.price} onChange={(price) => setDraft({ ...draft, price })} /><NumberField label="Priority 1-5" value={draft.priority} onChange={(priority) => setDraft({ ...draft, priority })} /><label className="toggle-field"><input type="checkbox" checked={draft.isPurchased} onChange={(event) => setDraft({ ...draft, isPurchased: event.target.checked })} /><span>Purchased</span></label><button disabled={props.busy}>Save item</button></form>; }
-function SavingsForm(props: { entry: SavingsEntry | null; busy: boolean; onSave: (body: unknown) => void }) { const [amount, setAmount] = useState(props.entry?.amount ?? 0); const [note, setNote] = useState(props.entry?.note ?? ''); return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave({ amount, note }); }}><NumberField label="Current saved amount" value={amount} onChange={setAmount} /><TextField label="Note" value={note} onChange={setNote} /><small className="helper-copy">A new balance creates a point on the savings chart.</small><button disabled={props.busy}>Record balance</button></form>; }
+function WishlistForm(props: { item: WishlistItem | null; busy: boolean; onSave: (body: unknown) => void }) { const [draft, setDraft] = useState({ name: props.item?.name ?? '', description: props.item?.description ?? '', price: props.item?.price ?? 0, priority: props.item?.priority ?? 3, isPurchased: props.item?.isPurchased ?? false }); return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}><TextField label="Item" value={draft.name} onChange={(name) => setDraft({ ...draft, name })} required /><TextArea label="Why I want it" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} /><NumberField label="Price" value={draft.price} step={0.01} onChange={(price) => setDraft({ ...draft, price })} /><NumberField label="Priority 1-5" value={draft.priority} min={1} max={5} onChange={(priority) => setDraft({ ...draft, priority })} /><label className="toggle-field"><input type="checkbox" checked={draft.isPurchased} onChange={(event) => setDraft({ ...draft, isPurchased: event.target.checked })} /><span>Purchased</span></label><button disabled={props.busy}>Save item</button></form>; }
+function SavingsForm(props: { entry: SavingsEntry | null; busy: boolean; onSave: (body: unknown) => void }) { const [amount, setAmount] = useState(props.entry?.amount ?? 0); const [note, setNote] = useState(props.entry?.note ?? ''); return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave({ amount, note }); }}><NumberField label="Current saved amount" value={amount} step={0.01} onChange={setAmount} /><TextField label="Note" value={note} onChange={setNote} /><small className="helper-copy">A new balance creates a point on the savings chart.</small><button disabled={props.busy}>Record balance</button></form>; }
 
 function CountdownsPage(props: {
   countdowns: Countdown[];
@@ -2537,7 +2570,7 @@ function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: 
             <strong>{metric.name}</strong>
             <TargetComparison metric={metric} />
             <p className="muted-copy">
-              Latest: {metric.latestEntry ? `${metric.latestEntry.value} ${metric.unit} · ${formatShortDate(metric.latestEntry.recordedAt)}` : 'No entries yet'}
+              Latest: {metric.latestEntry ? `${formatMetricValue(metric, metric.latestEntry.value)} · ${formatShortDate(metric.latestEntry.recordedAt)}` : 'No entries yet'}
             </p>
           </article>
         ))}
@@ -2959,7 +2992,9 @@ function MetricsPage(props: {
               }}>
                 {metric.valueType === 'Boolean'
                   ? <select className="metric-value-input" aria-label={`${metric.name} result`} value={entryValues[metric.id] ?? ''} onChange={(event) => setEntryValues({ ...entryValues, [metric.id]: event.target.value })}><option value="">Result</option><option value="1">Yes</option><option value="0">No</option></select>
-                  : <input className="metric-value-input" type="number" value={entryValues[metric.id] ?? ''} onChange={(event) => setEntryValues({ ...entryValues, [metric.id]: event.target.value })} placeholder="Value" />}
+                  : isSleepMetric(metric)
+                    ? <SleepDurationInput className="metric-value-input" value={entryValues[metric.id] ?? ''} onChange={(value) => setEntryValues({ ...entryValues, [metric.id]: value })} />
+                    : <input className="metric-value-input" type="number" step="any" inputMode="decimal" value={entryValues[metric.id] ?? ''} onChange={(event) => setEntryValues({ ...entryValues, [metric.id]: event.target.value })} placeholder="Value" />}
                 <input className="metric-time-input" aria-label={`${metric.name} recorded at`} type="datetime-local" max={toLocalInput(new Date())} value={entryTimes[metric.id] ?? toLocalInput(new Date())} onChange={(event) => setEntryTimes({ ...entryTimes, [metric.id]: event.target.value })} />
                 <input className="metric-note-input" value={entryNotes[metric.id] ?? ''} onChange={(event) => setEntryNotes({ ...entryNotes, [metric.id]: event.target.value })} placeholder="Note" />
                 <button type="submit" disabled={props.busy}>Log</button>
@@ -3068,11 +3103,11 @@ function MetricHistoryPanel(props: {
           <div><dt>Latest</dt><dd>{latest ? formatMetricValue(props.metric, latest.value) : 'None'}</dd></div>
           {props.metric.valueType === 'Boolean'
             ? <><div><dt>Yes</dt><dd>{sorted.filter((entry) => entry.value >= .5).length}</dd></div><div><dt>Success rate</dt><dd>{sorted.length ? `${Math.round(sorted.filter((entry) => entry.value >= .5).length / sorted.length * 100)}%` : 'None'}</dd></div></>
-            : <><div><dt>Delta</dt><dd>{delta === null ? 'None' : `${delta > 0 ? '+' : ''}${roundNumber(delta)} ${props.metric.unit}`}</dd></div><div><dt>Average</dt><dd>{average === null ? 'None' : `${roundNumber(average)} ${props.metric.unit}`}</dd></div></>}
+            : <><div><dt>Delta</dt><dd>{delta === null ? 'None' : formatMetricDelta(props.metric, delta)}</dd></div><div><dt>Average</dt><dd>{average === null ? 'None' : formatMetricValue(props.metric, average)}</dd></div></>}
         </dl>
 
         {props.isLoading && <EmptyState text="Loading metric history..." />}
-        {props.error && <div className="notice error">{props.error}</div>}
+        {props.error && <AppNotification message={props.error} isError />}
 
         <div className="metric-entry-table">
           {pagedEntries.items.map((entry) => (
@@ -3095,7 +3130,13 @@ function MetricHistoryPanel(props: {
 
 function formatMetricValue(metric: Metric, value: number) {
   if (metric.valueType === 'Boolean') return value >= .5 ? 'Yes' : 'No';
+  if (isSleepMetric(metric)) return formatSleepDuration(value);
   return `${roundNumber(value)}${metric.unit ? ` ${metric.unit}` : ''}`;
+}
+
+function formatMetricDelta(metric: Metric, value: number) {
+  if (isSleepMetric(metric)) return `${value > 0 ? '+' : ''}${formatSleepDuration(value)}`;
+  return `${value > 0 ? '+' : ''}${roundNumber(value)}${metric.unit ? ` ${metric.unit}` : ''}`;
 }
 
 function MetricSparkline(props: { entries: MetricEntry[]; metric: Metric; large?: boolean }) {
@@ -3115,9 +3156,9 @@ function MetricSparkline(props: { entries: MetricEntry[]; metric: Metric; large?
 
   return (
     <div className={props.large ? 'metric-chart large professional-chart' : 'metric-chart professional-chart'}>
-      <div className="metric-chart-head"><span>Current</span><strong>{latest ? formatMetricValue(props.metric, latest.value) : 'No data'}</strong>{delta !== null && props.metric.valueType !== 'Boolean' && <em>{delta >= 0 ? '+' : ''}{roundNumber(delta)}{props.metric.unit ? ` ${props.metric.unit}` : ''}</em>}</div>
+      <div className="metric-chart-head"><span>Current</span><strong>{latest ? formatMetricValue(props.metric, latest.value) : 'No data'}</strong>{delta !== null && props.metric.valueType !== 'Boolean' && <em>{formatMetricDelta(props.metric, delta)}</em>}</div>
       <div className="metric-plot-shell">
-        <div className="metric-y-axis"><span>{roundNumber(max)}</span><span>{roundNumber((max + min) / 2)}</span><span>{roundNumber(min)}</span></div>
+        <div className="metric-y-axis"><span>{formatMetricAxisValue(props.metric, max)}</span><span>{formatMetricAxisValue(props.metric, (max + min) / 2)}</span><span>{formatMetricAxisValue(props.metric, min)}</span></div>
         <div className="metric-plot"><span className="plot-unit">{props.metric.unit || (props.metric.valueType === 'Boolean' ? 'yes / no' : 'value')}</span><svg viewBox="0 0 220 72" preserveAspectRatio="none" role="img" aria-label={`${props.metric.name} trend in ${props.metric.unit || 'units'}`}>
           <line x1="0" x2="220" y1="12" y2="12" className="chart-grid" /><line x1="0" x2="220" y1="36" y2="36" className="chart-grid" /><line x1="0" x2="220" y1="60" y2="60" className="chart-grid" />
           {targetY !== null && <line x1="0" x2="220" y1={targetY} y2={targetY} className="sparkline-target" />}
@@ -3147,7 +3188,7 @@ function TargetComparison({ metric }: { metric: Metric }) {
   return (
     <div className="target-comparison">
       <div className="meter"><i style={{ width: `${percent}%` }} /></div>
-      <span>{roundNumber(percent)}% of target {metric.targetValue} {metric.unit}</span>
+      <span>{roundNumber(percent)}% of target {formatMetricValue(metric, metric.targetValue)}</span>
     </div>
   );
 }
@@ -3265,6 +3306,43 @@ function ReviewForm(props: { review: Review | null; busy: boolean; onSave: (body
   );
 }
 
+function AppNotification(props: { message: string; isError?: boolean; onDismiss?: () => void }) {
+  const [isVisible, setIsVisible] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  if (!isVisible) return null;
+
+  function dismiss() {
+    setDetailsOpen(false);
+    setIsVisible(false);
+    props.onDismiss?.();
+  }
+
+  return (
+    <>
+      <div className={`app-toast ${props.isError ? 'error feedback-failure' : feedbackTone(props.message)}`} role={props.isError ? 'alert' : 'status'}>
+        <span className="feedback-glyph" aria-hidden="true" />
+        <div className="app-toast-copy">
+          <strong>{props.isError ? 'Something went wrong' : 'Done'}</strong>
+          <span>{props.isError ? summarizeError(props.message) : props.message}</span>
+        </div>
+        {props.isError && <button type="button" className="secondary-button app-toast-details" onClick={() => setDetailsOpen(true)}>Details</button>}
+        <button type="button" className="icon-button app-toast-dismiss" aria-label="Dismiss notification" onClick={dismiss}>x</button>
+      </div>
+      <EditorDrawer open={detailsOpen} label="Error details" onClose={() => setDetailsOpen(false)}>
+        <section className="error-details-panel">
+          <div className="collection-header flush-header">
+            <SectionTitle kicker="Diagnostics" title="Error details" />
+            <button type="button" className="secondary-button" onClick={() => setDetailsOpen(false)}>Close</button>
+          </div>
+          <p className="muted-copy">Full technical response from the failed operation.</p>
+          <pre>{props.message}</pre>
+        </section>
+      </EditorDrawer>
+    </>
+  );
+}
+
 function BackupPage({ onReload }: { onReload: () => Promise<void> }) {
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -3355,7 +3433,7 @@ function BackupPage({ onReload }: { onReload: () => Promise<void> }) {
 
   return (
     <section className="page-grid">
-      {(error || message) && <div className={error ? 'notice error' : 'notice'}>{error || message}</div>}
+      {(error || message) && <AppNotification message={error || message} isError={Boolean(error)} onDismiss={() => error ? setError('') : setMessage('')} />}
       <section className="surface">
         <SectionTitle kicker="Persistence" title="SQLite storage" />
         <dl className="status-list">
@@ -3465,14 +3543,14 @@ function GoalForm(props: { goal: Goal | null; areas: LifeArea[]; busy: boolean; 
         </div>
         <SelectField label="Progress type" value={draft.progressType} onChange={(progressType) => setDraft({ ...draft, progressType: progressType as ProgressType })} options={progressTypes.map(toOption)} />
         <div className="form-grid three">
-          <NumberField label="Current" value={draft.currentValue} onChange={(currentValue) => setDraft({ ...draft, currentValue })} />
-          <NumberField label="Target" value={draft.targetValue} onChange={(targetValue) => setDraft({ ...draft, targetValue })} />
+          <NumberField label="Current" value={draft.currentValue} step="any" onChange={(currentValue) => setDraft({ ...draft, currentValue })} />
+          <NumberField label="Target" value={draft.targetValue} step="any" onChange={(targetValue) => setDraft({ ...draft, targetValue })} />
           <TextField label="Unit" value={draft.unit} onChange={(unit) => setDraft({ ...draft, unit })} />
         </div>
         <div className="form-grid three">
-          <NumberField label="Maintenance %" value={draft.maintenanceThreshold} onChange={(maintenanceThreshold) => setDraft({ ...draft, maintenanceThreshold })} />
+          <NumberField label="Maintenance %" value={draft.maintenanceThreshold} step="any" onChange={(maintenanceThreshold) => setDraft({ ...draft, maintenanceThreshold })} />
           <NumberOrBlankField label="Target/week" value={draft.maintenanceTargetPerWeek} onChange={(maintenanceTargetPerWeek) => setDraft({ ...draft, maintenanceTargetPerWeek })} />
-          <NumberField label="Decay %/day" value={draft.decayRatePercentPerWeek} onChange={(decayRatePercentPerWeek) => setDraft({ ...draft, decayRatePercentPerWeek })} />
+          <NumberField label="Decay %/day" value={draft.decayRatePercentPerWeek} step="any" onChange={(decayRatePercentPerWeek) => setDraft({ ...draft, decayRatePercentPerWeek })} />
         </div>
         <label className="field"><span>Target date</span><input type="date" value={draft.targetDate ?? ''} onChange={(event) => setDraft({ ...draft, targetDate: event.target.value })} /></label>
         <button disabled={props.busy}>{props.goal ? 'Save changes' : 'Create goal'}</button>
@@ -3511,8 +3589,8 @@ function MilestoneForm(props: { goal: Goal; milestone: Milestone | null; busy: b
           <SelectField label="Status" value={draft.status} onChange={(status) => setDraft({ ...draft, status: status as MilestoneStatus })} options={milestoneStatuses.map(toOption)} />
         </div>
         <div className="form-grid three">
-          <NumberField label="Current" value={draft.currentValue} onChange={(currentValue) => setDraft({ ...draft, currentValue })} />
-          <NumberField label="Target" value={draft.targetValue} onChange={(targetValue) => setDraft({ ...draft, targetValue })} />
+          <NumberField label="Current" value={draft.currentValue} step="any" onChange={(currentValue) => setDraft({ ...draft, currentValue })} />
+          <NumberField label="Target" value={draft.targetValue} step="any" onChange={(targetValue) => setDraft({ ...draft, targetValue })} />
           <TextField label="Unit" value={draft.unit} onChange={(unit) => setDraft({ ...draft, unit })} />
         </div>
         <div className="form-grid two">
@@ -3731,7 +3809,7 @@ function MetricForm(props: { metric: Metric | null; areas: LifeArea[]; goals: Go
         </div>
         <SelectField label="Life area" value={draft.lifeAreaId} onChange={(lifeAreaId) => setDraft({ ...draft, lifeAreaId })} options={[{ value: '', label: 'No area' }, ...props.areas.map((area) => ({ value: area.id, label: area.name }))]} />
         <SelectField label="Goal" value={draft.goalId} onChange={(goalId) => setDraft({ ...draft, goalId })} options={[{ value: '', label: 'No goal' }, ...props.goals.map((goal) => ({ value: goal.id, label: goal.title }))]} />
-        <NumberOrBlankField label="Target value" value={draft.targetValue} onChange={(targetValue) => setDraft({ ...draft, targetValue })} />
+        <NumberOrBlankField label="Target value" value={draft.targetValue} step="any" onChange={(targetValue) => setDraft({ ...draft, targetValue })} />
         <label className="check-field"><input type="checkbox" checked={draft.isActive} onChange={(event) => setDraft({ ...draft, isActive: event.target.checked })} /> Active</label>
         <button disabled={props.busy}>{props.metric ? 'Save changes' : 'Create metric'}</button>
       </form>
@@ -4010,14 +4088,14 @@ function PhysiqueEntryForm(props: { entry: PhysiqueEntry | null; baseline: Physi
           <SelectField label="Sex" value={draft.sex} onChange={(sex) => setDraft({ ...draft, sex })} options={[{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }]} />
         </div>
         <div className="form-grid three">
-          <NumberField label="Age" value={draft.age} onChange={(age) => setDraft({ ...draft, age })} />
-          <NumberField label="Height cm" value={draft.heightCm} onChange={(heightCm) => setDraft({ ...draft, heightCm })} />
-          <NumberField label="Weight kg" value={draft.weightKg} onChange={(weightKg) => setDraft({ ...draft, weightKg })} />
+          <NumberField label="Age" value={draft.age} min={1} max={120} onChange={(age) => setDraft({ ...draft, age })} />
+          <NumberField label="Height cm" value={draft.heightCm} min={1} step={0.1} onChange={(heightCm) => setDraft({ ...draft, heightCm })} />
+          <NumberField label="Weight kg" value={draft.weightKg} min={1} step={0.1} onChange={(weightKg) => setDraft({ ...draft, weightKg })} />
         </div>
         <div className="form-grid three">
-          <NumberOrBlankField label="Waist cm" value={draft.waistCm} onChange={(waistCm) => setDraft({ ...draft, waistCm })} />
-          <NumberOrBlankField label="Neck cm" value={draft.neckCm} onChange={(neckCm) => setDraft({ ...draft, neckCm })} />
-          <NumberOrBlankField label="Hip cm" value={draft.hipCm} onChange={(hipCm) => setDraft({ ...draft, hipCm })} />
+          <NumberOrBlankField label="Waist cm" value={draft.waistCm} min={1} step={0.1} onChange={(waistCm) => setDraft({ ...draft, waistCm })} />
+          <NumberOrBlankField label="Neck cm" value={draft.neckCm} min={1} step={0.1} onChange={(neckCm) => setDraft({ ...draft, neckCm })} />
+          <NumberOrBlankField label="Hip cm" value={draft.hipCm} min={1} step={0.1} onChange={(hipCm) => setDraft({ ...draft, hipCm })} />
         </div>
         <p className="form-hint">Body fat, fat mass, lean mass, BMI, and FFMI are calculated automatically from these measurements.</p>
         <div className="form-grid three">
@@ -4082,12 +4160,35 @@ function TextArea(props: { label: string; value: string; onChange: (value: strin
   return <label className="field full"><span>{props.label}</span><textarea value={props.value} onChange={(event) => props.onChange(event.target.value)} /></label>;
 }
 
-function NumberField(props: { label: string; value: number; onChange: (value: number) => void }) {
-  return <label className="field"><span>{props.label}</span><input type="number" value={props.value} onChange={(event) => props.onChange(Number(event.target.value))} /></label>;
+function NumberField(props: { label: string; value: number; onChange: (value: number) => void; step?: number | 'any'; min?: number; max?: number }) {
+  return <label className="field"><span>{props.label}</span><input type="number" inputMode={props.step && props.step !== 1 ? 'decimal' : 'numeric'} step={props.step ?? 1} min={props.min} max={props.max} value={props.value} onChange={(event) => props.onChange(Number(event.target.value))} /></label>;
 }
 
-function NumberOrBlankField(props: { label: string; value: string | number; onChange: (value: string) => void }) {
-  return <label className="field"><span>{props.label}</span><input type="number" value={props.value} onChange={(event) => props.onChange(event.target.value)} /></label>;
+function NumberOrBlankField(props: { label: string; value: string | number; onChange: (value: string) => void; step?: number | 'any'; min?: number; max?: number }) {
+  return <label className="field"><span>{props.label}</span><input type="number" inputMode={props.step && props.step !== 1 ? 'decimal' : 'numeric'} step={props.step ?? 1} min={props.min} max={props.max} value={props.value} onChange={(event) => props.onChange(event.target.value)} /></label>;
+}
+
+function SleepDurationInput(props: { value: string; onChange: (value: string) => void; className?: string }) {
+  const hasValue = props.value.trim() !== '';
+  const parts: { hours: number | ''; minutes: number | '' } = hasValue
+    ? splitSleepDuration(Number(props.value))
+    : { hours: '', minutes: '' };
+
+  function update(hours: number | '', minutes: number | '') {
+    if (hours === '' && minutes === '') {
+      props.onChange('');
+      return;
+    }
+
+    props.onChange(String(sleepHoursFromParts(Number(hours) || 0, Number(minutes) || 0)));
+  }
+
+  return (
+    <div className={`sleep-duration-input ${props.className ?? ''}`}>
+      <label><input aria-label="Sleep duration hours" type="number" inputMode="numeric" min="0" max="24" step="1" value={parts.hours} onChange={(event) => update(event.target.value === '' ? '' : Number(event.target.value), parts.minutes)} /><span>h</span></label>
+      <label><input aria-label="Sleep duration minutes" type="number" inputMode="numeric" min="0" max="59" step="5" value={parts.minutes} onChange={(event) => update(parts.hours, event.target.value === '' ? '' : Number(event.target.value))} /><span>m</span></label>
+    </div>
+  );
 }
 
 function SelectField(props: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }> }) {
@@ -4236,9 +4337,10 @@ function isBinaryCheckIn(title: string) {
 
 function activityDisplayMeasure(activity: Activity) {
   if (isDurationActivity(activity.title)) return `${activity.durationMinutes}m`;
-  const quantity = Number(activity.notes.match(/Quantity:\s*([0-9.]+)/i)?.[1] ?? 0);
+  const quantityMatch = activity.notes.match(/Quantity:\s*([0-9.]+)/i);
+  const quantity = Number(quantityMatch?.[1] ?? 0);
   if (activity.title === 'Creatine dose') return quantity ? `${quantity * 5} g logged` : 'dose check-in';
-  if (activity.title === 'Sleep log') return quantity ? `${quantity}h sleep` : 'sleep check-in';
+  if (activity.title === 'Sleep log') return quantityMatch ? `${formatSleepDuration(quantity)} sleep` : 'sleep check-in';
   return 'check-in';
 }
 
@@ -4327,6 +4429,64 @@ function getSparklineY(entries: MetricEntry[], value: number) {
 
 function roundNumber(value: number) {
   return Math.round(value * 10) / 10;
+}
+
+function getYearProgress(date: Date) {
+  const year = date.getFullYear();
+  const dayOfYear = Math.floor((Date.UTC(year, date.getMonth(), date.getDate()) - Date.UTC(year, 0, 1)) / 86400000) + 1;
+  const daysInYear = Math.round((Date.UTC(year + 1, 0, 1) - Date.UTC(year, 0, 1)) / 86400000);
+  const millisecondsIntoDay = date.getHours() * 3600000 + date.getMinutes() * 60000 + date.getSeconds() * 1000 + date.getMilliseconds();
+  const elapsedDays = dayOfYear - 1 + millisecondsIntoDay / 86400000;
+  return {
+    year,
+    dayOfYear,
+    daysInYear,
+    daysRemaining: daysInYear - dayOfYear,
+    percent: Number((elapsedDays / daysInYear * 100).toFixed(2))
+  };
+}
+
+function normalizeSleepHours(value: number) {
+  return Math.round(Math.max(0, Math.min(24, value)) * 60) / 60;
+}
+
+function splitSleepDuration(value: number) {
+  const totalMinutes = Math.round(normalizeSleepHours(value) * 60);
+  return { hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 };
+}
+
+function sleepHoursFromParts(hours: number, minutes: number) {
+  const safeHours = Math.max(0, Math.min(24, Math.trunc(hours || 0)));
+  const safeMinutes = Math.max(0, Math.min(59, Math.trunc(minutes || 0)));
+  return normalizeSleepHours(safeHours + safeMinutes / 60);
+}
+
+function formatSleepDuration(value: number) {
+  const sign = value < 0 ? '-' : '';
+  const totalMinutes = Math.round(Math.abs(value) * 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) return `${sign}${hours}h`;
+  if (hours === 0) return `${sign}${minutes}m`;
+  return `${sign}${hours}h ${minutes}m`;
+}
+
+function assessSleepDuration(value: number) {
+  const minutes = Math.round(value * 60);
+  if (minutes >= 540) return { label: 'Long recovery night', tone: 'good', copy: 'This can be useful during recovery or after accumulated sleep debt; watch the weekly pattern.' };
+  if (minutes >= 480) return { label: 'Optimal target zone', tone: 'good', copy: 'You reached the 8-hour recovery target.' };
+  if (minutes >= 450) return { label: 'Close to target', tone: 'okay', copy: 'A solid night, slightly below the 8-hour target.' };
+  if (minutes >= 420) return { label: 'Minimum healthy range', tone: 'okay', copy: 'Seven or more hours meets the adult baseline, but leaves less recovery buffer than your 8-hour target.' };
+  if (minutes >= 360) return { label: 'Short night', tone: 'warning', copy: 'Below seven hours. Training quality, attention, appetite control, and mood may be less resilient.' };
+  return { label: 'Severe shortfall', tone: 'danger', copy: 'Prioritize recovery today and avoid turning this into a repeated pattern.' };
+}
+
+function isSleepMetric(metric: Metric) {
+  return metric.name.toLowerCase().includes('sleep') && metric.unit.trim().toLowerCase() === 'h';
+}
+
+function formatMetricAxisValue(metric: Metric, value: number) {
+  return isSleepMetric(metric) ? formatSleepDuration(value) : String(roundNumber(value));
 }
 
 function paginate<T>(items: T[], page: number, pageSize: number) {
@@ -4458,6 +4618,17 @@ function feedbackTone(message: string) {
   return 'feedback-neutral';
 }
 
+function summarizeError(message: string) {
+  const compact = message.replace(/\s+/g, ' ').trim();
+  if (/Failed to fetch|NetworkError|ECONNREFUSED/i.test(compact)) return 'Axis could not connect to the local API.';
+  if (/Failed to read parameter|could not be converted|BadHttpRequestException/i.test(compact)) return 'The server rejected one of the submitted values.';
+  if (/validation/i.test(compact)) return 'Some submitted values did not pass validation.';
+
+  const stackStart = compact.indexOf(' at ');
+  const firstLine = stackStart > 0 ? compact.slice(0, stackStart) : compact;
+  return firstLine.length > 150 ? `${firstLine.slice(0, 147)}...` : firstLine || 'The operation could not be completed.';
+}
+
 function readError(error: unknown, fallback: string) {
   if (!(error instanceof Error)) {
     return fallback;
@@ -4469,4 +4640,11 @@ function readError(error: unknown, fallback: string) {
   } catch {
     return error.message || fallback;
   }
+}
+
+function calculateActivityPoints(template: ActivityTemplate, quantity: number) {
+  const multiplier = template.title === 'Sleep log' ? 1 : quantity;
+  const calculated = template.defaultPoints * multiplier;
+  if (!Number.isFinite(calculated)) return Math.max(0, Math.round(template.defaultPoints));
+  return Math.max(0, Math.min(2147483647, Math.round(calculated)));
 }

@@ -126,6 +126,17 @@ const workoutTemplate = {
   physicalLoad: 'High'
 };
 
+const sleepTemplate = {
+  ...template,
+  id: 'template-sleep',
+  title: 'Sleep log',
+  description: 'Estimated sleep duration',
+  defaultDurationMinutes: 1,
+  energyCost: 'Low',
+  mentalLoad: 'Low',
+  physicalLoad: 'Low'
+};
+
 const recurrenceRule = {
   id: 'rule-1',
   templateId: template.id,
@@ -143,8 +154,8 @@ const metric = {
   id: 'metric-1',
   lifeAreaId: area.id,
   goalId: goal.id,
-  name: 'Revenue signal',
-  unit: 'pts',
+  name: 'Body weight',
+  unit: 'kg',
   valueType: 'Number',
   targetValue: null,
   isActive: true,
@@ -199,7 +210,7 @@ function installFetchMock() {
       case '/api/activities':
         return jsonResponse([activity]);
       case '/api/activity-templates':
-        return jsonResponse([template, workoutTemplate]);
+        return jsonResponse([template, workoutTemplate, sleepTemplate]);
       case '/api/recurrence-rules':
         return jsonResponse([recurrenceRule]);
       case '/api/metrics':
@@ -261,6 +272,7 @@ describe('Axis app integration workflows', () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -290,10 +302,10 @@ describe('Axis app integration workflows', () => {
 
     await openPage(/metrics/i);
     expect(screen.getByText('No target comparison yet.')).toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText('Value'), { target: { value: '8' } });
+    fireEvent.change(screen.getByPlaceholderText('Value'), { target: { value: '71.9' } });
     fireEvent.change(screen.getByPlaceholderText('Note'), { target: { value: 'logged from integration test' } });
     fireEvent.click(screen.getByRole('button', { name: 'Log' }));
-    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/metrics/metric-1/entries')).toBe(true));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/metrics/metric-1/entries' && call.body?.includes('71.9'))).toBe(true));
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'score' } });
@@ -395,5 +407,60 @@ describe('Axis app integration workflows', () => {
       expect(workoutCall?.body).toContain('[axis-workout-v1]');
       expect(workoutCall?.body).toContain('\\"weightKg\\":70');
     });
+  });
+
+  it('keeps decimal body weight and minute-accurate sleep values in API payloads', async () => {
+    render(<App />);
+    await screen.findByText('Start with the focus block.');
+
+    await openPage(/physique/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Log physique' }));
+    const weightInput = screen.getByLabelText('Weight kg');
+    expect(weightInput).toHaveAttribute('step', '0.1');
+    fireEvent.change(weightInput, { target: { value: '71.9' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Log physique' }).at(-1)!);
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'POST' && call.path === '/api/physique' && call.body?.includes('"weightKg":71.9'))).toBe(true);
+    });
+
+    await openPage(/today/i);
+    fireEvent.click(await screen.findByRole('button', { name: /sleep log/i }));
+    fireEvent.change(screen.getByLabelText('Sleep hours'), { target: { value: '7' } });
+    fireEvent.change(screen.getByLabelText('Extra minutes'), { target: { value: '20' } });
+    expect(screen.getByText(/7h 20m · Minimum healthy range/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Log completed work' }));
+
+    await waitFor(() => {
+      const sleepCall = calls.find((call) => call.method === 'POST' && call.path === '/api/activities' && call.body?.includes('Sleep log'));
+      expect(sleepCall?.body).toContain('Quantity: 7.333333333333333');
+      expect(Number.isInteger(JSON.parse(sleepCall!.body!).points)).toBe(true);
+      expect(JSON.parse(sleepCall!.body!).points).toBe(sleepTemplate.defaultPoints);
+    });
+  });
+
+  it('shows concise error toasts and reveals technical details on demand', async () => {
+    render(<App />);
+    await screen.findByText('Start with the focus block.');
+    const fullError = 'Microsoft.AspNetCore.Http.BadHttpRequestException: Failed to read parameter "ActivityRequest request" from the request body as JSON. at Server.Stack.Trace';
+    vi.mocked(fetch).mockImplementationOnce(() => Promise.resolve(new Response(fullError, { status: 400 })));
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Done' })[0]);
+    expect(await screen.findByText('The server rejected one of the submitted values.')).toBeInTheDocument();
+    expect(screen.queryByText(fullError)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(screen.getByText(fullError)).toBeInTheDocument();
+  });
+
+  it('shows calendar-accurate year progress in the journal', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 8, 19, 12, 0, 0));
+    render(<App />);
+    await screen.findByText('Start with the focus block.');
+
+    await openPage(/journal/i);
+    expect(screen.getByLabelText('71.64% of 2026 complete')).toBeInTheDocument();
+    expect(screen.getByText('Day 262 of 365')).toBeInTheDocument();
+    expect(screen.getByText('103 days remaining after today')).toBeInTheDocument();
   });
 });

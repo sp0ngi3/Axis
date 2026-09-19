@@ -331,6 +331,116 @@ textarea:focus {
   color: var(--danger);
 }
 
+.app-toast {
+  position: fixed;
+  z-index: 70;
+  top: 18px;
+  right: 18px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  width: min(500px, calc(100vw - 36px));
+  padding: 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--success) 48%, var(--line));
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--success);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .34), inset 3px 0 currentColor;
+  isolation: isolate;
+  animation: app-toast-in 300ms cubic-bezier(.2, .8, .25, 1) both;
+}
+
+.app-toast.error {
+  border-color: color-mix(in srgb, var(--danger) 56%, var(--line));
+  color: var(--danger);
+}
+
+.app-toast-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-toast-copy strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.app-toast-copy span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.app-toast .app-toast-details,
+.app-toast .app-toast-dismiss {
+  position: relative;
+  z-index: 1;
+  min-height: 34px;
+}
+
+.app-toast-dismiss {
+  width: 34px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+}
+
+.error-details-panel {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 100%;
+  padding: 20px;
+}
+
+.error-details-panel pre {
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--danger);
+  background: var(--bg-alt);
+  color: var(--text);
+  font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@keyframes app-toast-in {
+  from { opacity: 0; transform: translate3d(24px, -8px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@media (max-width: 600px) {
+  .app-toast {
+    top: 10px;
+    right: 10px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    width: calc(100vw - 20px);
+  }
+
+  .app-toast > .feedback-glyph,
+  .app-toast-dismiss {
+    grid-row: 1 / span 2;
+  }
+
+  .app-toast-details {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .app-toast-dismiss {
+    grid-column: 3;
+  }
+}
+
 .loading-strip {
   display: flex;
   align-items: center;
@@ -1581,6 +1691,42 @@ textarea:focus {
 .sleep-assessment.okay { border-left-color: var(--sun); }
 .sleep-assessment.warning,
 .sleep-assessment.danger { border-left-color: var(--danger); }
+
+.sleep-duration-input {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.sleep-duration-input label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-alt);
+}
+
+.sleep-duration-input input {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+}
+
+.sleep-duration-input label > span {
+  padding-right: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.sleep-duration-input:focus-within {
+  border-color: var(--cyan);
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--cyan) 24%, transparent));
+}
 
 .momentum-chart-panel {
   overflow: hidden;
@@ -4411,6 +4557,117 @@ button,
   min-width: 104px;
 }
 
+.year-progress {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(170px, 0.38fr) minmax(0, 1.62fr);
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--cyan) 44%, var(--line));
+  background: var(--bg-alt);
+  box-shadow: inset 3px 0 var(--accent), inset -1px 0 color-mix(in srgb, var(--cyan) 24%, transparent);
+}
+
+.year-progress::after {
+  position: absolute;
+  inset: 0 auto 0 -16%;
+  width: 12%;
+  background: color-mix(in srgb, var(--cyan) 7%, transparent);
+  content: '';
+  pointer-events: none;
+  transform: skewX(-18deg);
+  animation: year-progress-scan 8s ease-in-out infinite;
+}
+
+.year-progress-readout {
+  display: grid;
+  align-content: center;
+  min-height: 104px;
+  padding: 15px 18px;
+  border-right: 1px solid var(--line);
+}
+
+.year-progress-readout span,
+.year-progress-readout small,
+.year-progress-scale,
+.year-progress-data span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.year-progress-readout strong {
+  color: var(--text);
+  font-size: 30px;
+  line-height: 1;
+  white-space: nowrap;
+  text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.year-progress-data {
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px 20px;
+}
+
+.year-progress-data > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.year-progress-data strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.year-progress-track {
+  position: relative;
+  height: 9px;
+  overflow: visible;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.year-progress-track i {
+  display: block;
+  height: 100%;
+  background: var(--cyan);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--cyan) 42%, transparent);
+  animation: year-progress-charge 900ms ease-out both;
+}
+
+.year-progress-track b {
+  position: absolute;
+  top: -4px;
+  width: 1px;
+  height: 15px;
+  background: var(--muted);
+  opacity: .55;
+}
+
+.year-progress-scale {
+  display: flex;
+  justify-content: space-between;
+}
+
+@keyframes year-progress-charge {
+  from { max-width: 0; opacity: .35; }
+  to { max-width: 100%; opacity: 1; }
+}
+
+@keyframes year-progress-scan {
+  0%, 18% { left: -16%; opacity: 0; }
+  28% { opacity: 1; }
+  58%, 100% { left: 112%; opacity: 0; }
+}
+
 .journal-chart {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -4822,6 +5079,16 @@ button,
 
   .journal-summary-metrics .summary-pill {
     flex: 1 1 92px;
+  }
+
+  .year-progress {
+    grid-template-columns: 1fr;
+  }
+
+  .year-progress-readout {
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
 }
 

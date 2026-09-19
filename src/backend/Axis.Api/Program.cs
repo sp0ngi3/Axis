@@ -598,6 +598,11 @@ static void MapActivities(WebApplication app)
 
     group.MapPost("/", async (ActivityRequest request, AxisDbContext db, CancellationToken ct) =>
     {
+        if (request.Status == ActivityStatus.Completed && !IsWithinDailyLogWindow(request.Title, request.ActualEndAt ?? request.PlannedStartAt))
+        {
+            return Results.BadRequest("Daily nutrition, steps, and water can only be logged for today or the previous two days.");
+        }
+
         if (request.Status == ActivityStatus.Completed && request.PlannedStartAt is { } plannedStartAt && IsFutureLocalDay(plannedStartAt))
         {
             return Results.BadRequest("A future activity cannot be completed.");
@@ -628,6 +633,11 @@ static void MapActivities(WebApplication app)
         }
 
         var previousStatus = activity.Status;
+        if (request.Status == ActivityStatus.Completed && !IsWithinDailyLogWindow(request.Title, request.ActualEndAt ?? request.PlannedStartAt))
+        {
+            return Results.BadRequest("Daily nutrition, steps, and water can only be logged for today or the previous two days.");
+        }
+
         if (request.Status == ActivityStatus.Completed && !CanCompleteActivity(activity, previousStatus, request.PlannedStartAt))
         {
             return Results.BadRequest("A future activity cannot be completed.");
@@ -2140,6 +2150,22 @@ static bool IsFutureLocalDay(DateTimeOffset value)
     return value.LocalDateTime.Date > DateTime.Now.Date;
 }
 
+static bool IsWithinDailyLogWindow(string title, DateTimeOffset? value)
+{
+    if (title is not ("Daily nutrition" or "Steps" or "Water intake"))
+    {
+        return true;
+    }
+
+    if (value is null)
+    {
+        return false;
+    }
+
+    var day = value.Value.LocalDateTime.Date;
+    return day >= DateTime.Now.Date.AddDays(-2) && day <= DateTime.Now.Date;
+}
+
 static async Task SyncActivityMetricAsync(AxisDbContext db, Activity activity, CancellationToken cancellationToken)
 {
     var marker = $"[activity:{activity.Id}]";
@@ -2150,42 +2176,72 @@ static async Task SyncActivityMetricAsync(AxisDbContext db, Activity activity, C
         return;
     }
 
+    var mapped = MapActivityMetrics(activity);
+    if (mapped.Count == 0)
+    {
+        return;
+    }
+
+    var names = mapped.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var metrics = await db.Metrics.Where(item => names.Contains(item.Name)).ToDictionaryAsync(item => item.Name, StringComparer.OrdinalIgnoreCase, cancellationToken);
+    var recordedAt = activity.ActualEndAt ?? activity.PlannedStartAt ?? DateTimeOffset.UtcNow;
+    foreach (var item in mapped)
+    {
+        if (!metrics.TryGetValue(item.Name, out var metric))
+        {
+            continue;
+        }
+
+        db.MetricEntries.Add(new MetricEntry
+        {
+            MetricId = metric.Id,
+            Value = item.Value,
+            RecordedAt = recordedAt,
+            Notes = $"{marker} Synced from {activity.Title}."
+        });
+    }
+}
+
+static List<(string Name, decimal Value)> MapActivityMetrics(Activity activity)
+{
     var completed = activity.Status == ActivityStatus.Completed;
     var quantity = ParseActivityQuantity(activity.Notes);
-    (string Name, decimal Value)? mapped = activity.Title switch
+    return activity.Title switch
     {
-        "Creatine dose" => ("Creatine dose", completed ? 5m * quantity : 0m),
-        "Desk mobility reset" => ("Mobility session", completed ? 1m : 0m),
-        "Hypertrophy workout" => ("Strength training session", completed ? 1m : 0m),
-        "No alcohol check-in" => ("Alcohol-free day", completed ? 1m : 0m),
-        "No vape check-in" => ("Vape-free day", completed ? 1m : 0m),
-        "Diet check-in" => ("Diet adherence", completed ? 1m : 0m),
-        "SPF 30+" => ("SPF 30+", completed ? 1m : 0m),
-        "Night retinoid" => ("Night retinoid", completed ? 1m : 0m),
-        "Floss teeth" => ("Flossing", completed ? 1m : 0m),
-        "Outdoor walk" => ("Outdoor walk", completed ? activity.DurationMinutes : 0m),
-        "Sleep log" when completed && HasActivityQuantity(activity.Notes) => ("Sleep duration", quantity),
-        _ => null
+        "Creatine dose" => [("Creatine dose", completed ? 5m * quantity : 0m)],
+        "Desk mobility reset" => [("Mobility session", completed ? 1m : 0m)],
+        "Hypertrophy workout" => [("Strength training session", completed ? 1m : 0m)],
+        "No alcohol check-in" => [("Alcohol-free day", completed ? 1m : 0m)],
+        "No vape check-in" => [("Vape-free day", completed ? 1m : 0m)],
+        "Diet check-in" => [("Diet adherence", completed ? 1m : 0m)],
+        "SPF 30+" => [("SPF 30+", completed ? 1m : 0m)],
+        "Night retinoid" => [("Night retinoid", completed ? 1m : 0m)],
+        "Floss teeth" => [("Flossing", completed ? 1m : 0m)],
+        "Outdoor walk" => [("Outdoor walk", completed ? activity.DurationMinutes : 0m)],
+        "Sleep log" when completed && HasActivityQuantity(activity.Notes) => [("Sleep duration", quantity)],
+        "Steps" when completed && HasActivityQuantity(activity.Notes) => [("Steps", quantity)],
+        "Water intake" when completed && HasActivityQuantity(activity.Notes) => [("Water consumed", quantity)],
+        "Daily nutrition" when completed => MapNutritionMetrics(activity.Notes),
+        _ => []
+    };
+}
+
+static List<(string Name, decimal Value)> MapNutritionMetrics(string notes)
+{
+    var mappings = new (string Marker, string Metric)[]
+    {
+        ("Calories", "Calories"),
+        ("Protein", "Protein intake"),
+        ("Carbohydrates", "Carbohydrates"),
+        ("Fat", "Fat intake"),
+        ("Fiber", "Fiber intake")
     };
 
-    if (mapped is null)
-    {
-        return;
-    }
-
-    var metric = await db.Metrics.FirstOrDefaultAsync(item => item.Name == mapped.Value.Name, cancellationToken);
-    if (metric is null)
-    {
-        return;
-    }
-
-    db.MetricEntries.Add(new MetricEntry
-    {
-        MetricId = metric.Id,
-        Value = mapped.Value.Value,
-        RecordedAt = activity.ActualEndAt ?? activity.PlannedStartAt ?? DateTimeOffset.UtcNow,
-        Notes = $"{marker} Synced from {activity.Title}."
-    });
+    return mappings
+        .Select(item => (item.Metric, Value: ParseActivityNamedValue(notes, item.Marker)))
+        .Where(item => item.Value is not null)
+        .Select(item => (item.Metric, item.Value!.Value))
+        .ToList();
 }
 
 static async Task SyncMoodMetricAsync(AxisDbContext db, MoodEntry mood, CancellationToken cancellationToken)
@@ -2233,6 +2289,20 @@ static decimal ParseActivityQuantity(string notes)
     return decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
         ? Math.Max(0, parsed)
         : 1m;
+}
+
+static decimal? ParseActivityNamedValue(string notes, string marker)
+{
+    var markerIndex = notes.IndexOf($"{marker}:", StringComparison.OrdinalIgnoreCase);
+    if (markerIndex < 0)
+    {
+        return null;
+    }
+
+    var value = notes[(markerIndex + marker.Length + 1)..].TrimStart().Split([' ', '·', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+    return decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+        ? Math.Max(0, parsed)
+        : null;
 }
 
 static (int Months, int Days) CalendarMonthDayDifference(DateOnly start, DateOnly end)

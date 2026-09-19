@@ -59,6 +59,13 @@ type QuickLogDraft = {
   notes: string;
   muscles: string[];
   exercises: WorkoutExercise[];
+  nutrition: {
+    calories: number;
+    protein: number;
+    carbohydrates: number;
+    fat: number;
+    fiber: number;
+  };
 };
 
 const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = [
@@ -233,6 +240,10 @@ export default function App() {
 
   async function quickLogTemplate(template: ActivityTemplate, draft?: QuickLogDraft) {
     const end = draft?.recordedAt ? new Date(draft.recordedAt) : new Date();
+    if (['Daily nutrition', 'Steps', 'Water intake'].includes(template.title)) {
+      const oldest = startOfDay(addDays(new Date(), -2));
+      if (end < oldest || end > new Date()) throw new Error('This daily log can only be recorded for today or the previous two days.');
+    }
     const durationMinutes = Math.max(1, draft?.durationMinutes ?? template.defaultDurationMinutes);
     const quantity = isBinaryCheckIn(template.title)
       ? 1
@@ -240,9 +251,12 @@ export default function App() {
         ? normalizeSleepHours(draft?.quantity ?? 0)
         : Math.max(1, draft?.quantity ?? 1);
     const start = new Date(end.getTime() - durationMinutes * 60000);
+    const measuredNotes = template.title === 'Daily nutrition' && draft
+      ? `Calories: ${Math.max(0, draft.nutrition.calories)} · Protein: ${Math.max(0, draft.nutrition.protein)} · Carbohydrates: ${Math.max(0, draft.nutrition.carbohydrates)} · Fat: ${Math.max(0, draft.nutrition.fat)} · Fiber: ${Math.max(0, draft.nutrition.fiber)}`
+      : !isBinaryCheckIn(template.title) ? `Quantity: ${quantity}` : '';
     const humanNotes = [
       'Quick logged from Today.',
-      !isBinaryCheckIn(template.title) ? `Quantity: ${quantity}` : '',
+      measuredNotes,
       draft?.muscles.length ? `Muscles: ${draft.muscles.join(', ')}` : '',
       draft?.notes ?? ''
     ].filter(Boolean).join(' · ');
@@ -939,10 +953,15 @@ function TodayQuickLogPanel(props: {
   const [notes, setNotes] = useState('');
   const [muscles, setMuscles] = useState<string[]>([]);
   const [exercises, setExercises] = useState<WorkoutExercise[]>([createExercise()]);
+  const [waterUnit, setWaterUnit] = useState<'ml' | 'l'>('ml');
+  const [nutrition, setNutrition] = useState({ calories: 2200, protein: 120, carbohydrates: 250, fat: 70, fiber: 30 });
   const muscleOptions = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core'];
   const recentMuscles = props.activities.filter((item) => item.status === 'Completed' && /Muscles:/i.test(item.notes) && new Date(getActivityDate(item) ?? 0) >= addDays(new Date(), -3));
   const recoveryHits = muscles.filter((muscle) => recentMuscles.some((item) => item.notes.includes(muscle)));
   const isSleep = template?.title === 'Sleep log';
+  const isNutrition = template?.title === 'Daily nutrition';
+  const isSteps = template?.title === 'Steps';
+  const isWater = template?.title === 'Water intake';
   const isCheckIn = template ? isBinaryCheckIn(template.title) : false;
   const sleepScore = assessSleepDuration(quantity);
   const sleepParts = splitSleepDuration(quantity);
@@ -957,7 +976,8 @@ function TodayQuickLogPanel(props: {
     const next = props.templates.find((item) => item.id === id);
     setTemplateId(id);
     setDuration(next?.defaultDurationMinutes ?? 30);
-    setQuantity(next?.title === 'Sleep log' ? 8 : 1);
+    setQuantity(next?.title === 'Sleep log' ? 8 : next?.title === 'Steps' ? 10000 : next?.title === 'Water intake' ? 500 : 1);
+    setWaterUnit('ml');
     setMuscles([]);
     setExercises([createExercise()]);
   }
@@ -966,7 +986,7 @@ function TodayQuickLogPanel(props: {
     <section className="surface today-log-panel">
       <div className="collection-header flush-header">
         <SectionTitle kicker="Operate" title="Log completed work" />
-        <label className="field compact-field"><span>When</span><input type="datetime-local" value={recordedAt} max={toLocalInput(new Date())} onChange={(event) => setRecordedAt(event.target.value)} /></label>
+        <label className="field compact-field"><span>When</span><input type="datetime-local" value={recordedAt} min={toLocalInput(startOfDay(addDays(new Date(), -2)))} max={toLocalInput(new Date())} onChange={(event) => setRecordedAt(event.target.value)} /></label>
       </div>
       <div className="template-picker">{props.templates.map((item) => <button key={item.id} className={template?.id === item.id ? 'active' : ''} onClick={() => chooseTemplate(item.id)}>{item.title}<small>{item.lifeAreaName}</small></button>)}</div>
       {template && (
@@ -976,13 +996,24 @@ function TodayQuickLogPanel(props: {
               <NumberField label="Sleep hours" value={sleepParts.hours} min={0} max={24} onChange={(hours) => setQuantity(sleepHoursFromParts(hours, sleepParts.minutes))} />
               <NumberField label="Extra minutes" value={sleepParts.minutes} min={0} max={59} step={5} onChange={(minutes) => setQuantity(sleepHoursFromParts(sleepParts.hours, minutes))} />
             </>}
-            {!isCheckIn && !isSleep && <NumberField label="Quantity" value={quantity} step="any" onChange={(value) => setQuantity(Math.max(1, value))} />}
+            {isSteps && <NumberField label="Steps" value={quantity} min={0} step={100} onChange={(value) => setQuantity(Math.max(0, Math.round(value)))} />}
+            {isWater && <><NumberField label={`Water (${waterUnit})`} value={quantity} min={0} step={waterUnit === 'l' ? 0.1 : 100} onChange={(value) => setQuantity(Math.max(0, value))} /><label className="field"><span>Unit</span><select value={waterUnit} onChange={(event) => setWaterUnit(event.target.value as 'ml' | 'l')}><option value="ml">ml</option><option value="l">liters</option></select></label></>}
+            {!isCheckIn && !isSleep && !isNutrition && !isSteps && !isWater && <NumberField label="Quantity" value={quantity} step="any" onChange={(value) => setQuantity(Math.max(1, value))} />}
             {isDurationActivity(template.title) && <NumberField label="Total minutes" value={duration} onChange={(value) => setDuration(Math.max(1, value))} />}
           </div>
+          {isNutrition && <div className="nutrition-log-grid">
+            <NumberField label="Calories (kcal)" value={nutrition.calories} min={0} step={10} onChange={(value) => setNutrition((current) => ({ ...current, calories: Math.max(0, value) }))} />
+            <NumberField label="Protein (g)" value={nutrition.protein} min={0} step={1} onChange={(value) => setNutrition((current) => ({ ...current, protein: Math.max(0, value) }))} />
+            <NumberField label="Carbohydrates (g)" value={nutrition.carbohydrates} min={0} step={1} onChange={(value) => setNutrition((current) => ({ ...current, carbohydrates: Math.max(0, value) }))} />
+            <NumberField label="Fat (g)" value={nutrition.fat} min={0} step={1} onChange={(value) => setNutrition((current) => ({ ...current, fat: Math.max(0, value) }))} />
+            <NumberField label="Fiber (g)" value={nutrition.fiber} min={0} step={1} onChange={(value) => setNutrition((current) => ({ ...current, fiber: Math.max(0, value) }))} />
+          </div>}
+          {isSteps && <p className="measurement-hint"><strong>Starter target: 10,000 steps</strong><span>Change your personal target from the Steps metric editor.</span></p>}
+          {isWater && <p className="measurement-hint"><strong>Starter target: 2.6 L</strong><span>Based on 35 ml/kg at 74 kg. Heat and training can raise needs; edit the target in Metrics.</span></p>}
           {isSleep && <div className={`sleep-assessment ${sleepScore.tone}`}><strong>{formatSleepDuration(quantity)} · {sleepScore.label}</strong><span>{sleepScore.copy}</span></div>}
           {template.title === 'Hypertrophy workout' && <><div className="muscle-picker">{muscleOptions.map((muscle) => <button key={muscle} className={muscles.includes(muscle) ? 'active' : ''} onClick={() => setMuscles((current) => current.includes(muscle) ? current.filter((item) => item !== muscle) : [...current, muscle])}>{muscle}</button>)}</div><WorkoutExerciseEditor exercises={exercises} onChange={setExercises} />{recoveryHits.length > 0 && <div className="recovery-warning"><strong>Recovery check</strong><span>{recoveryHits.join(', ')} appeared in a workout during the last 72 hours.</span></div>}</>}
           <TextArea label="Notes" value={notes} onChange={setNotes} />
-          <button disabled={props.busy} onClick={() => props.onQuickLog(template, { recordedAt, durationMinutes: isDurationActivity(template.title) ? duration : 1, quantity: isCheckIn ? 1 : quantity, notes, muscles, exercises: template.title === 'Hypertrophy workout' ? exercises.filter((exercise) => exercise.name.trim()) : [] })}>
+          <button disabled={props.busy} onClick={() => props.onQuickLog(template, { recordedAt, durationMinutes: isDurationActivity(template.title) ? duration : 1, quantity: isCheckIn || isNutrition ? 1 : isWater && waterUnit === 'l' ? quantity * 1000 : quantity, notes, muscles, exercises: template.title === 'Hypertrophy workout' ? exercises.filter((exercise) => exercise.name.trim()) : [], nutrition })}>
             {isCheckIn ? 'Confirm check-in' : 'Log completed work'}
           </button>
         </>
@@ -1244,7 +1275,7 @@ function DashboardPage(props: {
                 <div><dt>Gaps</dt><dd>{track.missedCount}</dd></div>
                 {track.kind === 'duration' && <div><dt>Time</dt><dd>{track.minutes} min</dd></div>}
                 {track.kind === 'checkin' && <div><dt>Check-ins</dt><dd>{track.completedCount}</dd></div>}
-                {track.kind === 'quantity' && <div><dt>Logged</dt><dd>{track.quantityUnit === 'h' ? formatSleepDuration(track.quantityTotal) : `${roundNumber(track.quantityTotal)} ${track.quantityUnit}`}</dd></div>}
+                {track.kind === 'quantity' && <div><dt>Logged</dt><dd>{track.quantityUnit === 'h' ? formatSleepDuration(track.quantityTotal) : track.quantityUnit === 'steps' ? `${Math.round(track.quantityTotal).toLocaleString()} steps` : `${Math.round(track.quantityTotal).toLocaleString()} ml`}</dd></div>}
               </dl>
             </article>
           ))}
@@ -1498,6 +1529,124 @@ function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[];
       </section>
     </div>
   );
+}
+
+const comparisonColors = ['#39d9e6', '#ff4da6', '#f5c451', '#8b7dff'];
+
+function MetricComparisonPanel({ metrics }: { metrics: Metric[] }) {
+  const candidates = useMemo(() => metrics.filter((metric) => metric.isActive && metric.valueType !== 'Boolean'), [metrics]);
+  const [rangeDays, setRangeDays] = useState(30);
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('axis-metric-comparison') ?? '[]'); } catch { return []; }
+  });
+  const [entries, setEntries] = useState<Record<string, MetricEntry[]>>({});
+  const [selectedDay, setSelectedDay] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    const valid = selectedIds.filter((id) => candidates.some((metric) => metric.id === id)).slice(0, 4);
+    if (valid.length > 0 || candidates.length === 0) {
+      if (valid.join('|') !== selectedIds.join('|')) setSelectedIds(valid);
+      return;
+    }
+    const preferred = ['Body weight', 'Steps', 'Calories', 'Water consumed']
+      .map((name) => candidates.find((metric) => metric.name === name)?.id)
+      .filter(Boolean) as string[];
+    setSelectedIds((preferred.length ? preferred : candidates.slice(0, 4).map((metric) => metric.id)).slice(0, 4));
+  }, [candidates, selectedIds]);
+
+  useEffect(() => {
+    localStorage.setItem('axis-metric-comparison', JSON.stringify(selectedIds));
+    if (selectedIds.length === 0) {
+      setEntries({});
+      return;
+    }
+    let cancelled = false;
+    const from = startOfDay(addDays(new Date(), -(rangeDays - 1)));
+    const to = endOfDay(new Date());
+    setIsLoading(true);
+    setLoadError('');
+    void Promise.all(selectedIds.map(async (id) => [id, await api.get<MetricEntry[]>(`/api/metrics/${id}/entries?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`)] as const))
+      .then((rows) => {
+        if (cancelled) return;
+        setEntries(Object.fromEntries(rows));
+        const newest = rows.flatMap(([, values]) => values).sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime())[0];
+        setSelectedDay(newest ? localDateKey(newest.recordedAt) : '');
+      })
+      .catch((reason: unknown) => { if (!cancelled) setLoadError(readError(reason, 'Metric comparison could not be loaded.')); })
+      .finally(() => { if (!cancelled) setIsLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedIds, rangeDays]);
+
+  const selectedMetrics = selectedIds.map((id) => candidates.find((metric) => metric.id === id)).filter(Boolean) as Metric[];
+  const fromTime = startOfDay(addDays(new Date(), -(rangeDays - 1))).getTime();
+  const toTime = endOfDay(new Date()).getTime();
+  const series = selectedMetrics.map((metric, index) => {
+    const values = [...(entries[metric.id] ?? [])].filter((entry) => {
+      const at = new Date(entry.recordedAt).getTime();
+      return at >= fromTime && at <= toTime;
+    }).sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
+    const min = Math.min(...values.map((entry) => entry.value));
+    const max = Math.max(...values.map((entry) => entry.value));
+    const points = values.map((entry) => {
+      const x = 48 + (new Date(entry.recordedAt).getTime() - fromTime) / Math.max(1, toTime - fromTime) * 910;
+      const normalized = max === min ? 50 : (entry.value - min) / (max - min) * 100;
+      return { entry, x, y: 276 - normalized * 2.28 };
+    });
+    return { metric, color: comparisonColors[index], values, min, max, points };
+  });
+  const available = candidates.filter((metric) => !selectedIds.includes(metric.id));
+
+  function addMetric(id: string) {
+    if (!id || selectedIds.length >= 4) return;
+    setSelectedIds((current) => [...current, id]);
+  }
+
+  return <section className="surface metric-comparison-panel">
+    <div className="dashboard-toolbar metric-comparison-toolbar">
+      <SectionTitle kicker="Signals lab" title="Metric comparison" />
+      <div className="comparison-controls">
+        <div className="segmented-control compact" aria-label="Metric comparison range">
+          {[7, 30, 90, 180].map((days) => <button key={days} className={rangeDays === days ? 'active' : ''} onClick={() => setRangeDays(days)}>{days === 180 ? '6M' : `${days}D`}</button>)}
+        </div>
+        <label className="field compact-field"><span>Add signal</span><select aria-label="Add metric to comparison" value="" disabled={selectedIds.length >= 4 || available.length === 0} onChange={(event) => addMetric(event.target.value)}><option value="">Choose metric</option>{available.map((metric) => <option key={metric.id} value={metric.id}>{metric.name}</option>)}</select></label>
+      </div>
+    </div>
+    <div className="comparison-legend" aria-label="Selected metric series">
+      {selectedMetrics.map((metric, index) => <button key={metric.id} style={{ '--series-color': comparisonColors[index] } as CSSProperties} onClick={() => setSelectedIds((current) => current.filter((id) => id !== metric.id))} title={`Remove ${metric.name}`}><i /><span>{metric.name}</span><small>{metric.unit}</small><b>×</b></button>)}
+    </div>
+    <div className="metric-comparison-layout">
+      <div className={`metric-comparison-chart ${isLoading ? 'loading' : ''}`}>
+        <div className="comparison-axis"><span>Personal high</span><span>Mid-range</span><span>Personal low</span></div>
+        <svg viewBox="0 0 1000 320" preserveAspectRatio="none" role="img" aria-label="Normalized comparison of selected metrics over time">
+          <defs><linearGradient id="comparisonGlow" x1="0" x2="1"><stop offset="0" stopColor="#39d9e6" stopOpacity=".12" /><stop offset=".5" stopColor="#ff4da6" stopOpacity=".1" /><stop offset="1" stopColor="#8b7dff" stopOpacity=".12" /></linearGradient></defs>
+          <rect x="48" y="34" width="910" height="242" className="comparison-plot-bg" />
+          {[48, 105, 162, 219, 276].map((y) => <line key={y} x1="48" y1={y} x2="958" y2={y} className="comparison-grid-line" />)}
+          {series.map((row) => <g key={row.metric.id} style={{ '--series-color': row.color } as CSSProperties} className="comparison-series">
+            {row.points.length > 1 && <polyline points={row.points.map((point) => `${point.x},${point.y}`).join(' ')} />}
+            {row.points.map((point) => <circle key={point.entry.id} cx={point.x} cy={point.y} r={selectedDay === localDateKey(point.entry.recordedAt) ? 7 : 4.5} className={selectedDay === localDateKey(point.entry.recordedAt) ? 'selected' : ''} onClick={() => setSelectedDay(localDateKey(point.entry.recordedAt))}><title>{`${row.metric.name}: ${formatMetricValue(row.metric, point.entry.value)} on ${formatShortDate(point.entry.recordedAt)}`}</title></circle>)}
+          </g>)}
+          <line x1="48" y1="276" x2="958" y2="276" className="comparison-baseline" />
+          <rect x="48" y="34" width="910" height="242" className="comparison-scan" />
+        </svg>
+        <div className="comparison-dates"><span>{formatShortDate(new Date(fromTime).toISOString())}</span><span>Each line uses its own low-to-high scale</span><span>Today</span></div>
+        {series.every((row) => row.points.length === 0) && !isLoading && <div className="comparison-empty"><strong>No points in this range</strong><span>Log one of the selected metrics to start the comparison.</span></div>}
+        {loadError && <div className="comparison-empty error"><strong>Could not load comparison</strong><span>{summarizeError(loadError)}</span></div>}
+      </div>
+      <aside className="comparison-inspector">
+        <div><span>Selected day</span><strong>{selectedDay ? new Date(`${selectedDay}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) : 'Choose a point'}</strong></div>
+        {series.map((row) => {
+          const dayEntries = row.values.filter((entry) => localDateKey(entry.recordedAt) === selectedDay);
+          const value = dayEntries.at(-1);
+          const previous = row.values.filter((entry) => new Date(entry.recordedAt) < new Date(`${selectedDay || '9999-12-31'}T00:00:00`)).at(-1);
+          const delta = value && previous ? value.value - previous.value : null;
+          return <article key={row.metric.id} style={{ '--series-color': row.color } as CSSProperties}><i /><span><strong>{row.metric.name}</strong><small>{value ? formatDateTime(value.recordedAt) : 'No log that day'}</small></span><div><b>{value ? formatMetricValue(row.metric, value.value) : '—'}</b><small>{delta == null ? 'No prior comparison' : formatMetricDelta(row.metric, delta)}</small></div></article>;
+        })}
+        <p>Use this view for direction and co-movement. Hover or click a point for the real value; line height is normalized because kg, steps, kcal and ml cannot share a raw axis.</p>
+      </aside>
+    </div>
+  </section>;
 }
 
 function CalendarPage(props: {
@@ -2975,6 +3124,8 @@ function MetricsPage(props: {
           </select>
         </div>
 
+        <MetricComparisonPanel metrics={props.metrics} />
+
         <div className="entity-grid metrics-grid">
           {pagedMetrics.items.map((metric) => (
             <article className="entity-card" key={metric.id}>
@@ -3131,6 +3282,7 @@ function MetricHistoryPanel(props: {
 function formatMetricValue(metric: Metric, value: number) {
   if (metric.valueType === 'Boolean') return value >= .5 ? 'Yes' : 'No';
   if (isSleepMetric(metric)) return formatSleepDuration(value);
+  if (['steps', 'ml', 'kcal'].includes(metric.unit.trim().toLowerCase())) return `${Math.round(value).toLocaleString()} ${metric.unit}`;
   return `${roundNumber(value)}${metric.unit ? ` ${metric.unit}` : ''}`;
 }
 
@@ -4328,7 +4480,7 @@ function parseWorkoutExercises(notes: string): WorkoutExercise[] {
 }
 
 function isDurationActivity(title: string) {
-  return !isBinaryCheckIn(title) && title !== 'Sleep log';
+  return !isBinaryCheckIn(title) && !['Sleep log', 'Daily nutrition', 'Steps', 'Water intake'].includes(title);
 }
 
 function isBinaryCheckIn(title: string) {
@@ -4336,11 +4488,17 @@ function isBinaryCheckIn(title: string) {
 }
 
 function activityDisplayMeasure(activity: Activity) {
+  if (activity.title === 'Daily nutrition') {
+    const calories = activity.notes.match(/Calories:\s*([0-9.]+)/i)?.[1];
+    return calories ? `${roundNumber(Number(calories))} kcal` : 'nutrition log';
+  }
   if (isDurationActivity(activity.title)) return `${activity.durationMinutes}m`;
   const quantityMatch = activity.notes.match(/Quantity:\s*([0-9.]+)/i);
   const quantity = Number(quantityMatch?.[1] ?? 0);
   if (activity.title === 'Creatine dose') return quantity ? `${quantity * 5} g logged` : 'dose check-in';
   if (activity.title === 'Sleep log') return quantityMatch ? `${formatSleepDuration(quantity)} sleep` : 'sleep check-in';
+  if (activity.title === 'Steps') return quantityMatch ? `${Math.round(quantity).toLocaleString()} steps` : 'step log';
+  if (activity.title === 'Water intake') return quantityMatch ? `${roundNumber(quantity / 1000)} L` : 'water log';
   return 'check-in';
 }
 
@@ -4359,7 +4517,9 @@ function getQuickTemplates(templates: ActivityTemplate[]) {
     'SPF 30+',
     'Night retinoid',
     'Floss teeth',
-    'Outdoor walk'
+    'Daily nutrition',
+    'Steps',
+    'Water intake'
   ].map((title) => templateByTitle.get(title)).filter(Boolean) as ActivityTemplate[];
 }
 
@@ -4643,7 +4803,7 @@ function readError(error: unknown, fallback: string) {
 }
 
 function calculateActivityPoints(template: ActivityTemplate, quantity: number) {
-  const multiplier = template.title === 'Sleep log' ? 1 : quantity;
+  const multiplier = ['Sleep log', 'Daily nutrition', 'Steps', 'Water intake'].includes(template.title) ? 1 : quantity;
   const calculated = template.defaultPoints * multiplier;
   if (!Number.isFinite(calculated)) return Math.max(0, Math.round(template.defaultPoints));
   return Math.max(0, Math.min(2147483647, Math.round(calculated)));

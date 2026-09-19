@@ -137,6 +137,10 @@ const sleepTemplate = {
   physicalLoad: 'Low'
 };
 
+const nutritionTemplate = { ...sleepTemplate, id: 'template-nutrition', title: 'Daily nutrition', description: 'Calories and macros' };
+const stepsTemplate = { ...sleepTemplate, id: 'template-steps', title: 'Steps', description: 'Daily steps' };
+const waterTemplate = { ...sleepTemplate, id: 'template-water', title: 'Water intake', description: 'Daily water' };
+
 const recurrenceRule = {
   id: 'rule-1',
   templateId: template.id,
@@ -161,6 +165,10 @@ const metric = {
   isActive: true,
   latestEntry: null
 };
+
+const stepsMetric = { ...metric, id: 'metric-steps', goalId: null, name: 'Steps', unit: 'steps', targetValue: 10000, latestEntry: null };
+const caloriesMetric = { ...metric, id: 'metric-calories', goalId: null, name: 'Calories', unit: 'kcal', targetValue: null, latestEntry: null };
+const waterMetric = { ...metric, id: 'metric-water', goalId: null, name: 'Water consumed', unit: 'ml', targetValue: 2600, latestEntry: null };
 
 const review = {
   id: 'review-1',
@@ -210,13 +218,19 @@ function installFetchMock() {
       case '/api/activities':
         return jsonResponse([activity]);
       case '/api/activity-templates':
-        return jsonResponse([template, workoutTemplate, sleepTemplate]);
+        return jsonResponse([template, workoutTemplate, sleepTemplate, nutritionTemplate, stepsTemplate, waterTemplate]);
       case '/api/recurrence-rules':
         return jsonResponse([recurrenceRule]);
       case '/api/metrics':
-        return jsonResponse([metric]);
+        return jsonResponse([metric, stepsMetric, caloriesMetric, waterMetric]);
       case '/api/metrics/metric-1/entries':
-        return jsonResponse([]);
+        return jsonResponse([{ id: 'weight-entry', metricId: 'metric-1', value: 74, recordedAt: '2026-09-18T08:00:00.000Z', notes: '' }]);
+      case '/api/metrics/metric-steps/entries':
+        return jsonResponse([{ id: 'steps-entry', metricId: 'metric-steps', value: 9000, recordedAt: '2026-09-18T20:00:00.000Z', notes: '' }]);
+      case '/api/metrics/metric-calories/entries':
+        return jsonResponse([{ id: 'calories-entry', metricId: 'metric-calories', value: 2200, recordedAt: '2026-09-18T21:00:00.000Z', notes: '' }]);
+      case '/api/metrics/metric-water/entries':
+        return jsonResponse([{ id: 'water-entry', metricId: 'metric-water', value: 2600, recordedAt: '2026-09-18T21:00:00.000Z', notes: '' }]);
       case '/api/reviews':
         return jsonResponse([review]);
       case '/api/mood':
@@ -301,18 +315,18 @@ describe('Axis app integration workflows', () => {
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/recurrence-rules/rule-1/generate')).toBe(true));
 
     await openPage(/metrics/i);
-    expect(screen.getByText('No target comparison yet.')).toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText('Value'), { target: { value: '71.9' } });
-    fireEvent.change(screen.getByPlaceholderText('Note'), { target: { value: 'logged from integration test' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Log' }));
+    expect(screen.getAllByText('No target comparison yet.').length).toBeGreaterThan(0);
+    fireEvent.change(screen.getAllByPlaceholderText('Value')[0], { target: { value: '71.9' } });
+    fireEvent.change(screen.getAllByPlaceholderText('Note')[0], { target: { value: 'logged from integration test' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Log' })[0]);
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/metrics/metric-1/entries' && call.body?.includes('71.9'))).toBe(true));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[0]);
     fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'score' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'PUT' && call.path === '/api/metrics/metric-1')).toBe(true));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
     await waitFor(() => expect(calls.some((call) => call.method === 'DELETE' && call.path === '/api/metrics/metric-1')).toBe(true));
 
     await openPage(/reviews/i);
@@ -437,6 +451,49 @@ describe('Axis app integration workflows', () => {
       expect(Number.isInteger(JSON.parse(sleepCall!.body!).points)).toBe(true);
       expect(JSON.parse(sleepCall!.body!).points).toBe(sleepTemplate.defaultPoints);
     });
+  });
+
+  it('logs nutrition, integer steps, and liter-based water inside the three-day window', async () => {
+    render(<App />);
+    await screen.findByText('Start with the focus block.');
+
+    const when = screen.getByLabelText('When');
+    expect(when).toHaveAttribute('min');
+    expect(when).toHaveAttribute('max');
+
+    fireEvent.click(screen.getByRole('button', { name: /daily nutrition/i }));
+    fireEvent.change(screen.getByLabelText('Calories (kcal)'), { target: { value: '2350' } });
+    fireEvent.change(screen.getByLabelText('Protein (g)'), { target: { value: '145.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log completed work' }));
+    await waitFor(() => {
+      const call = calls.find((item) => item.method === 'POST' && item.path === '/api/activities' && item.body?.includes('Daily nutrition'));
+      expect(call?.body).toContain('Calories: 2350');
+      expect(call?.body).toContain('Protein: 145.5');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Steps/i }));
+    fireEvent.change(screen.getByLabelText('Steps'), { target: { value: '10432.7' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log completed work' }));
+    await waitFor(() => expect(calls.some((item) => item.body?.includes('Steps') && item.body.includes('Quantity: 10433'))).toBe(true));
+
+    fireEvent.click(screen.getByRole('button', { name: /water intake/i }));
+    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'l' } });
+    fireEvent.change(screen.getByLabelText('Water (l)'), { target: { value: '2.7' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log completed work' }));
+    await waitFor(() => expect(calls.some((item) => item.body?.includes('Water intake') && item.body.includes('Quantity: 2700'))).toBe(true));
+  });
+
+  it('loads a selectable normalized metric comparison with exact daily values', async () => {
+    render(<App />);
+    await screen.findByText('Start with the focus block.');
+    await openPage(/metrics/i);
+
+    expect(await screen.findByText('Metric comparison')).toBeInTheDocument();
+    await waitFor(() => expect(calls.some((item) => item.path.startsWith('/api/metrics/metric-steps/entries?from='))).toBe(true));
+    expect(screen.getByRole('img', { name: 'Normalized comparison of selected metrics over time' })).toBeInTheDocument();
+    expect(screen.getByText('Each line uses its own low-to-high scale')).toBeInTheDocument();
+    expect((await screen.findAllByText(/9[,. ]?000 steps/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/2[,. ]?600 ml/)).length).toBeGreaterThan(0);
   });
 
   it('shows concise error toasts and reveals technical details on demand', async () => {

@@ -139,6 +139,34 @@ public sealed class ActivityApiIntegrationTests
     }
 
     [Fact]
+    public async Task Daily_measurement_logs_create_all_linked_metrics_and_reject_dates_outside_the_three_day_window()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+        var areaId = await GetFirstIdAsync(client, "/api/life-areas");
+        var yesterday = DateTimeOffset.Now.AddDays(-1);
+
+        var nutritionId = await CreateCompletedMeasurementAsync(client, areaId, "Daily nutrition", yesterday,
+            "Calories: 2310 · Protein: 142.5 · Carbohydrates: 260 · Fat: 71 · Fiber: 31");
+        var stepsId = await CreateCompletedMeasurementAsync(client, areaId, "Steps", yesterday, "Quantity: 11234");
+        var waterId = await CreateCompletedMeasurementAsync(client, areaId, "Water intake", yesterday, "Quantity: 2750");
+
+        await AssertLinkedMetricAsync(client, "Calories", nutritionId, 2310m);
+        await AssertLinkedMetricAsync(client, "Protein intake", nutritionId, 142.5m);
+        await AssertLinkedMetricAsync(client, "Carbohydrates", nutritionId, 260m);
+        await AssertLinkedMetricAsync(client, "Fat intake", nutritionId, 71m);
+        await AssertLinkedMetricAsync(client, "Fiber intake", nutritionId, 31m);
+        await AssertLinkedMetricAsync(client, "Steps", stepsId, 11234m);
+        await AssertLinkedMetricAsync(client, "Water consumed", waterId, 2750m);
+
+        var tooOld = await PostCompletedMeasurementAsync(client, areaId, "Steps", DateTimeOffset.Now.AddDays(-3), "Quantity: 8000");
+        await AssertStatusAsync(tooOld, HttpStatusCode.BadRequest);
+        var future = await PostCompletedMeasurementAsync(client, areaId, "Water intake", DateTimeOffset.Now.AddDays(1), "Quantity: 2500");
+        await AssertStatusAsync(future, HttpStatusCode.BadRequest);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
     public async Task Mood_create_update_and_delete_stay_synchronized_with_mood_metric()
     {
         await using var factory = new AxisApiFactory();
@@ -208,6 +236,46 @@ public sealed class ActivityApiIntegrationTests
     {
         using var document = JsonDocument.Parse(await client.GetStringAsync($"/api/metrics/{metricId}/entries"));
         return document.RootElement.EnumerateArray().Select(item => item.Clone()).ToList();
+    }
+
+    private static async Task AssertLinkedMetricAsync(HttpClient client, string metricName, Guid activityId, decimal expectedValue)
+    {
+        var metricId = await GetMetricIdAsync(client, metricName);
+        var linked = (await GetMetricEntriesAsync(client, metricId))
+            .Single(entry => entry.GetProperty("notes").GetString()!.Contains($"[activity:{activityId}]"));
+        Assert.Equal(expectedValue, linked.GetProperty("value").GetDecimal());
+    }
+
+    private static async Task<Guid> CreateCompletedMeasurementAsync(HttpClient client, Guid lifeAreaId, string title, DateTimeOffset recordedAt, string notes)
+    {
+        var response = await PostCompletedMeasurementAsync(client, lifeAreaId, title, recordedAt, notes);
+        await AssertStatusAsync(response, HttpStatusCode.Created);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.GetProperty("id").GetGuid();
+    }
+
+    private static Task<HttpResponseMessage> PostCompletedMeasurementAsync(HttpClient client, Guid lifeAreaId, string title, DateTimeOffset recordedAt, string notes)
+    {
+        return client.PostAsJsonAsync("/api/activities", new
+        {
+            lifeAreaId,
+            goalId = (Guid?)null,
+            milestoneId = (Guid?)null,
+            templateId = (Guid?)null,
+            title,
+            description = "Measurement integration test",
+            plannedStartAt = recordedAt.AddMinutes(-1),
+            plannedEndAt = recordedAt,
+            actualStartAt = recordedAt.AddMinutes(-1),
+            actualEndAt = recordedAt,
+            durationMinutes = 1,
+            status = "Completed",
+            energyCost = "Low",
+            mentalLoad = "Low",
+            physicalLoad = "Low",
+            points = 3,
+            notes
+        });
     }
 
     private static async Task<Guid> CreateCountGoalAsync(HttpClient client, Guid lifeAreaId)

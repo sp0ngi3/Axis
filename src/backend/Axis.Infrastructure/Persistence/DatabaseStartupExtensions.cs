@@ -18,6 +18,7 @@ public static class DatabaseStartupExtensions
         await EnsureAxisSchemaAsync(dbContext, cancellationToken);
         await SeedDefaultsAsync(dbContext, cancellationToken);
         await SeedStarterPackAsync(dbContext, cancellationToken);
+        await ReplaceOutdoorWalkWithStepsAsync(dbContext, cancellationToken);
         await RemoveFlexibleStudyRecurrencesAsync(dbContext, cancellationToken);
         await NormalizeDailyDecayRatesAsync(dbContext, cancellationToken);
         await NormalizeCheckInDurationsAsync(dbContext, cancellationToken);
@@ -65,50 +66,41 @@ public static class DatabaseStartupExtensions
                 continue;
             }
 
-            var completed = activity.Status == ActivityStatus.Completed;
-            var quantity = ParseBackfillQuantity(activity.Notes);
-            (string Name, decimal Value)? mapped = activity.Title switch
-            {
-                "Creatine dose" => ("Creatine dose", completed ? 5m * quantity : 0m),
-                "Desk mobility reset" => ("Mobility session", completed ? 1m : 0m),
-                "Hypertrophy workout" => ("Strength training session", completed ? 1m : 0m),
-                "No alcohol check-in" => ("Alcohol-free day", completed ? 1m : 0m),
-                "No vape check-in" => ("Vape-free day", completed ? 1m : 0m),
-                "Diet check-in" => ("Diet adherence", completed ? 1m : 0m),
-                "SPF 30+" => ("SPF 30+", completed ? 1m : 0m),
-                "Night retinoid" => ("Night retinoid", completed ? 1m : 0m),
-                "Floss teeth" => ("Flossing", completed ? 1m : 0m),
-                "Outdoor walk" => ("Outdoor walk", completed ? activity.DurationMinutes : 0m),
-                "Sleep log" when completed && activity.Notes.Contains("Quantity:", StringComparison.OrdinalIgnoreCase) => ("Sleep duration", quantity),
-                _ => null
-            };
-
-            if (mapped is null || !metrics.TryGetValue(mapped.Value.Name, out var metric))
+            var mapped = MapBackfillActivityMetrics(activity);
+            if (mapped.Count == 0)
             {
                 continue;
             }
 
             var recordedAt = activity.ActualEndAt ?? activity.PlannedStartAt ?? activity.CreatedAt;
-            var legacy = entries.FirstOrDefault(entry => entry.MetricId == metric.Id
-                && entry.Notes.StartsWith("Quick logged", StringComparison.OrdinalIgnoreCase)
-                && Math.Abs((entry.RecordedAt - recordedAt).TotalMinutes) <= 10);
-            if (legacy is not null)
+            foreach (var item in mapped)
             {
-                legacy.Value = mapped.Value.Value;
-                legacy.RecordedAt = recordedAt;
-                legacy.Notes = $"{marker} Synced from {activity.Title}.";
-                continue;
-            }
+                if (!metrics.TryGetValue(item.Name, out var metric))
+                {
+                    continue;
+                }
 
-            var linked = new MetricEntry
-            {
-                MetricId = metric.Id,
-                Value = mapped.Value.Value,
-                RecordedAt = recordedAt,
-                Notes = $"{marker} Synced from {activity.Title}."
-            };
-            dbContext.MetricEntries.Add(linked);
-            entries.Add(linked);
+                var legacy = entries.FirstOrDefault(entry => entry.MetricId == metric.Id
+                    && entry.Notes.StartsWith("Quick logged", StringComparison.OrdinalIgnoreCase)
+                    && Math.Abs((entry.RecordedAt - recordedAt).TotalMinutes) <= 10);
+                if (legacy is not null)
+                {
+                    legacy.Value = item.Value;
+                    legacy.RecordedAt = recordedAt;
+                    legacy.Notes = $"{marker} Synced from {activity.Title}.";
+                    continue;
+                }
+
+                var linked = new MetricEntry
+                {
+                    MetricId = metric.Id,
+                    Value = item.Value,
+                    RecordedAt = recordedAt,
+                    Notes = $"{marker} Synced from {activity.Title}."
+                };
+                dbContext.MetricEntries.Add(linked);
+                entries.Add(linked);
+            }
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -126,6 +118,51 @@ public static class DatabaseStartupExtensions
         return decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
             ? Math.Max(0, parsed)
             : 1m;
+    }
+
+    private static List<(string Name, decimal Value)> MapBackfillActivityMetrics(Activity activity)
+    {
+        var completed = activity.Status == ActivityStatus.Completed;
+        var quantity = ParseBackfillQuantity(activity.Notes);
+        return activity.Title switch
+        {
+            "Creatine dose" => [("Creatine dose", completed ? 5m * quantity : 0m)],
+            "Desk mobility reset" => [("Mobility session", completed ? 1m : 0m)],
+            "Hypertrophy workout" => [("Strength training session", completed ? 1m : 0m)],
+            "No alcohol check-in" => [("Alcohol-free day", completed ? 1m : 0m)],
+            "No vape check-in" => [("Vape-free day", completed ? 1m : 0m)],
+            "Diet check-in" => [("Diet adherence", completed ? 1m : 0m)],
+            "SPF 30+" => [("SPF 30+", completed ? 1m : 0m)],
+            "Night retinoid" => [("Night retinoid", completed ? 1m : 0m)],
+            "Floss teeth" => [("Flossing", completed ? 1m : 0m)],
+            "Outdoor walk" => [("Outdoor walk", completed ? activity.DurationMinutes : 0m)],
+            "Sleep log" when completed && activity.Notes.Contains("Quantity:", StringComparison.OrdinalIgnoreCase) => [("Sleep duration", quantity)],
+            "Steps" when completed && activity.Notes.Contains("Quantity:", StringComparison.OrdinalIgnoreCase) => [("Steps", quantity)],
+            "Water intake" when completed && activity.Notes.Contains("Quantity:", StringComparison.OrdinalIgnoreCase) => [("Water consumed", quantity)],
+            "Daily nutrition" when completed => MapBackfillNutritionMetrics(activity.Notes),
+            _ => []
+        };
+    }
+
+    private static List<(string Name, decimal Value)> MapBackfillNutritionMetrics(string notes)
+    {
+        var mappings = new (string Marker, string Metric)[]
+        {
+            ("Calories", "Calories"), ("Protein", "Protein intake"), ("Carbohydrates", "Carbohydrates"),
+            ("Fat", "Fat intake"), ("Fiber", "Fiber intake")
+        };
+        return mappings.Select(item => (item.Metric, Value: ParseBackfillNamedValue(notes, item.Marker)))
+            .Where(item => item.Value is not null)
+            .Select(item => (item.Metric, item.Value!.Value))
+            .ToList();
+    }
+
+    private static decimal? ParseBackfillNamedValue(string notes, string marker)
+    {
+        var markerIndex = notes.IndexOf($"{marker}:", StringComparison.OrdinalIgnoreCase);
+        if (markerIndex < 0) return null;
+        var value = notes[(markerIndex + marker.Length + 1)..].TrimStart().Split([' ', '·', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        return decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? Math.Max(0, parsed) : null;
     }
 
     private static async Task VerifyDatabaseIntegrityAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
@@ -489,6 +526,12 @@ public static class DatabaseStartupExtensions
         await EnsureMetricAsync(dbContext, health, null, "Night retinoid", "0/1", MetricValueType.Boolean, 1, 16, null, null, cancellationToken);
         await EnsureMetricAsync(dbContext, health, null, "Flossing", "0/1", MetricValueType.Boolean, 1, 17, null, null, cancellationToken);
         await EnsureMetricAsync(dbContext, health, null, "Outdoor walk", "min", MetricValueType.Duration, 30, 18, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, fitness, null, "Calories", "kcal", MetricValueType.Number, null, 19, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, fitness, null, "Carbohydrates", "g", MetricValueType.Number, null, 20, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, fitness, null, "Fat intake", "g", MetricValueType.Number, null, 21, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, fitness, null, "Fiber intake", "g", MetricValueType.Number, null, 22, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, health, null, "Steps", "steps", MetricValueType.Number, 10000, 23, null, null, cancellationToken);
+        await EnsureMetricAsync(dbContext, health, null, "Water consumed", "ml", MetricValueType.Number, 2600, 24, null, null, cancellationToken);
 
         if (!await dbContext.PhysiqueEntries.AnyAsync(cancellationToken))
         {
@@ -526,7 +569,10 @@ public static class DatabaseStartupExtensions
         var spfTemplate = await EnsureTemplateAsync(dbContext, health, "SPF 30+", "Confirm broad-spectrum SPF 30+ use for exposed skin during daylight.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 3, cancellationToken);
         var retinoidTemplate = await EnsureTemplateAsync(dbContext, health, "Night retinoid", "Use a pea-sized amount at night on dry skin. Start 2-3 nights/week, moisturize, and reduce frequency if irritated.", 2, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 4, cancellationToken);
         var flossTemplate = await EnsureTemplateAsync(dbContext, health, "Floss teeth", "Clean between teeth once today; consistency matters more than perfect technique.", 3, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 3, cancellationToken);
-        var walkTemplate = await EnsureTemplateAsync(dbContext, health, "Outdoor walk", "Low-intensity outdoor walk for movement, daylight, and recovery.", 30, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 5, cancellationToken);
+        _ = await EnsureTemplateAsync(dbContext, health, "Outdoor walk", "Low-intensity outdoor walk for movement, daylight, and recovery.", 30, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 5, cancellationToken);
+        var nutritionTemplate = await EnsureTemplateAsync(dbContext, fitness, "Daily nutrition", "Record estimated calories and macros for today or either of the previous two days. This is observation, not a pass/fail target.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 3, cancellationToken);
+        var stepsTemplate = await EnsureTemplateAsync(dbContext, health, "Steps", "Record a daily step total. The starter target is 10,000 and can be changed in Metrics.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 4, cancellationToken);
+        var waterTemplate = await EnsureTemplateAsync(dbContext, health, "Water intake", "Record fluids in milliliters or liters. The 2.6 L starter target is a practical 35 ml/kg estimate for 74 kg and can be changed in Metrics.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 3, cancellationToken);
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -542,9 +588,35 @@ public static class DatabaseStartupExtensions
         await EnsureRecurrenceAsync(dbContext, spfTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, retinoidTemplate, RecurrenceFrequency.Weekly, 1, "Monday,Wednesday,Friday", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, flossTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
-        await EnsureRecurrenceAsync(dbContext, walkTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
+        await EnsureRecurrenceAsync(dbContext, nutritionTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
+        await EnsureRecurrenceAsync(dbContext, stepsTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
+        await EnsureRecurrenceAsync(dbContext, waterTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
 
         await SeedWikiPagesAsync(dbContext, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static async Task ReplaceOutdoorWalkWithStepsAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var walkTemplate = await dbContext.ActivityTemplates.FirstOrDefaultAsync(item => item.Title == "Outdoor walk", cancellationToken);
+        if (walkTemplate is not null)
+        {
+            walkTemplate.IsActive = false;
+            var rules = await dbContext.RecurrenceRules.Where(rule => rule.TemplateId == walkTemplate.Id).ToListAsync(cancellationToken);
+            dbContext.RecurrenceRules.RemoveRange(rules);
+            var today = DateTime.Now.Date;
+            var unresolvedCandidates = await dbContext.Activities
+                .Where(activity => activity.TemplateId == walkTemplate.Id
+                    && (activity.Status == ActivityStatus.Planned || activity.Status == ActivityStatus.Moved))
+                .ToListAsync(cancellationToken);
+            var unresolved = unresolvedCandidates
+                .Where(activity => activity.PlannedStartAt is null || activity.PlannedStartAt.Value.LocalDateTime.Date >= today)
+                .ToList();
+            dbContext.Activities.RemoveRange(unresolved);
+        }
+
+        var walkMetric = await dbContext.Metrics.FirstOrDefaultAsync(item => item.Name == "Outdoor walk", cancellationToken);
+        if (walkMetric is not null) walkMetric.IsActive = false;
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -862,6 +934,9 @@ public static class DatabaseStartupExtensions
             "No alcohol check-in",
             "No vape check-in",
             "Diet check-in",
+            "Daily nutrition",
+            "Steps",
+            "Water intake",
             "Sleep log",
             "SPF 30+"
         };
@@ -897,6 +972,9 @@ public static class DatabaseStartupExtensions
             "No alcohol check-in",
             "No vape check-in",
             "Diet check-in",
+            "Daily nutrition",
+            "Steps",
+            "Water intake",
             "Sleep log",
             "SPF 30+"
         };
@@ -1021,6 +1099,9 @@ public static class DatabaseStartupExtensions
             "Night retinoid" => 22,
             "Floss teeth" => 22,
             "Outdoor walk" => 13,
+            "Daily nutrition" => 21,
+            "Steps" => 20,
+            "Water intake" => 21,
             "Sleep log" => 22,
             "SPF 30+" => 8,
             _ => 9

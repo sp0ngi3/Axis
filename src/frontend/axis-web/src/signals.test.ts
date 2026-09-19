@@ -73,6 +73,26 @@ describe('Signals dashboard aggregation', () => {
     vi.useRealTimers();
   });
 
+  it('labels steps, water, and nutrition without treating them as focused minutes', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-16T12:00:00+02:00'));
+    const stepsTemplate = { ...template, id: 'steps-template', title: 'Steps', defaultDurationMinutes: 1 };
+    const waterTemplate = { ...template, id: 'water-template', title: 'Water intake', defaultDurationMinutes: 1 };
+    const nutritionTemplate = { ...template, id: 'nutrition-template', title: 'Daily nutrition', defaultDurationMinutes: 1 };
+    const rows = [
+      completedActivity({ id: 'steps', templateId: stepsTemplate.id, title: stepsTemplate.title, notes: 'Quantity: 10432' }),
+      completedActivity({ id: 'water', templateId: waterTemplate.id, title: waterTemplate.title, notes: 'Quantity: 2700' }),
+      completedActivity({ id: 'nutrition', templateId: nutritionTemplate.id, title: nutritionTemplate.title, notes: 'Calories: 2200' })
+    ];
+
+    const tracks = buildDashboardTracks([new Date('2026-09-16T12:00:00+02:00')], rows, [stepsTemplate, waterTemplate, nutritionTemplate]);
+
+    expect(tracks[0]).toMatchObject({ kind: 'quantity', quantityTotal: 10432, quantityUnit: 'steps', minutes: 0 });
+    expect(tracks[1]).toMatchObject({ kind: 'quantity', quantityTotal: 2700, quantityUnit: 'ml', minutes: 0 });
+    expect(tracks[2]).toMatchObject({ kind: 'checkin', quantityTotal: 0, minutes: 0 });
+    vi.useRealTimers();
+  });
+
   it('only marks missed days after tracking was activated', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-16T12:00:00+02:00'));

@@ -24,12 +24,19 @@ const checkInTitles = new Set([
   'Diet check-in',
   'SPF 30+',
   'Night retinoid',
-  'Floss teeth'
+  'Floss teeth',
+  'Daily nutrition'
 ]);
 
 function trackKind(title: string): DashboardTrack['kind'] {
-  if (title === 'Sleep log') return 'quantity';
+  if (['Sleep log', 'Steps', 'Water intake'].includes(title)) return 'quantity';
   return checkInTitles.has(title) ? 'checkin' : 'duration';
+}
+
+function quantityUnit(title: string) {
+  if (title === 'Steps') return 'steps';
+  if (title === 'Water intake') return 'ml';
+  return 'h';
 }
 
 function loggedQuantity(activity: Activity) {
@@ -96,7 +103,7 @@ export function buildDashboardTracks(days: Date[], activities: Activity[], templ
       minutes: kind === 'duration' ? related.filter((activity) => activity.status === 'Completed').reduce((sum, activity) => sum + activity.durationMinutes, 0) : 0,
       kind,
       quantityTotal: kind === 'quantity' ? related.filter((activity) => activity.status === 'Completed').reduce((sum, activity) => sum + loggedQuantity(activity), 0) : 0,
-      quantityUnit: kind === 'quantity' ? 'h' : ''
+      quantityUnit: kind === 'quantity' ? quantityUnit(template.title) : ''
     };
   });
 }

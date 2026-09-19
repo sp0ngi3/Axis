@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, Fragment, type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, Fragment, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import { buildDashboardTracks, getDayStatus } from './signals';
 import type { DashboardTrack } from './signals';
@@ -127,6 +127,8 @@ export default function App() {
   const [balance, setBalance] = useState<BalanceRow[]>([]);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [feedbackId, setFeedbackId] = useState(0);
+  const [actionPulse, setActionPulse] = useState<{ id: number; x: number; y: number; tone: 'confirm' | 'utility' | 'danger' | 'navigate' } | null>(null);
 
   useEffect(() => {
     document.documentElement.scrollTop = 0;
@@ -203,14 +205,30 @@ export default function App() {
     setIsBusy(true);
     try {
       setError('');
+      setNotice('');
       await action();
       setNotice(message);
+      setFeedbackId((current) => current + 1);
       await load();
     } catch (requestError) {
       setError(readError(requestError, 'Action failed.'));
+      setFeedbackId((current) => current + 1);
     } finally {
       setIsBusy(false);
     }
+  }
+
+  function captureActionPulse(event: ReactMouseEvent<HTMLDivElement>) {
+    const button = (event.target as HTMLElement).closest('button');
+    if (!button || button.disabled) return;
+    const tone = button.classList.contains('danger-button')
+      ? 'danger'
+      : button.closest('.main-nav, .tool-nav')
+        ? 'navigate'
+        : button.classList.contains('secondary-button') || button.classList.contains('ghost-button')
+          ? 'utility'
+          : 'confirm';
+    setActionPulse({ id: Date.now(), x: event.clientX, y: event.clientY, tone });
   }
 
   async function quickLogTemplate(template: ActivityTemplate, draft?: QuickLogDraft) {
@@ -266,7 +284,8 @@ export default function App() {
   const activePage = pages.find((item) => item.id === page) ?? pages[0];
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell page-${page} ${isBusy ? 'is-busy' : ''}`} onClickCapture={captureActionPulse}>
+      {actionPulse && <div key={actionPulse.id} className={`action-burst ${actionPulse.tone}`} style={{ '--burst-x': `${actionPulse.x}px`, '--burst-y': `${actionPulse.y}px` } as CSSProperties} onAnimationEnd={(event) => event.currentTarget === event.target && setActionPulse((current) => current?.id === actionPulse.id ? null : current)} aria-hidden="true"><i /><i /><i /><b /></div>}
       <aside className="app-sidebar">
         <div className="brand-block">
           <span className="brand-mark">AX</span>
@@ -297,6 +316,7 @@ export default function App() {
       </aside>
 
       <main className="app-main">
+        <div className="page-ambient" aria-hidden="true"><span>{activePage.icon}</span><i /><b /></div>
         <header className="topbar">
           <div>
             <p className="eyebrow">{activePage.kicker}</p>
@@ -309,7 +329,7 @@ export default function App() {
           </div>
         </header>
 
-        {(notice || error) && <div className={error ? 'notice error' : 'notice'}>{error || notice}</div>}
+        {(notice || error) && <div key={`${feedbackId}-${error || notice}`} className={error ? 'notice error feedback-failure' : `notice ${feedbackTone(notice)}`}><span className="feedback-glyph" aria-hidden="true" />{error || notice}</div>}
         {isLoading && <div className="loading-strip"><span /> Syncing local data</div>}
 
         {page === 'today' && (
@@ -4426,6 +4446,16 @@ function isHexColor(value: string) {
 
 function confirmDelete(message: string) {
   return window.confirm(message);
+}
+
+function feedbackTone(message: string) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('deleted') || normalized.includes('removed')) return 'feedback-delete';
+  if (normalized.includes('skipped')) return 'feedback-skip';
+  if (normalized.includes('logged') || normalized.includes('recorded') || normalized.includes('check-in')) return 'feedback-log';
+  if (normalized.includes('completed') || normalized.includes('purchased')) return 'feedback-complete';
+  if (normalized.includes('saved') || normalized.includes('created') || normalized.includes('updated') || normalized.includes('planned') || normalized.includes('generated')) return 'feedback-save';
+  return 'feedback-neutral';
 }
 
 function readError(error: unknown, fallback: string) {

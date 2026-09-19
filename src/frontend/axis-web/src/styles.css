@@ -5513,3 +5513,446 @@ button,
   .metric-chart-stats { gap: 5px; }
   .signal-action-list article { grid-template-columns: 24px minmax(0, 1fr) 42px; padding: 8px 6px; }
 }
+
+/* Interaction choreography */
+.app-main button::after {
+  transform-origin: center;
+}
+
+.app-main button:hover:not(:disabled)::after {
+  animation: action-rail 720ms ease both;
+}
+
+.app-main button:not(.secondary-button):not(.ghost-button):not(.danger-button):active:not(:disabled) {
+  animation: command-confirm 280ms ease both;
+}
+
+.app-main .secondary-button:active:not(:disabled),
+.app-main .ghost-button:active:not(:disabled),
+.app-main .segmented-control button:active:not(:disabled) {
+  animation: command-utility 260ms ease both;
+}
+
+.app-main .danger-button:active:not(:disabled) {
+  animation: command-danger 300ms steps(3, end) both;
+}
+
+.is-busy .app-main button:disabled::after {
+  opacity: .82;
+  animation: busy-command 820ms linear infinite;
+}
+
+.action-burst {
+  --burst-color: var(--cyan);
+  position: fixed;
+  z-index: 250;
+  top: var(--burst-y);
+  left: var(--burst-x);
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: burst-life 720ms ease-out both;
+}
+
+.action-burst.utility { --burst-color: var(--sun); }
+.action-burst.danger { --burst-color: var(--danger); }
+.action-burst.navigate { --burst-color: var(--accent); }
+
+.action-burst::before,
+.action-burst::after {
+  position: absolute;
+  inset: 50%;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--burst-color);
+  border-radius: 50%;
+  content: '';
+  transform: translate(-50%, -50%);
+  animation: burst-ring 650ms cubic-bezier(.15, .72, .2, 1) both;
+}
+
+.action-burst::after {
+  border-style: dashed;
+  animation-delay: 80ms;
+}
+
+.action-burst i {
+  position: absolute;
+  top: 3px;
+  left: -24px;
+  width: 56px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--burst-color), transparent);
+  transform: rotate(0deg) scaleX(.1);
+  animation: burst-ray 520ms ease-out both;
+}
+
+.action-burst i:nth-child(2) { transform: rotate(60deg) scaleX(.1); animation-delay: 35ms; }
+.action-burst i:nth-child(3) { transform: rotate(120deg) scaleX(.1); animation-delay: 70ms; }
+
+.action-burst b {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--burst-color);
+  background: color-mix(in srgb, var(--burst-color) 28%, transparent);
+  transform: rotate(45deg);
+  animation: burst-core 520ms ease-out both;
+}
+
+/* Action-result signals */
+.notice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.notice::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  content: '';
+  background: linear-gradient(105deg, transparent 8%, color-mix(in srgb, currentColor 12%, transparent) 48%, transparent 78%);
+  transform: translateX(-110%);
+  animation: feedback-sweep 940ms ease-out both;
+}
+
+.feedback-glyph {
+  position: relative;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  opacity: .86;
+}
+
+.feedback-glyph::before,
+.feedback-glyph::after {
+  position: absolute;
+  content: '';
+  background: currentColor;
+}
+
+.feedback-complete { animation: feedback-complete 520ms cubic-bezier(.17, .82, .28, 1) both; }
+.feedback-complete .feedback-glyph { border-radius: 50%; animation: feedback-orbit 680ms ease-out both; }
+.feedback-complete .feedback-glyph::before { width: 9px; height: 2px; top: 11px; left: 4px; transform: rotate(42deg); }
+.feedback-complete .feedback-glyph::after { width: 12px; height: 2px; top: 9px; left: 7px; transform: rotate(-48deg); }
+
+.feedback-log { animation: feedback-log 560ms cubic-bezier(.17, .75, .25, 1) both; }
+.feedback-log .feedback-glyph::before { inset: 5px 4px auto; height: 1px; box-shadow: 0 4px 0 currentColor, 0 8px 0 currentColor; }
+.feedback-log .feedback-glyph::after { width: 4px; height: 4px; right: -2px; bottom: -2px; transform: rotate(45deg); }
+
+.feedback-save { animation: feedback-save 620ms steps(8, end) both; }
+.feedback-save .feedback-glyph::before { inset: 4px 4px 10px; border: 1px solid currentColor; background: transparent; }
+.feedback-save .feedback-glyph::after { right: 4px; bottom: 4px; left: 4px; height: 5px; }
+
+.feedback-skip { color: var(--sun); animation: feedback-skip 480ms ease both; }
+.feedback-skip .feedback-glyph::before { width: 13px; height: 1px; top: 10px; left: 4px; transform: rotate(-28deg); }
+.feedback-skip .feedback-glyph::after { width: 5px; height: 5px; top: 6px; right: 3px; border-top: 1px solid currentColor; border-right: 1px solid currentColor; background: transparent; transform: rotate(16deg); }
+
+.feedback-delete { color: var(--danger); animation: feedback-delete 460ms steps(4, end) both; }
+.feedback-delete .feedback-glyph::before { width: 12px; height: 1px; top: 10px; left: 4px; transform: rotate(45deg); }
+.feedback-delete .feedback-glyph::after { width: 12px; height: 1px; top: 10px; left: 4px; transform: rotate(-45deg); }
+
+.feedback-failure { animation: feedback-failure 420ms ease both; }
+.feedback-failure .feedback-glyph::before { width: 2px; height: 9px; top: 4px; left: 9px; }
+.feedback-failure .feedback-glyph::after { width: 2px; height: 2px; bottom: 3px; left: 9px; }
+
+/* A unique ambient instrument follows every module. */
+.app-main {
+  position: relative;
+  isolation: isolate;
+}
+
+.app-main > :not(.page-ambient) {
+  position: relative;
+  z-index: 1;
+}
+
+.page-ambient {
+  position: fixed;
+  z-index: 0;
+  top: 118px;
+  right: 34px;
+  width: 132px;
+  height: 132px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--cyan) 34%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 58%, transparent);
+  box-shadow: inset 0 0 28px color-mix(in srgb, var(--accent) 8%, transparent), 0 0 20px color-mix(in srgb, var(--cyan) 6%, transparent);
+  opacity: .34;
+  pointer-events: none;
+}
+
+.page-ambient span {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 50%;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 950;
+  transform: translate(-50%, -50%);
+}
+
+.page-ambient i,
+.page-ambient b {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+}
+
+.page-today .page-ambient {
+  border-radius: 50% 50% 7px 7px;
+  background: repeating-linear-gradient(0deg, transparent 0 11px, color-mix(in srgb, var(--accent) 18%, transparent) 11px 12px), color-mix(in srgb, var(--surface) 62%, transparent);
+}
+
+.page-today .page-ambient::before {
+  position: absolute;
+  top: 24px;
+  left: 37px;
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--sun);
+  border-radius: 50%;
+  background: repeating-linear-gradient(0deg, color-mix(in srgb, var(--sun) 18%, transparent) 0 4px, transparent 4px 8px);
+  content: '';
+  animation: ambient-sun 5.4s ease-in-out infinite;
+}
+
+.page-today .page-ambient i { right: 10px; bottom: 28px; left: 10px; height: 1px; background: var(--cyan); animation: horizon-scan 3.6s ease-in-out infinite; }
+
+.page-dashboard .page-ambient,
+.page-metrics .page-ambient {
+  border-radius: 50%;
+  background: repeating-radial-gradient(circle, transparent 0 17px, color-mix(in srgb, var(--cyan) 20%, transparent) 18px 19px), color-mix(in srgb, var(--surface) 60%, transparent);
+}
+
+.page-dashboard .page-ambient::after,
+.page-metrics .page-ambient::after {
+  position: absolute;
+  inset: 50% 50% 50% 0;
+  border-top: 1px solid var(--cyan);
+  background: linear-gradient(12deg, color-mix(in srgb, var(--cyan) 12%, transparent), transparent);
+  content: '';
+  transform-origin: right;
+  animation: radar-sweep 5.8s linear infinite;
+}
+
+.page-metrics .page-ambient i { right: 12px; bottom: 34px; left: 12px; height: 22px; border-bottom: 1px solid var(--accent); clip-path: polygon(0 60%, 14% 60%, 20% 18%, 29% 86%, 38% 44%, 55% 44%, 62% 8%, 72% 74%, 82% 38%, 100% 38%, 100% 100%, 0 100%); background: color-mix(in srgb, var(--cyan) 30%, transparent); animation: scope-wave 3.2s ease-in-out infinite; }
+
+.page-calendar .page-ambient,
+.page-countdowns .page-ambient {
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, color-mix(in srgb, var(--line) 58%, transparent) 0 1deg, transparent 1deg 30deg), color-mix(in srgb, var(--surface) 65%, transparent);
+}
+
+.page-calendar .page-ambient i,
+.page-countdowns .page-ambient i { top: 24px; left: 65px; width: 1px; height: 42px; background: var(--danger); transform-origin: bottom; animation: clock-hand 8s steps(24, end) infinite; }
+.page-calendar .page-ambient b,
+.page-countdowns .page-ambient b { top: 64px; left: 64px; width: 28px; height: 1px; background: var(--cyan); transform-origin: left; animation: clock-hand 32s linear infinite reverse; }
+
+.page-physique .page-ambient {
+  border-radius: 45% 55% 48% 52%;
+  background: linear-gradient(90deg, transparent 49%, color-mix(in srgb, var(--cyan) 24%, transparent) 50%, transparent 51%);
+  animation: body-field 7s ease-in-out infinite;
+}
+
+.page-physique .page-ambient i,
+.page-physique .page-ambient b { top: 15px; left: 37px; width: 56px; height: 102px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 50%; animation: dna-orbit 7s linear infinite; }
+.page-physique .page-ambient b { animation-direction: reverse; transform: rotate(90deg); }
+
+.page-journal .page-ambient,
+.page-history .page-ambient,
+.page-reviews .page-ambient {
+  background: repeating-linear-gradient(0deg, transparent 0 16px, color-mix(in srgb, var(--line) 48%, transparent) 16px 17px), color-mix(in srgb, var(--surface) 60%, transparent);
+}
+
+.page-journal .page-ambient i,
+.page-reviews .page-ambient i { inset: 31px 12px; clip-path: polygon(0 55%, 10% 55%, 15% 22%, 23% 82%, 32% 44%, 43% 44%, 50% 12%, 58% 76%, 68% 38%, 80% 58%, 100% 58%, 100% 62%, 80% 62%, 68% 42%, 58% 80%, 50% 16%, 43% 48%, 32% 48%, 23% 86%, 15% 26%, 10% 59%, 0 59%); background: var(--accent); animation: journal-signal 4.4s ease-in-out infinite; }
+.page-history .page-ambient i,
+.page-history .page-ambient b { top: 42px; width: 42px; height: 42px; border-bottom: 2px solid var(--cyan); border-left: 2px solid var(--cyan); transform: rotate(45deg); animation: rewind-step 2.8s ease-in-out infinite; }
+.page-history .page-ambient i { left: 30px; }
+.page-history .page-ambient b { left: 58px; animation-delay: 180ms; }
+
+.page-lessons .page-ambient,
+.page-wiki .page-ambient {
+  perspective: 260px;
+  background: color-mix(in srgb, var(--surface) 64%, transparent);
+}
+
+.page-lessons .page-ambient i,
+.page-wiki .page-ambient i,
+.page-lessons .page-ambient b,
+.page-wiki .page-ambient b { top: 25px; width: 48px; height: 82px; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.page-lessons .page-ambient i,
+.page-wiki .page-ambient i { left: 16px; transform-origin: right; animation: page-flip-left 6s ease-in-out infinite; }
+.page-lessons .page-ambient b,
+.page-wiki .page-ambient b { right: 16px; transform-origin: left; animation: page-flip-right 6s ease-in-out infinite; }
+
+.page-money .page-ambient {
+  border-radius: 50%;
+  background: repeating-radial-gradient(circle, transparent 0 24px, color-mix(in srgb, var(--sun) 22%, transparent) 25px 27px), color-mix(in srgb, var(--surface) 62%, transparent);
+  animation: coin-turn 7s ease-in-out infinite;
+}
+.page-money .page-ambient i { inset: 17px; border: 1px dashed var(--success); border-radius: 50%; animation: slow-spin 12s linear infinite; }
+
+.page-goals .page-ambient,
+.page-areas .page-ambient {
+  border-radius: 50%;
+  background: repeating-radial-gradient(circle, transparent 0 14px, color-mix(in srgb, var(--accent) 18%, transparent) 15px 17px), color-mix(in srgb, var(--surface) 60%, transparent);
+}
+.page-goals .page-ambient i { top: 65px; left: 65px; width: 54px; height: 1px; background: var(--cyan); transform-origin: left; animation: target-lock 4.8s ease-in-out infinite; }
+.page-areas .page-ambient::before { position: absolute; inset: 16px; border-radius: 50%; background: conic-gradient(color-mix(in srgb, var(--cyan) 28%, transparent) 0 18%, transparent 18% 22%, color-mix(in srgb, var(--accent) 28%, transparent) 22% 40%, transparent 40% 44%, color-mix(in srgb, var(--sun) 25%, transparent) 44% 62%, transparent 62% 66%, color-mix(in srgb, var(--success) 25%, transparent) 66% 84%, transparent 84%); content: ''; animation: areas-balance 10s ease-in-out infinite; }
+
+.page-templates .page-ambient i,
+.page-templates .page-ambient b { top: 39px; width: 54px; height: 54px; border: 2px solid var(--cyan); border-radius: 50%; }
+.page-templates .page-ambient i { left: 14px; animation: loop-left 5s ease-in-out infinite; }
+.page-templates .page-ambient b { right: 14px; border-color: var(--accent); animation: loop-right 5s ease-in-out infinite; }
+
+.page-backup .page-ambient {
+  clip-path: polygon(50% 0, 92% 16%, 82% 78%, 50% 100%, 18% 78%, 8% 16%);
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+  animation: shield-pulse 4.6s ease-in-out infinite;
+}
+.page-backup .page-ambient i { inset: 24px; border: 1px dashed var(--success); clip-path: inherit; animation: slow-spin 14s linear infinite; }
+
+/* Every section gets a small independent corner instrument. */
+.surface::after,
+.entity-card::after,
+.calendar-surface::after,
+.signal-chart-card::after {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  width: 14px;
+  height: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--cyan) 42%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  content: '';
+  pointer-events: none;
+  animation: corner-instrument 4.8s ease-in-out infinite;
+}
+
+.page-grid > :nth-child(3n + 2)::after,
+.workspace-main > :nth-child(3n + 2)::after { animation-delay: -1.6s; transform: rotate(90deg); }
+.page-grid > :nth-child(3n + 3)::after,
+.workspace-main > :nth-child(3n + 3)::after { animation-delay: -3.2s; transform: rotate(180deg); }
+
+.timeline-entry {
+  position: relative;
+}
+
+.timeline-entry::before {
+  position: absolute;
+  top: 17px;
+  left: -6px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--surface-raised);
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px color-mix(in srgb, currentColor 35%, transparent);
+  content: '';
+  animation: timeline-beacon 3.4s ease-in-out infinite;
+}
+
+.body-orbit { animation: body-orbit-spin 13s linear infinite; }
+.body-silhouette { animation: body-breathe 4.8s ease-in-out infinite; }
+.body-head { animation: body-head-float 3.8s ease-in-out infinite; }
+.assessment-orbit::before { animation: slow-spin 13s linear infinite; }
+.assessment-orbit::after { animation: slow-spin 9s linear infinite reverse; }
+
+.countdown-orbit::after,
+.money-orbit::after,
+.goal-progress-ring::after {
+  position: absolute;
+  inset: -5px;
+  border: 1px dashed color-mix(in srgb, var(--cyan) 32%, transparent);
+  border-radius: 50%;
+  content: '';
+  animation: slow-spin 14s linear infinite;
+}
+
+.money-orbit::after { border-color: color-mix(in srgb, var(--success) 38%, transparent); animation-direction: reverse; }
+.goal-progress-ring::after { inset: -4px; border-color: color-mix(in srgb, var(--accent) 36%, transparent); animation-duration: 11s; }
+
+.review-card:hover,
+.lesson-card:hover,
+.money-item:hover,
+.countdown-card:hover {
+  animation: card-signal-lock 520ms ease both;
+}
+
+@keyframes action-rail { 0% { transform: scaleX(.15); opacity: .2; } 55% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(.45); opacity: .58; } }
+@keyframes command-confirm { 45% { transform: translateY(1px) scale(.975); box-shadow: 0 0 0 5px color-mix(in srgb, var(--cyan) 10%, transparent); } }
+@keyframes command-utility { 35% { transform: translateX(-1px); } 70% { transform: translateX(1px); } }
+@keyframes command-danger { 25% { transform: translate(-1px, 1px); } 50% { transform: translate(1px, -1px); } 75% { transform: translate(-1px, 0); } }
+@keyframes busy-command { from { transform: translateX(-115%); } to { transform: translateX(115%); } }
+@keyframes burst-life { 0% { opacity: 0; } 12%, 70% { opacity: .9; } 100% { opacity: 0; } }
+@keyframes burst-ring { from { width: 8px; height: 8px; opacity: .9; } to { width: 66px; height: 66px; opacity: 0; transform: translate(-50%, -50%) rotate(35deg); } }
+@keyframes burst-ray { 18% { opacity: .9; } 100% { opacity: 0; transform: rotate(0deg) scaleX(1.25); } }
+.action-burst i:nth-child(2) { --ray-angle: 60deg; }
+.action-burst i:nth-child(3) { --ray-angle: 120deg; }
+@keyframes burst-core { to { opacity: 0; transform: rotate(135deg) scale(2.2); } }
+@keyframes feedback-sweep { to { transform: translateX(110%); } }
+@keyframes feedback-complete { from { opacity: 0; transform: translateY(8px) scale(.985); } 65% { transform: translateY(-2px) scale(1.005); } }
+@keyframes feedback-log { from { opacity: 0; clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
+@keyframes feedback-save { from { opacity: 0; transform: translateX(-6px); } 45% { opacity: .6; } to { opacity: 1; transform: none; } }
+@keyframes feedback-skip { 0% { opacity: 0; transform: translateX(-8px); } 55% { transform: translateX(3px); } }
+@keyframes feedback-delete { 0% { opacity: 0; transform: translateX(6px); } 35% { clip-path: inset(0 0 55%); } 70% { clip-path: inset(45% 0 0); } 100% { opacity: 1; clip-path: inset(0); } }
+@keyframes feedback-failure { 0% { opacity: 0; transform: translateX(-5px); } 30% { transform: translateX(4px); } 55% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
+@keyframes feedback-orbit { from { transform: rotate(-120deg) scale(.65); } to { transform: rotate(0) scale(1); } }
+@keyframes ambient-sun { 50% { transform: translateY(5px) scale(.94); opacity: .72; } }
+@keyframes horizon-scan { 50% { transform: translateY(-12px) scaleX(.74); opacity: .55; } }
+@keyframes radar-sweep { to { transform: rotate(360deg); } }
+@keyframes scope-wave { 50% { transform: scaleY(.72) translateX(3px); opacity: .62; } }
+@keyframes clock-hand { to { transform: rotate(360deg); } }
+@keyframes body-field { 50% { border-radius: 55% 45% 52% 48%; transform: scale(.96); } }
+@keyframes dna-orbit { to { transform: rotate(360deg) scaleX(.72); } }
+@keyframes journal-signal { 50% { transform: scaleY(.7) translateX(4px); opacity: .6; } }
+@keyframes rewind-step { 50% { transform: translateX(-7px) rotate(45deg); opacity: .48; } }
+@keyframes page-flip-left { 50% { transform: rotateY(-34deg); } }
+@keyframes page-flip-right { 50% { transform: rotateY(34deg); } }
+@keyframes coin-turn { 50% { transform: perspective(240px) rotateY(18deg) scale(.96); } }
+@keyframes slow-spin { to { transform: rotate(360deg); } }
+@keyframes target-lock { 50% { transform: rotate(-35deg) scaleX(.72); opacity: .55; } }
+@keyframes areas-balance { 50% { transform: rotate(18deg) scale(.94); } }
+@keyframes loop-left { 50% { transform: translateX(8px) scale(.9); } }
+@keyframes loop-right { 50% { transform: translateX(-8px) scale(.9); } }
+@keyframes shield-pulse { 50% { transform: scale(.95); opacity: .24; } }
+@keyframes corner-instrument { 50% { width: 24px; height: 9px; opacity: .45; } }
+@keyframes timeline-beacon { 50% { transform: scale(.72); opacity: .55; } }
+@keyframes body-orbit-spin { to { transform: rotate(346deg) scaleY(.72); } }
+@keyframes body-breathe { 50% { transform: scaleX(1.025) translateY(-2px); } }
+@keyframes body-head-float { 50% { transform: translateY(-3px); } }
+@keyframes card-signal-lock { 45% { filter: saturate(1.08); } }
+
+@media (max-width: 860px) {
+  .page-ambient {
+    top: 178px;
+    right: 12px;
+    width: 86px;
+    height: 86px;
+    opacity: .22;
+  }
+
+  .page-ambient span { font-size: 14px; }
+  .page-today .page-ambient::before { top: 16px; left: 24px; width: 36px; height: 36px; }
+  .page-physique .page-ambient i,
+  .page-physique .page-ambient b { top: 10px; left: 23px; width: 38px; height: 64px; }
+  .page-lessons .page-ambient i,
+  .page-wiki .page-ambient i,
+  .page-lessons .page-ambient b,
+  .page-wiki .page-ambient b { top: 16px; width: 31px; height: 54px; }
+  .page-lessons .page-ambient i,
+  .page-wiki .page-ambient i { left: 10px; }
+  .page-lessons .page-ambient b,
+  .page-wiki .page-ambient b { right: 10px; }
+}

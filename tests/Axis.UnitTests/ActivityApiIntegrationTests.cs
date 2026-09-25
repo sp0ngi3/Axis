@@ -15,6 +15,42 @@ namespace Axis.UnitTests;
 public sealed class ActivityApiIntegrationTests
 {
     [Fact]
+    public async Task Starter_data_can_be_disabled_without_disabling_database_schema()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+
+        using var areas = JsonDocument.Parse(await client.GetStringAsync("/api/life-areas"));
+        using var templates = JsonDocument.Parse(await client.GetStringAsync("/api/activity-templates"));
+
+        Assert.Empty(areas.RootElement.EnumerateArray());
+        Assert.Empty(templates.RootElement.EnumerateArray());
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task Starter_pack_keeps_dsa_flexible_and_adds_weekly_grooming()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+
+        using var goals = JsonDocument.Parse(await client.GetStringAsync("/api/goals"));
+        Assert.DoesNotContain(goals.RootElement.EnumerateArray(), goal => goal.GetProperty("title").GetString() == "DSA 250 list x6 repetitions");
+        Assert.Contains(goals.RootElement.EnumerateArray(), goal => goal.GetProperty("title").GetString() == "Weekly grooming maintenance");
+
+        using var templates = JsonDocument.Parse(await client.GetStringAsync("/api/activity-templates"));
+        var grooming = templates.RootElement.EnumerateArray().Single(template => template.GetProperty("title").GetString() == "Grooming reset");
+        var groomingId = grooming.GetProperty("id").GetGuid();
+
+        using var rules = JsonDocument.Parse(await client.GetStringAsync($"/api/recurrence-rules?templateId={groomingId}"));
+        var rule = Assert.Single(rules.RootElement.EnumerateArray());
+        Assert.Equal("Weekly", rule.GetProperty("frequency").GetString());
+        Assert.Equal(1, rule.GetProperty("interval").GetInt32());
+
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
     public async Task Corrupt_database_stops_startup_before_any_application_writes()
     {
         await using var factory = new AxisApiFactory();
@@ -167,6 +203,68 @@ public sealed class ActivityApiIntegrationTests
     }
 
     [Fact]
+    public async Task Daily_measurements_are_upserted_as_metrics_without_recurring_activity_templates()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+        var yesterday = DateOnly.FromDateTime(DateTime.Now.AddDays(-1));
+
+        var first = await client.PostAsJsonAsync("/api/metrics/daily-measurements", new
+        {
+            recordedOn = yesterday,
+            steps = 10850,
+            waterMl = 2750,
+            calories = 2310,
+            protein = 142.5m,
+            carbohydrates = 260,
+            fat = 71,
+            fiber = 31,
+            notes = "Integration daily metrics"
+        });
+        await AssertStatusAsync(first, HttpStatusCode.OK);
+
+        var correction = await client.PostAsJsonAsync("/api/metrics/daily-measurements", new
+        {
+            recordedOn = yesterday,
+            steps = 11234,
+            waterMl = (decimal?)null,
+            calories = (decimal?)null,
+            protein = (decimal?)null,
+            carbohydrates = (decimal?)null,
+            fat = (decimal?)null,
+            fiber = (decimal?)null,
+            notes = "Corrected step count"
+        });
+        await AssertStatusAsync(correction, HttpStatusCode.OK);
+
+        var stepsMetricId = await GetMetricIdAsync(client, "Steps");
+        var stepsEntries = (await GetMetricEntriesAsync(client, stepsMetricId))
+            .Where(entry => entry.GetProperty("notes").GetString()!.Contains("[daily-measurements:"))
+            .ToList();
+        Assert.Single(stepsEntries);
+        Assert.Equal(11234m, stepsEntries[0].GetProperty("value").GetDecimal());
+
+        using var templates = JsonDocument.Parse(await client.GetStringAsync("/api/activity-templates"));
+        Assert.All(templates.RootElement.EnumerateArray()
+            .Where(item => new[] { "Daily nutrition", "Steps", "Water intake" }.Contains(item.GetProperty("title").GetString())),
+            item => Assert.False(item.GetProperty("isActive").GetBoolean()));
+
+        using var today = JsonDocument.Parse(await client.GetStringAsync("/api/dashboard/today"));
+        var ledgerTitles = today.RootElement.GetProperty("recentDays").EnumerateArray()
+            .SelectMany(day => day.GetProperty("activities").EnumerateArray())
+            .Select(item => item.GetProperty("title").GetString())
+            .ToList();
+        Assert.DoesNotContain(ledgerTitles, title => title is "Daily nutrition" or "Steps" or "Water intake");
+
+        await AssertStatusAsync(await client.PostAsJsonAsync("/api/metrics/daily-measurements", new
+        {
+            recordedOn = yesterday.AddDays(-2),
+            steps = 8000
+        }), HttpStatusCode.BadRequest);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
     public async Task Mood_create_update_and_delete_stay_synchronized_with_mood_metric()
     {
         await using var factory = new AxisApiFactory();
@@ -218,6 +316,7 @@ public sealed class ActivityApiIntegrationTests
         Assert.Contains(activities, item => item.Title == "Recent completed marker" && item.Status == "Completed");
         Assert.Contains(activities, item => item.Title == "Recent skipped marker" && item.Status == "Skipped");
         Assert.DoesNotContain(activities, item => item.Title == "Old hidden marker");
+        Assert.DoesNotContain(activities, item => item.Title is "Daily nutrition" or "Steps" or "Water intake");
     }
 
     private static async Task<Guid> GetFirstIdAsync(HttpClient client, string path)
@@ -347,6 +446,13 @@ public sealed class ActivityApiIntegrationTests
 
     private sealed class AxisApiFactory : WebApplicationFactory<Program>, IAsyncDisposable
     {
+        private readonly bool _seedData;
+
+        public AxisApiFactory(bool seedData = true)
+        {
+            _seedData = seedData;
+        }
+
         public string DatabasePath { get; } = Path.Combine(Path.GetTempPath(), $"axis-integration-{Guid.NewGuid():N}.db");
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -361,6 +467,7 @@ public sealed class ActivityApiIntegrationTests
             }.ToString();
 
             builder.UseSetting("ConnectionStrings:Axis", connectionString);
+            builder.UseSetting("SeedData", _seedData.ToString());
             builder.UseSetting("Backup:Directory", Path.Combine(Path.GetTempPath(), $"axis-backups-{Guid.NewGuid():N}"));
             builder.ConfigureServices(services =>
             {

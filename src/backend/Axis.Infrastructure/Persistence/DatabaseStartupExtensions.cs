@@ -7,7 +7,7 @@ namespace Axis.Infrastructure.Persistence;
 
 public static class DatabaseStartupExtensions
 {
-    public static async Task InitializeAxisDatabaseAsync(this IServiceProvider services, CancellationToken cancellationToken = default)
+    public static async Task InitializeAxisDatabaseAsync(this IServiceProvider services, bool seedData = false, CancellationToken cancellationToken = default)
     {
         await using var scope = services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AxisDbContext>();
@@ -16,17 +16,33 @@ public static class DatabaseStartupExtensions
         await dbContext.Database.EnsureCreatedAsync(cancellationToken);
         await ConfigureSqliteDurabilityAsync(dbContext, cancellationToken);
         await EnsureAxisSchemaAsync(dbContext, cancellationToken);
-        await SeedDefaultsAsync(dbContext, cancellationToken);
-        await SeedStarterPackAsync(dbContext, cancellationToken);
+        if (seedData)
+        {
+            await SeedDefaultsAsync(dbContext, cancellationToken);
+            await SeedStarterPackAsync(dbContext, cancellationToken);
+        }
+        await RemoveRetiredDsaStarterGoalAsync(dbContext, cancellationToken);
         await ReplaceOutdoorWalkWithStepsAsync(dbContext, cancellationToken);
         await RemoveFlexibleStudyRecurrencesAsync(dbContext, cancellationToken);
         await NormalizeDailyDecayRatesAsync(dbContext, cancellationToken);
         await NormalizeCheckInDurationsAsync(dbContext, cancellationToken);
         await RemoveDuplicateGeneratedActivitiesAsync(dbContext, cancellationToken);
+        await BackfillLinkedSignalMetricsAsync(dbContext, cancellationToken);
+        await MigrateDailyMeasurementsOutOfActivitiesAsync(dbContext, cancellationToken);
         await GenerateRollingRecurringActivitiesAsync(dbContext, 56, cancellationToken);
         await RemoveDuplicateGeneratedActivitiesAsync(dbContext, cancellationToken);
         await LinkStarterActivitiesToGoalsAsync(dbContext, cancellationToken);
-        await BackfillLinkedSignalMetricsAsync(dbContext, cancellationToken);
+    }
+
+    public static async Task RefreshRollingRecurringActivitiesAsync(
+        this IServiceProvider services,
+        int horizonDays = 56,
+        CancellationToken cancellationToken = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AxisDbContext>();
+        await GenerateRollingRecurringActivitiesAsync(dbContext, horizonDays, cancellationToken);
+        await RemoveDuplicateGeneratedActivitiesAsync(dbContext, cancellationToken);
     }
 
     private static async Task BackfillLinkedSignalMetricsAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
@@ -365,29 +381,6 @@ public static class DatabaseStartupExtensions
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var today = DateOnly.FromDateTime(DateTimeOffset.Now.DateTime);
-        var hasPrimaryGoal = await dbContext.Goals.AnyAsync(goal => goal.Status == GoalStatus.Active && goal.Priority == GoalPriority.Primary, cancellationToken);
-
-        var dsaGoal = await EnsureGoalAsync(dbContext, learning, new Goal
-        {
-            Title = "DSA 250 list x6 repetitions",
-            Description = "Finish a 250-problem DSA list six times: first pass for understanding, later passes for speed, recall, and interview fluency.",
-            Priority = hasPrimaryGoal ? GoalPriority.Secondary : GoalPriority.Primary,
-            ProgressType = ProgressType.MilestoneBased,
-            TargetValue = 1500,
-            Unit = "problem reps",
-            TargetDate = today.AddMonths(9),
-            MaintenanceThreshold = 80,
-            MaintenanceTargetPerWeek = 5
-        }, cancellationToken);
-
-        await EnsureMilestonesAsync(dbContext, dsaGoal, cancellationToken,
-            ("Pass 1: understand 250 problems", 0, 250, "problems", 1),
-            ("Pass 2: solve again without notes", 0, 250, "problems", 2),
-            ("Pass 3: timed reps", 0, 250, "problems", 3),
-            ("Pass 4: pattern recall", 0, 250, "problems", 4),
-            ("Pass 5: interview speed", 0, 250, "problems", 5),
-            ("Pass 6: final retention pass", 0, 250, "problems", 6));
-
         var systemDesignGoal = await EnsureGoalAsync(dbContext, learning, new Goal
         {
             Title = "System design interview track",
@@ -436,7 +429,7 @@ public static class DatabaseStartupExtensions
         var hypertrophyGoal = await EnsureGoalAsync(dbContext, fitness, new Goal
         {
             Title = "Lean muscle recomposition",
-            Description = "Glow-up hypertrophy target: 4 hard sessions/week, roughly 10-16 challenging sets per muscle group/week, mostly 1-3 reps in reserve, progressive overload, and at least 1.6 g protein/kg/day.",
+            Description = "Glow-up hypertrophy target: 4 hard sessions/week, roughly 10-16 challenging sets per muscle group/week, clean technique, progressive overload, and at least 1.6 g protein/kg/day.",
             Priority = GoalPriority.Secondary,
             ProgressType = ProgressType.Maintenance,
             TargetValue = 100,
@@ -448,11 +441,29 @@ public static class DatabaseStartupExtensions
 
         if (hypertrophyGoal.MaintenanceTargetPerWeek == 3 && hypertrophyGoal.MaintenanceThreshold == 75)
         {
-            hypertrophyGoal.Description = "Glow-up hypertrophy target: 4 hard sessions/week, roughly 10-16 challenging sets per muscle group/week, mostly 1-3 reps in reserve, progressive overload, and at least 1.6 g protein/kg/day.";
+            hypertrophyGoal.Description = "Glow-up hypertrophy target: 4 hard sessions/week, roughly 10-16 challenging sets per muscle group/week, clean technique, progressive overload, and at least 1.6 g protein/kg/day.";
             hypertrophyGoal.MaintenanceTargetPerWeek = 4;
             hypertrophyGoal.MaintenanceThreshold = 85;
             hypertrophyGoal.DecayRatePercentPerWeek = 0.5m;
         }
+
+        if (hypertrophyGoal.Description.Contains("reps in reserve", StringComparison.OrdinalIgnoreCase))
+        {
+            hypertrophyGoal.Description = "Glow-up hypertrophy target: 4 hard sessions/week, roughly 10-16 challenging sets per muscle group/week, clean technique, progressive overload, and at least 1.6 g protein/kg/day.";
+        }
+
+        _ = await EnsureGoalAsync(dbContext, health, new Goal
+        {
+            Title = "Weekly grooming maintenance",
+            Description = "A practical weekly reset for hair, facial hair, brows, nails, and the small grooming tasks that need regular upkeep.",
+            Priority = GoalPriority.Maintenance,
+            ProgressType = ProgressType.Decay,
+            TargetValue = 100,
+            Unit = "% fresh",
+            MaintenanceThreshold = 1,
+            MaintenanceTargetPerWeek = 1,
+            DecayRatePercentPerWeek = 14.3m
+        }, cancellationToken);
 
         await EnsureGoalAsync(dbContext, health, new Goal
         {
@@ -563,17 +574,14 @@ public static class DatabaseStartupExtensions
         var alcoholTemplate = await EnsureTemplateAsync(dbContext, health, "No alcohol check-in", "Log whether today stayed alcohol-free and how many drinks happened if not.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 5, cancellationToken);
         var vapeTemplate = await EnsureTemplateAsync(dbContext, health, "No vape check-in", "Log vape-free day status and any triggers.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 5, cancellationToken);
         var dietTemplate = await EnsureTemplateAsync(dbContext, fitness, "Diet check-in", "Protein target, calories, vegetables, and evening cravings check.", 1, LoadLevel.Low, LoadLevel.Medium, LoadLevel.Low, 6, cancellationToken);
-        var dsaTemplate = await EnsureTemplateAsync(dbContext, learning, "DSA problem rep", "Solve or review DSA problems from the 250 x6 track.", 75, LoadLevel.High, LoadLevel.High, LoadLevel.Low, 12, cancellationToken);
+        var dsaTemplate = await EnsureTemplateAsync(dbContext, learning, "DSA problem rep", "Solve or review DSA problems from your current study plan.", 75, LoadLevel.High, LoadLevel.High, LoadLevel.Low, 12, cancellationToken);
         var systemTemplate = await EnsureTemplateAsync(dbContext, learning, "System design case study", "Design one system aloud: requirements, scale, API, data model, architecture, bottlenecks, trade-offs.", 90, LoadLevel.High, LoadLevel.High, LoadLevel.Low, 12, cancellationToken);
         var sleepTemplate = await EnsureTemplateAsync(dbContext, health, "Sleep log", "Record the estimated number of hours slept. Axis evaluates the duration against an 8-hour target.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 4, cancellationToken);
         var spfTemplate = await EnsureTemplateAsync(dbContext, health, "SPF 30+", "Confirm broad-spectrum SPF 30+ use for exposed skin during daylight.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 3, cancellationToken);
         var retinoidTemplate = await EnsureTemplateAsync(dbContext, health, "Night retinoid", "Use a pea-sized amount at night on dry skin. Start 2-3 nights/week, moisturize, and reduce frequency if irritated.", 2, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 4, cancellationToken);
         var flossTemplate = await EnsureTemplateAsync(dbContext, health, "Floss teeth", "Clean between teeth once today; consistency matters more than perfect technique.", 3, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 3, cancellationToken);
+        var groomingTemplate = await EnsureTemplateAsync(dbContext, health, "Grooming reset", "Weekly reset for hair, facial hair, brows, nails, and other grooming that is due.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 6, cancellationToken);
         _ = await EnsureTemplateAsync(dbContext, health, "Outdoor walk", "Low-intensity outdoor walk for movement, daylight, and recovery.", 30, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 5, cancellationToken);
-        var nutritionTemplate = await EnsureTemplateAsync(dbContext, fitness, "Daily nutrition", "Record estimated calories and macros for today or either of the previous two days. This is observation, not a pass/fail target.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 3, cancellationToken);
-        var stepsTemplate = await EnsureTemplateAsync(dbContext, health, "Steps", "Record a daily step total. The starter target is 10,000 and can be changed in Metrics.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 4, cancellationToken);
-        var waterTemplate = await EnsureTemplateAsync(dbContext, health, "Water intake", "Record fluids in milliliters or liters. The 2.6 L starter target is a practical 35 ml/kg estimate for 74 kg and can be changed in Metrics.", 1, LoadLevel.Low, LoadLevel.Low, LoadLevel.Low, 3, cancellationToken);
-
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await EnsureRecurrenceAsync(dbContext, creatineTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
@@ -588,11 +596,37 @@ public static class DatabaseStartupExtensions
         await EnsureRecurrenceAsync(dbContext, spfTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, retinoidTemplate, RecurrenceFrequency.Weekly, 1, "Monday,Wednesday,Friday", today, cancellationToken);
         await EnsureRecurrenceAsync(dbContext, flossTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
-        await EnsureRecurrenceAsync(dbContext, nutritionTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
-        await EnsureRecurrenceAsync(dbContext, stepsTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
-        await EnsureRecurrenceAsync(dbContext, waterTemplate, RecurrenceFrequency.Daily, 1, "", today, cancellationToken);
-
+        await EnsureRecurrenceAsync(dbContext, groomingTemplate, RecurrenceFrequency.Weekly, 1, "Saturday", today, cancellationToken);
         await SeedWikiPagesAsync(dbContext, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static async Task MigrateDailyMeasurementsOutOfActivitiesAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var measurementTitles = new[] { "Daily nutrition", "Steps", "Water intake" };
+        var templates = await dbContext.ActivityTemplates
+            .Where(template => measurementTitles.Contains(template.Title))
+            .ToListAsync(cancellationToken);
+        if (templates.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var template in templates)
+        {
+            template.IsActive = false;
+        }
+
+        var templateIds = templates.Select(template => template.Id).ToList();
+        var rules = await dbContext.RecurrenceRules
+            .Where(rule => templateIds.Contains(rule.TemplateId))
+            .ToListAsync(cancellationToken);
+        var measurementActivities = await dbContext.Activities
+            .Where(activity => activity.TemplateId != null && templateIds.Contains(activity.TemplateId.Value))
+            .ToListAsync(cancellationToken);
+
+        dbContext.RecurrenceRules.RemoveRange(rules);
+        dbContext.Activities.RemoveRange(measurementActivities);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -852,7 +886,7 @@ public static class DatabaseStartupExtensions
             ["No alcohol check-in"] = "Alcohol-free baseline",
             ["No vape check-in"] = "Vape-free baseline",
             ["Diet check-in"] = "Diet adherence for leanness",
-            ["DSA problem rep"] = "DSA 250 list x6 repetitions",
+            ["Grooming reset"] = "Weekly grooming maintenance",
             ["System design case study"] = "System design interview track"
         };
         var goals = await dbContext.Goals.Where(goal => titleMap.Values.Contains(goal.Title)).ToDictionaryAsync(goal => goal.Title, cancellationToken);
@@ -893,6 +927,64 @@ public static class DatabaseStartupExtensions
                 && (activity.PlannedStartAt is null || activity.PlannedStartAt >= now))
             .ToList();
         dbContext.Activities.RemoveRange(futureGeneratedPlans);
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static async Task RemoveRetiredDsaStarterGoalAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        const string retiredTitle = "DSA 250 list x6 repetitions";
+        const string retiredDescription = "Finish a 250-problem DSA list six times: first pass for understanding, later passes for speed, recall, and interview fluency.";
+        var candidates = await dbContext.Goals
+            .Include(goal => goal.Milestones)
+            .Where(goal => goal.Title == retiredTitle)
+            .ToListAsync(cancellationToken);
+
+        foreach (var goal in candidates)
+        {
+            var isStarter = goal.Description == retiredDescription
+                || goal.Milestones.Any(milestone => milestone.Title == "Pass 1: understand 250 problems");
+            if (!isStarter)
+            {
+                continue;
+            }
+
+            var milestoneIds = goal.Milestones.Select(milestone => milestone.Id).ToList();
+            var activities = await dbContext.Activities
+                .Where(activity => activity.GoalId == goal.Id || (activity.MilestoneId != null && milestoneIds.Contains(activity.MilestoneId.Value)))
+                .ToListAsync(cancellationToken);
+            foreach (var activity in activities)
+            {
+                activity.GoalId = null;
+                activity.MilestoneId = null;
+            }
+
+            var metrics = await dbContext.Metrics.Where(metric => metric.GoalId == goal.Id).ToListAsync(cancellationToken);
+            foreach (var metric in metrics)
+            {
+                metric.GoalId = null;
+            }
+
+            dbContext.Milestones.RemoveRange(goal.Milestones);
+            dbContext.Goals.Remove(goal);
+        }
+
+        var wikiPage = await dbContext.WikiPages.FirstOrDefaultAsync(page => page.Slug == "dsa-system-design", cancellationToken);
+        if (wikiPage is not null && wikiPage.Body.Contains("DSA is seeded as 250 problems x6 repetitions", StringComparison.Ordinal))
+        {
+            wikiPage.Summary = "Use flexible DSA and system design logs without a forced starter goal.";
+            wikiPage.Body = """
+                DSA practice is available as a flexible activity, without an automatically recreated 250 x6 goal. Create a goal only when you decide on the list, repetitions, and deadline you actually want. System design keeps its fundamentals, case practice, and spoken walkthrough structure.
+
+                How to use Axis: log DSA problem reps whenever you study, attach them to a goal you created if useful, and use weekly/monthly reviews to check whether interview preparation is receiving enough time.
+                """.Trim();
+        }
+
+        var dsaTemplate = await dbContext.ActivityTemplates.FirstOrDefaultAsync(template => template.Title == "DSA problem rep", cancellationToken);
+        if (dsaTemplate is not null && dsaTemplate.Description.Contains("250 x6", StringComparison.OrdinalIgnoreCase))
+        {
+            dsaTemplate.Description = "Solve or review DSA problems from your current study plan.";
+        }
 
         await dbContext.SaveChangesAsync(cancellationToken);
     }
@@ -938,7 +1030,8 @@ public static class DatabaseStartupExtensions
             "Steps",
             "Water intake",
             "Sleep log",
-            "SPF 30+"
+            "SPF 30+",
+            "Grooming reset"
         };
 
         var templates = await dbContext.ActivityTemplates
@@ -976,11 +1069,12 @@ public static class DatabaseStartupExtensions
             "Steps",
             "Water intake",
             "Sleep log",
-            "SPF 30+"
+            "SPF 30+",
+            "Grooming reset"
         };
 
         var candidates = await dbContext.Activities
-            .Where(activity => activity.TemplateId != null && generatedTitles.Contains(activity.Title))
+            .Where(activity => generatedTitles.Contains(activity.Title))
             .ToListAsync(cancellationToken);
 
         var duplicates = candidates
@@ -1104,6 +1198,7 @@ public static class DatabaseStartupExtensions
             "Water intake" => 21,
             "Sleep log" => 22,
             "SPF 30+" => 8,
+            "Grooming reset" => 10,
             _ => 9
         };
     }
@@ -1191,10 +1286,10 @@ public static class DatabaseStartupExtensions
             How to use Axis: log Protein intake and Body weight often enough to see the weekly trend. If weight rises and waist rises quickly, adjust calories. If strength and mood crash, recovery or calories may be too low.
             """, "ISSN protein position stand: https://pmc.ncbi.nlm.nih.gov/articles/PMC5477153/ | CDC healthy weight and activity: https://www.cdc.gov/healthy-weight-growth/physical-activity/", 5, cancellationToken);
 
-        await EnsureWikiPageAsync(dbContext, "dsa-system-design", "DSA and system design track", "Learning", "The job-search priority is daily reps plus system design cases.", """
-            DSA is seeded as 250 problems x6 repetitions: 1500 total problem-reps. Treat every pass differently: understanding, independent solve, timed solve, pattern recall, speed, final retention. System design is seeded as fundamentals plus 30 cases and 10 spoken mocks.
+        await EnsureWikiPageAsync(dbContext, "dsa-system-design", "DSA and system design track", "Learning", "Use flexible DSA and system design logs without a forced starter goal.", """
+            DSA practice is available as a flexible activity and does not create a goal automatically. Create a goal only when you choose a list, repetition plan, and deadline that fit your schedule. System design is seeded as fundamentals plus 30 cases and 10 spoken mocks.
 
-            How to use Axis: complete the daily DSA activity, update the current pass milestone, and use weekly/monthly reviews to see whether the primary goal is actually getting time.
+            How to use Axis: log DSA problem reps whenever you study, attach them to a goal you created if useful, and use weekly/monthly reviews to check whether interview preparation is receiving enough time.
             """, "Physical Activity Guidelines are unrelated here; this page is a workflow recipe built from your stated goal.", 6, cancellationToken);
     }
 

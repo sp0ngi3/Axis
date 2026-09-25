@@ -24,8 +24,7 @@ const checkInTitles = new Set([
   'Diet check-in',
   'SPF 30+',
   'Night retinoid',
-  'Floss teeth',
-  'Daily nutrition'
+  'Floss teeth'
 ]);
 
 function trackKind(title: string): DashboardTrack['kind'] {
@@ -73,8 +72,9 @@ export function getDayStatus(activities: Activity[], flexible: boolean, day: Dat
 
 export function buildDashboardTracks(days: Date[], activities: Activity[], templates: ActivityTemplate[], rules: RecurrenceRule[] = []): DashboardTrack[] {
   const flexibleTitles = new Set(['DSA problem rep', 'System design case study']);
+  const metricOnlyTitles = new Set(['Daily nutrition', 'Steps', 'Water intake']);
 
-  return templates.map((template) => {
+  return templates.filter((template) => !metricOnlyTitles.has(template.title)).map((template) => {
     const flexible = flexibleTitles.has(template.title);
     const kind = trackKind(template.title);
     const related = activities.filter((activity) => activity.templateId === template.id || activity.title === template.title);

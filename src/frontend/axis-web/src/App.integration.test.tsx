@@ -2,7 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import App from './App';
+import App, { liveCountdownTiming, parseWorkoutExercises } from './App';
 
 const area = {
   id: 'area-1',
@@ -140,6 +140,7 @@ const sleepTemplate = {
 const nutritionTemplate = { ...sleepTemplate, id: 'template-nutrition', title: 'Daily nutrition', description: 'Calories and macros' };
 const stepsTemplate = { ...sleepTemplate, id: 'template-steps', title: 'Steps', description: 'Daily steps' };
 const waterTemplate = { ...sleepTemplate, id: 'template-water', title: 'Water intake', description: 'Daily water' };
+const measurementLedgerActivity = { ...activity, id: 'measurement-ledger', templateId: stepsTemplate.id, title: 'Steps', description: 'Daily steps' };
 
 const recurrenceRule = {
   id: 'rule-1',
@@ -249,9 +250,9 @@ function installFetchMock() {
           mainFocus: activity,
           supportTasks: [],
           recoveryTask: null,
-          timeline: [activity],
+          timeline: [activity, measurementLedgerActivity],
           recentDays: [
-            { date: '2026-09-16', isToday: true, activities: [activity] },
+            { date: '2026-09-16', isToday: true, activities: [activity, measurementLedgerActivity] },
             { date: '2026-09-15', isToday: false, activities: [completedRecentActivity, missedRecentActivity] },
             { date: '2026-09-14', isToday: false, activities: [skippedRecentActivity] }
           ],
@@ -279,6 +280,32 @@ async function openPage(name: RegExp) {
 }
 
 describe('Axis app integration workflows', () => {
+  it('moves the countdown and its mirrored past date together as time advances', () => {
+    const now = new Date('2026-09-25T12:00:00.000Z');
+    const target = new Date(now.getTime() + 54 * 86400000).toISOString();
+
+    const todayTiming = liveCountdownTiming(target, now);
+    const tomorrowTiming = liveCountdownTiming(target, new Date(now.getTime() + 86400000));
+
+    expect(todayTiming.daysRemaining).toBe(54);
+    expect(todayTiming.pastEquivalentDate.toISOString().slice(0, 10)).toBe('2026-08-02');
+    expect(tomorrowTiming.daysRemaining).toBe(53);
+    expect(tomorrowTiming.pastEquivalentDate.toISOString().slice(0, 10)).toBe('2026-08-04');
+  });
+
+  it('upgrades legacy shared workout values into separate compatible sets', () => {
+    const legacy = parseWorkoutExercises('[axis-workout-v1][{"id":"legacy","name":"Incline press","muscle":"Chest","sets":3,"reps":8,"weightKg":70,"rir":2}]');
+
+    expect(legacy).toHaveLength(1);
+    expect(legacy[0].sets).toHaveLength(3);
+    expect(legacy[0].sets.map((set) => ({ reps: set.reps, weightKg: set.weightKg }))).toEqual([
+      { reps: 8, weightKg: 70 },
+      { reps: 8, weightKg: 70 },
+      { reps: 8, weightKg: 70 }
+    ]);
+    expect(legacy[0]).not.toHaveProperty('rir');
+  });
+
   beforeEach(() => {
     localStorage.clear();
     installFetchMock();
@@ -369,6 +396,7 @@ describe('Axis app integration workflows', () => {
     expect(document.querySelector('.execution-day.today')).toHaveTextContent('Today');
     expect(screen.getByText('Yesterday')).toBeInTheDocument();
     expect(screen.getByText('2 days ago')).toBeInTheDocument();
+    expect(document.querySelector('.execution-activity-list')).not.toHaveTextContent('Steps');
   });
 
   it('creates searchable life lessons and money records while hiding repeatables from calendar', async () => {
@@ -413,13 +441,21 @@ describe('Axis app integration workflows', () => {
     await openPage(/today/i);
     fireEvent.click(await screen.findByRole('button', { name: /hypertrophy workout/i }));
     fireEvent.change(screen.getByLabelText('Exercise 1'), { target: { value: 'Incline press' } });
-    fireEvent.change(screen.getByLabelText('kg'), { target: { value: '70' } });
+    fireEvent.change(screen.getByLabelText('Incline press set 1 reps'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Incline press set 1 kg'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Incline press set 2 reps'), { target: { value: '8' } });
+    fireEvent.change(screen.getByLabelText('Incline press set 2 kg'), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText('Incline press set 3 reps'), { target: { value: '6' } });
+    fireEvent.change(screen.getByLabelText('Incline press set 3 kg'), { target: { value: '5' } });
     fireEvent.click(screen.getByRole('button', { name: 'Log completed work' }));
 
     await waitFor(() => {
       const workoutCall = calls.find((call) => call.method === 'POST' && call.path === '/api/activities' && call.body?.includes('Incline press'));
       expect(workoutCall?.body).toContain('[axis-workout-v1]');
-      expect(workoutCall?.body).toContain('\\"weightKg\\":70');
+      expect(workoutCall?.body).toContain('\\"reps\\":10,\\"weightKg\\":10');
+      expect(workoutCall?.body).toContain('\\"reps\\":8,\\"weightKg\\":5');
+      expect(workoutCall?.body).toContain('\\"reps\\":6,\\"weightKg\\":5');
+      expect(workoutCall?.body).not.toContain('\\"rir\\"');
     });
   });
 
@@ -453,34 +489,28 @@ describe('Axis app integration workflows', () => {
     });
   });
 
-  it('logs nutrition, integer steps, and liter-based water inside the three-day window', async () => {
+  it('logs steps, water, calories, and macros directly from Metrics without creating activities', async () => {
     render(<App />);
     await screen.findByText('Start with the focus block.');
+    await openPage(/metrics/i);
 
-    const when = screen.getByLabelText('When');
-    expect(when).toHaveAttribute('min');
-    expect(when).toHaveAttribute('max');
+    const day = screen.getByLabelText('Measurement day');
+    expect(day).toHaveAttribute('min');
+    expect(day).toHaveAttribute('max');
+    fireEvent.change(screen.getByLabelText('Daily steps'), { target: { value: '10433' } });
+    fireEvent.change(screen.getByLabelText('Daily water liters'), { target: { value: '2.7' } });
+    fireEvent.change(screen.getByLabelText('Daily calories'), { target: { value: '2350' } });
+    fireEvent.change(screen.getByLabelText('Daily protein'), { target: { value: '145.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save measurements' }));
 
-    fireEvent.click(screen.getByRole('button', { name: /daily nutrition/i }));
-    fireEvent.change(screen.getByLabelText('Calories (kcal)'), { target: { value: '2350' } });
-    fireEvent.change(screen.getByLabelText('Protein (g)'), { target: { value: '145.5' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Log completed work' }));
     await waitFor(() => {
-      const call = calls.find((item) => item.method === 'POST' && item.path === '/api/activities' && item.body?.includes('Daily nutrition'));
-      expect(call?.body).toContain('Calories: 2350');
-      expect(call?.body).toContain('Protein: 145.5');
+      const call = calls.find((item) => item.method === 'POST' && item.path === '/api/metrics/daily-measurements');
+      expect(call?.body).toContain('"steps":10433');
+      expect(call?.body).toContain('"waterMl":2700');
+      expect(call?.body).toContain('"calories":2350');
+      expect(call?.body).toContain('"protein":145.5');
     });
-
-    fireEvent.click(screen.getByRole('button', { name: /^Steps/i }));
-    fireEvent.change(screen.getByLabelText('Steps'), { target: { value: '10432.7' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Log completed work' }));
-    await waitFor(() => expect(calls.some((item) => item.body?.includes('Steps') && item.body.includes('Quantity: 10433'))).toBe(true));
-
-    fireEvent.click(screen.getByRole('button', { name: /water intake/i }));
-    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'l' } });
-    fireEvent.change(screen.getByLabelText('Water (l)'), { target: { value: '2.7' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Log completed work' }));
-    await waitFor(() => expect(calls.some((item) => item.body?.includes('Water intake') && item.body.includes('Quantity: 2700'))).toBe(true));
+    expect(calls.some((item) => item.method === 'POST' && item.path === '/api/activities' && /Daily nutrition|Steps|Water intake/.test(item.body ?? ''))).toBe(false);
   });
 
   it('loads a selectable normalized metric comparison with exact daily values', async () => {

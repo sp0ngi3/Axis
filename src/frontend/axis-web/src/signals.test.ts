@@ -73,7 +73,7 @@ describe('Signals dashboard aggregation', () => {
     vi.useRealTimers();
   });
 
-  it('labels steps, water, and nutrition without treating them as focused minutes', () => {
+  it('keeps metric-only measurements out of recurring signal tracks', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-16T12:00:00+02:00'));
     const stepsTemplate = { ...template, id: 'steps-template', title: 'Steps', defaultDurationMinutes: 1 };
@@ -87,9 +87,7 @@ describe('Signals dashboard aggregation', () => {
 
     const tracks = buildDashboardTracks([new Date('2026-09-16T12:00:00+02:00')], rows, [stepsTemplate, waterTemplate, nutritionTemplate]);
 
-    expect(tracks[0]).toMatchObject({ kind: 'quantity', quantityTotal: 10432, quantityUnit: 'steps', minutes: 0 });
-    expect(tracks[1]).toMatchObject({ kind: 'quantity', quantityTotal: 2700, quantityUnit: 'ml', minutes: 0 });
-    expect(tracks[2]).toMatchObject({ kind: 'checkin', quantityTotal: 0, minutes: 0 });
+    expect(tracks).toEqual([]);
     vi.useRealTimers();
   });
 

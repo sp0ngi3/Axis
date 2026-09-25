@@ -43,14 +43,16 @@ import type {
 type Page = 'today' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'lessons' | 'money' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
 type Theme = 'light' | 'dark';
 type CalendarView = 'day' | 'week' | 'month';
+type WorkoutSet = {
+  id: string;
+  reps: number;
+  weightKg: number;
+};
 type WorkoutExercise = {
   id: string;
   name: string;
   muscle: string;
-  sets: number;
-  reps: number;
-  weightKg: number;
-  rir: number;
+  sets: WorkoutSet[];
 };
 type QuickLogDraft = {
   recordedAt: string;
@@ -500,6 +502,7 @@ export default function App() {
               id ? 'Metric updated.' : 'Metric created.'
             )}
             onEntry={(id, body) => runAction(() => api.post(`/api/metrics/${id}/entries`, body), 'Metric entry logged.')}
+            onDailyMeasurements={(body) => runAction(() => api.post('/api/metrics/daily-measurements', body), 'Daily measurements saved.')}
             onEntryDelete={(metricId, entryId) => runAction(() => api.delete(`/api/metrics/${metricId}/entries/${entryId}`), 'Metric entry deleted.')}
             onDelete={(id) => runAction(() => api.delete(`/api/metrics/${id}`), 'Metric deleted.')}
           />
@@ -721,7 +724,7 @@ function TodayPage(props: {
   const [focusDraft, setFocusDraft] = useState<Activity | null>(null);
   const [expandedStatus, setExpandedStatus] = useState<'open' | 'done' | 'skipped' | null>(null);
   const primary = props.today?.primaryGoal ?? props.goals.find((goal) => goal.priority === 'Primary');
-  const plannedToday = props.today?.timeline ?? [];
+  const plannedToday = (props.today?.timeline ?? []).filter((activity) => !isDailyMetricActivity(activity.title));
   const quickTemplates = getQuickTemplates(props.templates);
   const recentQuickLogs = props.activities
     .filter((activity) => activity.status === 'Completed' && quickTemplates.some((template) => template.id === activity.templateId))
@@ -878,9 +881,10 @@ function RecentExecutionPanel(props: {
       <p className="helper-copy">Everything expected today, plus unresolved and completed routines from the previous two days. Older plans stay out of this view.</p>
       <div className="execution-days">
         {props.days.map((day, index) => {
-          const done = day.activities.filter((activity) => activity.status === 'Completed').length;
-          const skipped = day.activities.filter((activity) => activity.status === 'Skipped' || activity.status === 'Cancelled').length;
-          const unresolved = day.activities.length - done - skipped;
+          const visibleActivities = day.activities.filter((activity) => !isDailyMetricActivity(activity.title));
+          const done = visibleActivities.filter((activity) => activity.status === 'Completed').length;
+          const skipped = visibleActivities.filter((activity) => activity.status === 'Skipped' || activity.status === 'Cancelled').length;
+          const unresolved = visibleActivities.length - done - skipped;
           return (
             <article className={`execution-day ${day.isToday ? 'today' : ''}`} key={day.date}>
               <header>
@@ -888,8 +892,8 @@ function RecentExecutionPanel(props: {
                   <span>{day.isToday ? 'Today' : index === 1 ? 'Yesterday' : '2 days ago'}</span>
                   <strong>{formatRecentDay(day.date)}</strong>
                 </div>
-                <div className="execution-day-score" title={`${done} completed out of ${day.activities.length}`}>
-                  <strong>{done}/{day.activities.length}</strong>
+                <div className="execution-day-score" title={`${done} completed out of ${visibleActivities.length}`}>
+                  <strong>{done}/{visibleActivities.length}</strong>
                   <small>done</small>
                 </div>
               </header>
@@ -899,8 +903,8 @@ function RecentExecutionPanel(props: {
                 <span className="skipped">{skipped} skipped</span>
               </div>
               <div className="execution-activity-list">
-                {day.activities.map((activity) => <RecentExecutionRow key={activity.id} activity={activity} isToday={day.isToday} busy={props.busy} onComplete={props.onComplete} onSkip={props.onSkip} />)}
-                {day.activities.length === 0 && <div className="execution-empty"><strong>Nothing expected</strong><span>No routines or manual activities were scheduled.</span></div>}
+                {visibleActivities.map((activity) => <RecentExecutionRow key={activity.id} activity={activity} isToday={day.isToday} busy={props.busy} onComplete={props.onComplete} onSkip={props.onSkip} />)}
+                {visibleActivities.length === 0 && <div className="execution-empty"><strong>Nothing expected</strong><span>No routines or manual activities were scheduled.</span></div>}
               </div>
             </article>
           );
@@ -1031,22 +1035,50 @@ function TodayQuickLogPanel(props: {
 }
 
 function WorkoutExerciseEditor(props: { exercises: WorkoutExercise[]; onChange: (exercises: WorkoutExercise[]) => void }) {
-  function update(id: string, field: keyof WorkoutExercise, value: string | number) {
+  function update(id: string, field: 'name' | 'muscle', value: string) {
     props.onChange(props.exercises.map((exercise) => exercise.id === id ? { ...exercise, [field]: value } : exercise));
   }
 
+  function updateSet(exerciseId: string, setId: string, field: 'reps' | 'weightKg', value: number) {
+    props.onChange(props.exercises.map((exercise) => exercise.id === exerciseId
+      ? { ...exercise, sets: exercise.sets.map((set) => set.id === setId ? { ...set, [field]: value } : set) }
+      : exercise));
+  }
+
+  function addSet(exerciseId: string) {
+    props.onChange(props.exercises.map((exercise) => {
+      if (exercise.id !== exerciseId) return exercise;
+      const previous = exercise.sets.at(-1);
+      return { ...exercise, sets: [...exercise.sets, createWorkoutSet(previous)] };
+    }));
+  }
+
+  function removeSet(exerciseId: string, setId: string) {
+    props.onChange(props.exercises.map((exercise) => exercise.id === exerciseId
+      ? { ...exercise, sets: exercise.sets.length === 1 ? exercise.sets : exercise.sets.filter((set) => set.id !== setId) }
+      : exercise));
+  }
+
   return <section className="workout-builder">
-    <div className="workout-builder-heading"><div><strong>Exercises</strong><span>Sets, reps, load and reps in reserve</span></div><button type="button" className="secondary-button" onClick={() => props.onChange([...props.exercises, createExercise()])}>Add exercise</button></div>
+    <div className="workout-builder-heading"><div><strong>Exercises</strong><span>Log the reps and load for every set separately</span></div><button type="button" className="secondary-button" onClick={() => props.onChange([...props.exercises, createExercise()])}>Add exercise</button></div>
     <div className="exercise-table">
-      {props.exercises.map((exercise, index) => <div className="exercise-row" key={exercise.id}>
-        <label className="field exercise-name"><span>Exercise {index + 1}</span><input value={exercise.name} onChange={(event) => update(exercise.id, 'name', event.target.value)} placeholder="e.g. Incline press" /></label>
-        <label className="field"><span>Muscle</span><select value={exercise.muscle} onChange={(event) => update(exercise.id, 'muscle', event.target.value)}>{workoutMuscles.map((muscle) => <option key={muscle}>{muscle}</option>)}</select></label>
-        <label className="field"><span>Sets</span><input type="number" min="1" max="20" value={exercise.sets} onChange={(event) => update(exercise.id, 'sets', Number(event.target.value))} /></label>
-        <label className="field"><span>Reps</span><input type="number" min="1" max="100" value={exercise.reps} onChange={(event) => update(exercise.id, 'reps', Number(event.target.value))} /></label>
-        <label className="field"><span>kg</span><input type="number" min="0" step="0.1" inputMode="decimal" value={exercise.weightKg} onChange={(event) => update(exercise.id, 'weightKg', Number(event.target.value))} /></label>
-        <label className="field"><span>RIR</span><input type="number" min="0" max="10" value={exercise.rir} onChange={(event) => update(exercise.id, 'rir', Number(event.target.value))} /></label>
-        <button type="button" className="danger-button icon-button exercise-remove" aria-label={`Remove exercise ${index + 1}`} onClick={() => props.onChange(props.exercises.length === 1 ? [createExercise()] : props.exercises.filter((item) => item.id !== exercise.id))}>x</button>
-      </div>)}
+      {props.exercises.map((exercise, index) => <article className="exercise-card" key={exercise.id}>
+        <div className="exercise-card-heading">
+          <label className="field exercise-name"><span>Exercise {index + 1}</span><input value={exercise.name} onChange={(event) => update(exercise.id, 'name', event.target.value)} placeholder="e.g. Incline press" /></label>
+          <label className="field"><span>Muscle</span><select value={exercise.muscle} onChange={(event) => update(exercise.id, 'muscle', event.target.value)}>{workoutMuscles.map((muscle) => <option key={muscle}>{muscle}</option>)}</select></label>
+          <button type="button" className="danger-button icon-button exercise-remove" aria-label={`Remove exercise ${index + 1}`} onClick={() => props.onChange(props.exercises.length === 1 ? [createExercise()] : props.exercises.filter((item) => item.id !== exercise.id))}>x</button>
+        </div>
+        <div className="exercise-sets">
+          {exercise.sets.map((set, setIndex) => <div className="exercise-set-row" key={set.id}>
+            <strong>Set {setIndex + 1}</strong>
+            <label className="field"><span>Reps</span><input aria-label={`${exercise.name || `Exercise ${index + 1}`} set ${setIndex + 1} reps`} type="number" min="1" max="100" value={set.reps} onChange={(event) => updateSet(exercise.id, set.id, 'reps', Number(event.target.value))} /></label>
+            <label className="field"><span>kg</span><input aria-label={`${exercise.name || `Exercise ${index + 1}`} set ${setIndex + 1} kg`} type="number" min="0" step="0.1" inputMode="decimal" value={set.weightKg} onChange={(event) => updateSet(exercise.id, set.id, 'weightKg', Number(event.target.value))} /></label>
+            <span className="set-volume">{roundNumber(set.reps * set.weightKg)} kg vol.</span>
+            <button type="button" className="secondary-button icon-button set-remove" disabled={exercise.sets.length === 1} aria-label={`Remove set ${setIndex + 1} from ${exercise.name || `exercise ${index + 1}`}`} onClick={() => removeSet(exercise.id, set.id)}>x</button>
+          </div>)}
+        </div>
+        <button type="button" className="secondary-button add-set-button" onClick={() => addSet(exercise.id)}>+ Add set</button>
+      </article>)}
     </div>
   </section>;
 }
@@ -1087,8 +1119,8 @@ function TodayTrendsPanel({ activities }: { activities: Activity[] }) {
     return {
       label: week.label,
       workouts: workouts.length,
-      sets: exercises.reduce((sum, exercise) => sum + exercise.sets, 0),
-      volume: exercises.reduce((sum, exercise) => sum + exercise.sets * exercise.reps * exercise.weightKg, 0)
+      sets: exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0),
+      volume: exercises.reduce((sum, exercise) => sum + workoutExerciseVolume(exercise), 0)
     };
   });
   const maxFitnessSets = Math.max(1, ...fitnessWeeks.map((week) => week.sets));
@@ -1111,7 +1143,7 @@ function HypertrophyCoach({ activities }: { activities: Activity[] }) {
     .sort((first, second) => new Date(getActivityDate(second.activity) ?? 0).getTime() - new Date(getActivityDate(first.activity) ?? 0).getTime());
   const weekStart = addDays(new Date(), -6);
   const weeklyExercises = workouts.filter((workout) => new Date(getActivityDate(workout.activity) ?? 0) >= weekStart).flatMap((workout) => workout.exercises);
-  const muscleRows = workoutMuscles.map((muscle) => ({ muscle, sets: weeklyExercises.filter((exercise) => exercise.muscle === muscle).reduce((sum, exercise) => sum + exercise.sets, 0) })).filter((row) => row.sets > 0);
+  const muscleRows = workoutMuscles.map((muscle) => ({ muscle, sets: weeklyExercises.filter((exercise) => exercise.muscle === muscle).reduce((sum, exercise) => sum + exercise.sets.length, 0) })).filter((row) => row.sets > 0);
   const maxSets = Math.max(1, ...muscleRows.map((row) => row.sets));
   const allExercises = workouts.flatMap((workout) => workout.exercises.map((exercise) => ({ exercise, at: getActivityDate(workout.activity) ?? '' })));
   const exerciseNames = Array.from(new Set(allExercises.map((row) => row.exercise.name.trim()).filter(Boolean)));
@@ -1119,17 +1151,14 @@ function HypertrophyCoach({ activities }: { activities: Activity[] }) {
     const logs = allExercises.filter((row) => row.exercise.name.trim().toLowerCase() === name.toLowerCase()).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
     const latest = logs[0]?.exercise;
     const previous = logs[1]?.exercise;
-    const latestVolume = latest ? latest.sets * latest.reps * latest.weightKg : 0;
-    const previousVolume = previous ? previous.sets * previous.reps * previous.weightKg : 0;
+    const latestVolume = latest ? workoutExerciseVolume(latest) : 0;
+    const previousVolume = previous ? workoutExerciseVolume(previous) : 0;
     return { name, latest, delta: previousVolume > 0 ? Math.round((latestVolume - previousVolume) / previousVolume * 100) : null };
   }).slice(0, 6);
-  const averageRir = weeklyExercises.length ? weeklyExercises.reduce((sum, exercise) => sum + exercise.rir, 0) / weeklyExercises.length : null;
   const suggestions: string[] = [];
   if (workouts.length === 0) suggestions.push('Log your first workout with exercises, sets, reps and load. Axis needs at least two comparable sessions to judge progression.');
   muscleRows.filter((row) => row.sets < 8).forEach((row) => suggestions.push(`${row.muscle}: ${row.sets} hard sets this week. Add 2-4 quality sets next week if recovery and technique are good.`));
   muscleRows.filter((row) => row.sets > 20).forEach((row) => suggestions.push(`${row.muscle}: ${row.sets} sets is a high weekly dose. Reduce volume if performance or recovery is falling.`));
-  if (averageRir !== null && averageRir > 3) suggestions.push(`Average RIR is ${roundNumber(averageRir)}. Most working sets may be too easy; add reps or a small amount of load while keeping clean technique.`);
-  if (averageRir !== null && averageRir < 1) suggestions.push(`Average RIR is ${roundNumber(averageRir)}. Too many all-out sets can create fatigue; keep most work around 1-3 RIR.`);
   progressionRows.filter((row) => row.delta !== null && row.delta < -10).forEach((row) => suggestions.push(`${row.name}: volume fell ${Math.abs(row.delta!)}% versus the previous log. Check sleep, exercise order and recovery before adding load.`));
   if (workouts.length > 0 && suggestions.length === 0) suggestions.push('Volume and effort are in a productive range. Keep the same plan and progress one variable at a time: one rep, a small load increase, or one extra set.');
 
@@ -1137,7 +1166,7 @@ function HypertrophyCoach({ activities }: { activities: Activity[] }) {
     <div className="collection-header flush-header"><SectionTitle kicker="Training analysis" title="Hypertrophy coach" /><span className="status-badge maintained">{workouts.length} logged workouts</span></div>
     <div className="coach-grid">
       <article className="compact-chart"><div className="chart-heading"><strong>Weekly hard sets</strong><span>Useful range depends on recovery</span></div><div className="horizontal-bars muscle-volume">{muscleRows.map((row) => <div key={row.muscle}><span>{row.muscle}</span><div><i className={row.sets < 8 ? 'low' : row.sets > 20 ? 'high' : ''} style={{ width: `${row.sets / maxSets * 100}%` }} /></div><strong>{row.sets}</strong></div>)}{muscleRows.length === 0 && <EmptyState text="Add exercises to a completed workout to build this chart." />}</div></article>
-      <article className="compact-chart"><div className="chart-heading"><strong>Exercise progression</strong><span>Volume versus previous log</span></div><div className="progression-list">{progressionRows.map((row) => <div key={row.name}><span><strong>{row.name}</strong><small>{row.latest ? `${row.latest.sets} x ${row.latest.reps} @ ${row.latest.weightKg} kg · RIR ${row.latest.rir}` : ''}</small></span><em className={(row.delta ?? 0) >= 0 ? 'positive' : 'negative'}>{row.delta === null ? 'baseline' : `${row.delta > 0 ? '+' : ''}${row.delta}%`}</em></div>)}{progressionRows.length === 0 && <EmptyState text="Repeat an exercise to see progression." />}</div></article>
+      <article className="compact-chart"><div className="chart-heading"><strong>Exercise progression</strong><span>Volume versus previous log</span></div><div className="progression-list">{progressionRows.map((row) => <div key={row.name}><span><strong>{row.name}</strong><small>{row.latest ? formatWorkoutSets(row.latest) : ''}</small></span><em className={(row.delta ?? 0) >= 0 ? 'positive' : 'negative'}>{row.delta === null ? 'baseline' : `${row.delta > 0 ? '+' : ''}${row.delta}%`}</em></div>)}{progressionRows.length === 0 && <EmptyState text="Repeat an exercise to see progression." />}</div></article>
     </div>
     <div className="coach-advice"><strong>Next plan changes</strong>{suggestions.slice(0, 5).map((suggestion) => <p key={suggestion}>{suggestion}</p>)}</div>
     <small className="helper-copy">Training guidance is based on your logs and common hypertrophy principles. Pain, injury, illness and medical constraints need professional judgment.</small>
@@ -2073,6 +2102,7 @@ function CountdownsPage(props: {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [visibilityFilter, setVisibilityFilter] = useState('active');
   const [page, setPage] = useState(1);
+  const [now, setNow] = useState(() => new Date());
   const categories = Array.from(new Set(props.countdowns.map((countdown) => countdown.category).filter(Boolean))).sort();
   const filtered = props.countdowns.filter((countdown) => {
     const text = `${countdown.title} ${countdown.description} ${countdown.category}`.toLowerCase();
@@ -2085,6 +2115,11 @@ function CountdownsPage(props: {
   useEffect(() => {
     setPage(1);
   }, [query, categoryFilter, visibilityFilter]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   return (
     <section className="workspace-grid drawer-workspace countdowns-page">
@@ -2114,19 +2149,28 @@ function CountdownsPage(props: {
         </div>
 
         <div className="entity-grid countdown-grid">
-          {paged.items.map((countdown) => (
-            <article className={countdown.isPast ? 'entity-card countdown-card elapsed' : 'entity-card countdown-card'} style={{ '--countdown-color': countdown.color, '--countdown-progress': `${countdownProgress(countdown) * 3.6}deg` } as React.CSSProperties} key={countdown.id}>
+          {paged.items.map((countdown) => {
+            const timing = liveCountdownTiming(countdown.targetAt, now);
+            return (
+            <article className={timing.isPast ? 'entity-card countdown-card elapsed' : 'entity-card countdown-card'} style={{ '--countdown-color': countdown.color, '--countdown-progress': `${countdownProgress(countdown, now) * 3.6}deg` } as React.CSSProperties} key={countdown.id}>
               <i className="countdown-scan" aria-hidden="true" />
               <div className="entity-card-top">
                 <strong>{countdown.title}</strong>
                 <span>{countdown.category || 'Countdown'}</span>
               </div>
               <div className="countdown-stage">
-                <div className="countdown-orbit"><span>{countdown.isPast ? '✓' : countdown.daysRemaining}</span><small>{countdown.isPast ? 'arrived' : 'days'}</small></div>
-                <div className="countdown-clock"><div><strong>{String(countdown.hoursRemaining).padStart(2, '0')}</strong><span>hours</span></div><b>:</b><div><strong>{String(countdown.minutesRemaining).padStart(2, '0')}</strong><span>minutes</span></div></div>
+                <div className="countdown-orbit"><span>{timing.isPast ? '✓' : timing.daysRemaining}</span><small>{timing.isPast ? 'arrived' : 'days'}</small></div>
+                <div className="countdown-clock"><div><strong>{String(timing.hoursRemaining).padStart(2, '0')}</strong><span>hours</span></div><b>:</b><div><strong>{String(timing.minutesRemaining).padStart(2, '0')}</strong><span>minutes</span></div></div>
               </div>
               <p>{countdown.description || 'No notes yet.'}</p>
               <div className="countdown-interval"><strong>{countdown.totalDurationDays ?? Math.max(0, Math.round((new Date(countdown.targetAt).getTime() - new Date(countdown.createdAt ?? Date.now()).getTime()) / 86400000))} days total</strong><span>{countdown.calendarMonths ?? 0} months, {countdown.calendarDays ?? 0} days · {countdown.elapsedDays ?? 0} elapsed</span></div>
+              {!timing.isPast && (
+                <div className="countdown-mirror">
+                  <span>Same distance back</span>
+                  <strong>{timing.pastEquivalentDate.toLocaleDateString(undefined, { dateStyle: 'medium' })}</strong>
+                  <small>{timing.daysRemaining === 0 ? 'The equivalent point is today.' : `${timing.daysRemaining} days ago was this date.`}</small>
+                </div>
+              )}
               <dl className="compact-dl">
                 <div><dt>Target</dt><dd>{formatDateTime(countdown.targetAt)}</dd></div>
                 <div><dt>Pinned</dt><dd>{countdown.isPinned ? 'Yes' : 'No'}</dd></div>
@@ -2140,7 +2184,8 @@ function CountdownsPage(props: {
                 <button className="danger-button" onClick={() => confirmDelete('Delete this countdown?') && props.onDelete(countdown.id)}>Delete</button>
               </div>
             </article>
-          ))}
+            );
+          })}
           {filtered.length === 0 && <EmptyState text="No countdowns match the current filters." />}
         </div>
         <PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} />
@@ -2999,6 +3044,7 @@ function MetricsPage(props: {
   busy: boolean;
   onSave: (metric: unknown, id?: string) => void;
   onEntry: (id: string, body: unknown) => Promise<void> | void;
+  onDailyMeasurements: (body: unknown) => Promise<void> | void;
   onEntryDelete: (metricId: string, entryId: string) => Promise<void> | void;
   onDelete: (id: string) => void;
 }) {
@@ -3123,6 +3169,8 @@ function MetricsPage(props: {
             {metricTypes.map((type) => <option key={type} value={type}>{type}</option>)}
           </select>
         </div>
+
+        <DailyMeasurementsPanel metrics={props.metrics} busy={props.busy} onSave={props.onDailyMeasurements} />
 
         <MetricComparisonPanel metrics={props.metrics} />
 
@@ -3284,6 +3332,76 @@ function formatMetricValue(metric: Metric, value: number) {
   if (isSleepMetric(metric)) return formatSleepDuration(value);
   if (['steps', 'ml', 'kcal'].includes(metric.unit.trim().toLowerCase())) return `${Math.round(value).toLocaleString()} ${metric.unit}`;
   return `${roundNumber(value)}${metric.unit ? ` ${metric.unit}` : ''}`;
+}
+
+function DailyMeasurementsPanel(props: { metrics: Metric[]; busy: boolean; onSave: (body: unknown) => Promise<void> | void }) {
+  const today = toDateInput(new Date());
+  const [recordedOn, setRecordedOn] = useState(today);
+  const [values, setValues] = useState({ steps: '', waterLiters: '', calories: '', protein: '', carbohydrates: '', fat: '', fiber: '', notes: '' });
+  const numericKeys = ['steps', 'waterLiters', 'calories', 'protein', 'carbohydrates', 'fat', 'fiber'] as const;
+  const hasValue = numericKeys.some((key) => values[key].trim() !== '');
+  const stepsTarget = props.metrics.find((metric) => metric.name === 'Steps')?.targetValue;
+  const waterTarget = props.metrics.find((metric) => metric.name === 'Water consumed')?.targetValue;
+
+  function optionalNumber(value: string) {
+    return value.trim() === '' ? null : Math.max(0, Number(value));
+  }
+
+  function update(field: keyof typeof values, value: string) {
+    setValues((current) => ({ ...current, [field]: value }));
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!hasValue) return;
+    void props.onSave({
+      recordedOn,
+      steps: values.steps.trim() === '' ? null : Math.round(Number(values.steps)),
+      waterMl: values.waterLiters.trim() === '' ? null : Math.round(Number(values.waterLiters) * 1000),
+      calories: optionalNumber(values.calories),
+      protein: optionalNumber(values.protein),
+      carbohydrates: optionalNumber(values.carbohydrates),
+      fat: optionalNumber(values.fat),
+      fiber: optionalNumber(values.fiber),
+      notes: values.notes
+    });
+    setValues({ steps: '', waterLiters: '', calories: '', protein: '', carbohydrates: '', fat: '', fiber: '', notes: '' });
+  }
+
+  return (
+    <section className="surface daily-measurements-panel">
+      <div className="daily-measurements-heading">
+        <div>
+          <p className="eyebrow">Daily metrics</p>
+          <h3>Steps, water and nutrition</h3>
+          <p>These values go straight into metric history and the charts below. They never become tasks or missed activities.</p>
+        </div>
+        <div className="daily-measurement-targets" aria-label="Daily metric targets">
+          <span><strong>{stepsTarget ? Math.round(stepsTarget).toLocaleString() : '—'}</strong> steps target</span>
+          <span><strong>{waterTarget ? `${roundNumber(waterTarget / 1000)} L` : '—'}</strong> water target</span>
+        </div>
+      </div>
+      <form onSubmit={submit}>
+        <div className="daily-measurement-date">
+          <label className="field"><span>Day</span><input aria-label="Measurement day" type="date" min={toDateInput(addDays(new Date(), -2))} max={today} value={recordedOn} onChange={(event) => setRecordedOn(event.target.value)} /></label>
+          <p>Today, yesterday or two days ago. Saving the same day again updates this panel's entry instead of creating a task.</p>
+        </div>
+        <div className="daily-measurement-grid">
+          <label className="field metric-accent-cyan"><span>Steps</span><input aria-label="Daily steps" type="number" min="0" step="1" inputMode="numeric" placeholder="e.g. 10000" value={values.steps} onChange={(event) => update('steps', event.target.value)} /></label>
+          <label className="field metric-accent-violet"><span>Water (L)</span><input aria-label="Daily water liters" type="number" min="0" step="0.1" inputMode="decimal" placeholder="e.g. 2.6" value={values.waterLiters} onChange={(event) => update('waterLiters', event.target.value)} /></label>
+          <label className="field metric-accent-gold"><span>Calories (kcal)</span><input aria-label="Daily calories" type="number" min="0" step="10" inputMode="numeric" placeholder="e.g. 2300" value={values.calories} onChange={(event) => update('calories', event.target.value)} /></label>
+          <label className="field metric-accent-pink"><span>Protein (g)</span><input aria-label="Daily protein" type="number" min="0" step="0.1" inputMode="decimal" placeholder="e.g. 140" value={values.protein} onChange={(event) => update('protein', event.target.value)} /></label>
+          <label className="field"><span>Carbs (g)</span><input aria-label="Daily carbohydrates" type="number" min="0" step="0.1" inputMode="decimal" placeholder="e.g. 260" value={values.carbohydrates} onChange={(event) => update('carbohydrates', event.target.value)} /></label>
+          <label className="field"><span>Fat (g)</span><input aria-label="Daily fat" type="number" min="0" step="0.1" inputMode="decimal" placeholder="e.g. 70" value={values.fat} onChange={(event) => update('fat', event.target.value)} /></label>
+          <label className="field"><span>Fiber (g)</span><input aria-label="Daily fiber" type="number" min="0" step="0.1" inputMode="decimal" placeholder="e.g. 30" value={values.fiber} onChange={(event) => update('fiber', event.target.value)} /></label>
+        </div>
+        <div className="daily-measurement-actions">
+          <input aria-label="Daily measurement note" value={values.notes} onChange={(event) => update('notes', event.target.value)} placeholder="Optional note" />
+          <button type="submit" disabled={props.busy || !hasValue}>Save measurements</button>
+        </div>
+      </form>
+    </section>
+  );
 }
 
 function formatMetricDelta(metric: Metric, value: number) {
@@ -4451,8 +4569,21 @@ function canCompleteActivity(activity: Activity) {
   return !activityDate || startOfDay(new Date(activityDate)).getTime() <= startOfDay(new Date()).getTime();
 }
 
+function createWorkoutSet(source?: Pick<WorkoutSet, 'reps' | 'weightKg'>): WorkoutSet {
+  return {
+    id: `set-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    reps: source?.reps ?? 10,
+    weightKg: source?.weightKg ?? 0
+  };
+}
+
 function createExercise(): WorkoutExercise {
-  return { id: `exercise-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: '', muscle: 'Chest', sets: 3, reps: 10, weightKg: 0, rir: 2 };
+  return {
+    id: `exercise-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    name: '',
+    muscle: 'Chest',
+    sets: [createWorkoutSet(), createWorkoutSet(), createWorkoutSet()]
+  };
 }
 
 function serializeWorkoutNotes(notes: string, exercises: WorkoutExercise[]) {
@@ -4466,17 +4597,37 @@ function stripWorkoutNotes(notes: string) {
   return (markerIndex >= 0 ? notes.slice(0, markerIndex) : notes).trim();
 }
 
-function parseWorkoutExercises(notes: string): WorkoutExercise[] {
+export function parseWorkoutExercises(notes: string): WorkoutExercise[] {
   const markerIndex = notes.indexOf(workoutMarker);
   if (markerIndex < 0) return [];
   try {
     const value = JSON.parse(notes.slice(markerIndex + workoutMarker.length));
     if (!Array.isArray(value)) return [];
-    return value.filter((item): item is WorkoutExercise => item && typeof item.name === 'string' && typeof item.muscle === 'string')
-      .map((item) => ({ ...item, id: item.id || createExercise().id, sets: Number(item.sets) || 1, reps: Number(item.reps) || 1, weightKg: Number(item.weightKg) || 0, rir: Number.isFinite(Number(item.rir)) ? Number(item.rir) : 2 }));
+    return value.flatMap((item): WorkoutExercise[] => {
+      if (!item || typeof item.name !== 'string' || typeof item.muscle !== 'string') return [];
+      const sets = Array.isArray(item.sets)
+        ? item.sets.filter((set: unknown) => set && typeof set === 'object').map((set: { id?: string; reps?: unknown; weightKg?: unknown }) => ({
+          id: set.id || createWorkoutSet().id,
+          reps: Math.max(1, Number(set.reps) || 1),
+          weightKg: Math.max(0, Number(set.weightKg) || 0)
+        }))
+        : Array.from({ length: Math.max(1, Number(item.sets) || 1) }, () => createWorkoutSet({
+          reps: Math.max(1, Number(item.reps) || 1),
+          weightKg: Math.max(0, Number(item.weightKg) || 0)
+        }));
+      return [{ id: item.id || createExercise().id, name: item.name, muscle: item.muscle, sets: sets.length ? sets : [createWorkoutSet()] }];
+    });
   } catch {
     return [];
   }
+}
+
+function workoutExerciseVolume(exercise: WorkoutExercise) {
+  return exercise.sets.reduce((sum, set) => sum + set.reps * set.weightKg, 0);
+}
+
+function formatWorkoutSets(exercise: WorkoutExercise) {
+  return `${exercise.sets.length} ${exercise.sets.length === 1 ? 'set' : 'sets'} · ${exercise.sets.map((set) => `${set.reps} x ${roundNumber(set.weightKg)} kg`).join(' · ')}`;
 }
 
 function isDurationActivity(title: string) {
@@ -4484,7 +4635,7 @@ function isDurationActivity(title: string) {
 }
 
 function isBinaryCheckIn(title: string) {
-  return ['Creatine dose', 'Desk mobility reset', 'No alcohol check-in', 'No vape check-in', 'Diet check-in', 'SPF 30+', 'Night retinoid', 'Floss teeth'].includes(title);
+  return ['Creatine dose', 'Desk mobility reset', 'No alcohol check-in', 'No vape check-in', 'Diet check-in', 'SPF 30+', 'Night retinoid', 'Floss teeth', 'Grooming reset'].includes(title);
 }
 
 function activityDisplayMeasure(activity: Activity) {
@@ -4502,6 +4653,10 @@ function activityDisplayMeasure(activity: Activity) {
   return 'check-in';
 }
 
+function isDailyMetricActivity(title: string) {
+  return ['Daily nutrition', 'Steps', 'Water intake'].includes(title);
+}
+
 function getQuickTemplates(templates: ActivityTemplate[]) {
   const templateByTitle = new Map(templates.map((template) => [template.title, template]));
   return [
@@ -4517,9 +4672,7 @@ function getQuickTemplates(templates: ActivityTemplate[]) {
     'SPF 30+',
     'Night retinoid',
     'Floss teeth',
-    'Daily nutrition',
-    'Steps',
-    'Water intake'
+    'Grooming reset'
   ].map((title) => templateByTitle.get(title)).filter(Boolean) as ActivityTemplate[];
 }
 
@@ -4531,7 +4684,7 @@ function findGoalIdForTemplate(templateTitle: string, goals: Goal[]) {
     'No alcohol check-in': 'Alcohol-free baseline',
     'No vape check-in': 'Vape-free baseline',
     'Diet check-in': 'Diet adherence for leanness',
-    'DSA problem rep': 'DSA 250 list x6 repetitions',
+    'Grooming reset': 'Weekly grooming maintenance',
     'System design case study': 'System design interview track'
   };
   const targetTitle = exactMap[templateTitle];
@@ -4701,12 +4854,27 @@ function formatMoney(value: number) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(value);
 }
 
-function countdownProgress(countdown: Countdown) {
-  if (countdown.isPast) return 100;
-  const start = countdown.createdAt ? new Date(countdown.createdAt).getTime() : Date.now();
+function countdownProgress(countdown: Countdown, now = new Date()) {
+  if (new Date(countdown.targetAt).getTime() < now.getTime()) return 100;
+  const start = countdown.createdAt ? new Date(countdown.createdAt).getTime() : now.getTime();
   const target = new Date(countdown.targetAt).getTime();
   if (target <= start) return 0;
-  return Math.max(0, Math.min(100, (Date.now() - start) / (target - start) * 100));
+  return Math.max(0, Math.min(100, (now.getTime() - start) / (target - start) * 100));
+}
+
+export function liveCountdownTiming(targetAt: string, now = new Date()) {
+  const remainingSeconds = Math.max(0, Math.floor((new Date(targetAt).getTime() - now.getTime()) / 1000));
+  const daysRemaining = Math.floor(remainingSeconds / 86400);
+  const pastEquivalentDate = new Date(now);
+  pastEquivalentDate.setDate(pastEquivalentDate.getDate() - daysRemaining);
+
+  return {
+    daysRemaining,
+    hoursRemaining: Math.floor(remainingSeconds % 86400 / 3600),
+    minutesRemaining: Math.floor(remainingSeconds % 3600 / 60),
+    pastEquivalentDate,
+    isPast: new Date(targetAt).getTime() < now.getTime()
+  };
 }
 
 function moneySparklinePoints(entries: SavingsEntry[]) {

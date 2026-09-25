@@ -12,6 +12,8 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddHostedService<RecurringActivityRefreshService>();
+
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
@@ -41,7 +43,8 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-await app.Services.InitializeAxisDatabaseAsync();
+var seedData = builder.Configuration.GetValue<bool>("SeedData");
+await app.Services.InitializeAxisDatabaseAsync(seedData);
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", app = "Axis", time = DateTimeOffset.UtcNow }));
 
@@ -852,6 +855,75 @@ static void MapMetrics(WebApplication app)
         return Results.Created($"/api/metrics/{id}/entries/{entry.Id}", entry);
     });
 
+    group.MapPost("/daily-measurements", async (DailyMeasurementsRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        if (request.RecordedOn < today.AddDays(-2) || request.RecordedOn > today)
+        {
+            return Results.BadRequest("Daily measurements can only be recorded for today or the previous two days.");
+        }
+
+        var values = new (string MetricName, decimal? Value)[]
+        {
+            ("Steps", request.Steps),
+            ("Water consumed", request.WaterMl),
+            ("Calories", request.Calories),
+            ("Protein intake", request.Protein),
+            ("Carbohydrates", request.Carbohydrates),
+            ("Fat intake", request.Fat),
+            ("Fiber intake", request.Fiber)
+        };
+        if (values.All(item => item.Value is null))
+        {
+            return Results.BadRequest("Enter at least one daily measurement.");
+        }
+        if (values.Any(item => item.Value < 0))
+        {
+            return Results.BadRequest("Daily measurements cannot be negative.");
+        }
+
+        var metricNames = values.Where(item => item.Value is not null).Select(item => item.MetricName).ToList();
+        var metrics = await db.Metrics
+            .Where(metric => metricNames.Contains(metric.Name))
+            .ToDictionaryAsync(metric => metric.Name, StringComparer.OrdinalIgnoreCase, ct);
+        if (metrics.Count != metricNames.Count)
+        {
+            return Results.Problem("One or more daily metrics are missing from the database.");
+        }
+
+        var offset = DateTimeOffset.Now.Offset;
+        var dayStart = new DateTimeOffset(request.RecordedOn.ToDateTime(TimeOnly.MinValue), offset);
+        var dayEnd = new DateTimeOffset(request.RecordedOn.ToDateTime(TimeOnly.MaxValue), offset);
+        var marker = $"[daily-measurements:{request.RecordedOn:yyyy-MM-dd}]";
+        var metricIds = metrics.Values.Select(metric => metric.Id).ToList();
+        var existingEntries = (await db.MetricEntries
+            .Where(entry => metricIds.Contains(entry.MetricId))
+            .ToListAsync(ct))
+            .Where(entry => entry.RecordedAt >= dayStart && entry.RecordedAt <= dayEnd)
+            .ToList();
+        var recordedAt = new DateTimeOffset(request.RecordedOn.ToDateTime(new TimeOnly(20, 0)), offset);
+        var saved = new List<MetricEntry>();
+
+        foreach (var (metricName, value) in values.Where(item => item.Value is not null))
+        {
+            var metric = metrics[metricName];
+            var entry = existingEntries.FirstOrDefault(item => item.MetricId == metric.Id && item.Notes.StartsWith("[daily-measurements:", StringComparison.Ordinal));
+            if (entry is null)
+            {
+                entry = new MetricEntry { MetricId = metric.Id };
+                db.MetricEntries.Add(entry);
+            }
+
+            entry.Value = value!.Value;
+            entry.RecordedAt = recordedAt;
+            entry.Notes = string.IsNullOrWhiteSpace(request.Notes) ? marker : $"{marker} {request.Notes.Trim()}";
+            saved.Add(entry);
+        }
+
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(saved.Select(entry => new { entry.Id, entry.MetricId, entry.Value, entry.RecordedAt, entry.Notes }));
+    });
+
     group.MapGet("/{id:guid}/entries", async (Guid id, DateTimeOffset? from, DateTimeOffset? to, AxisDbContext db, CancellationToken ct) =>
     {
         var entries = (await db.MetricEntries
@@ -1333,6 +1405,7 @@ static void MapDashboard(WebApplication app)
 
         var recentActivities = (await db.Activities.Include(activity => activity.LifeArea).Include(activity => activity.Goal)
             .ToListAsync(ct))
+            .Where(activity => !IsDailyMetricActivity(activity.Title))
             .Where(activity => IsInRange(ActivityTodayDate(activity), recentStart, end))
             .OrderBy(ActivityTodayDate)
             .ToList();
@@ -1805,6 +1878,7 @@ static object ToGoalResponse(Goal goal)
 static object ToGoalProgressResponse(Goal goal, IReadOnlyCollection<Activity> completedActivities)
 {
     var today = DateOnly.FromDateTime(DateTime.Now);
+    var isWeeklyGrooming = goal.Title.Equals("Weekly grooming maintenance", StringComparison.OrdinalIgnoreCase);
     var completionDates = completedActivities.Select(activity => DateOnly.FromDateTime(ActivityCompletionDate(activity).LocalDateTime))
         .Distinct().OrderBy(date => date).ToList();
     var trackingTargetDays = goal.Unit.Equals("days", StringComparison.OrdinalIgnoreCase)
@@ -1813,11 +1887,13 @@ static object ToGoalProgressResponse(Goal goal, IReadOnlyCollection<Activity> co
     var journeyProgress = trackingTargetDays is null ? (decimal?)null : ProgressCalculator.CalculateRatio(completionDates.Count, trackingTargetDays.Value);
     var rollingCompletedDays = completionDates.Count(date => date >= today.AddDays(-27));
     var rollingTarget = Math.Max(1, (goal.MaintenanceTargetPerWeek ?? 7) * 4);
-    var baseProgress = goal.ProgressType is ProgressType.Maintenance or ProgressType.Streak or ProgressType.Decay
-        ? ProgressCalculator.CalculateRatio(rollingCompletedDays, rollingTarget)
-        : ProgressCalculator.CalculateGoalProgress(goal);
     var lastMaintainedAt = completedActivities.Select(ActivityCompletionDate).OrderByDescending(date => date).FirstOrDefault();
     DateTimeOffset? maintainedAt = lastMaintainedAt == default ? null : lastMaintainedAt;
+    var baseProgress = isWeeklyGrooming
+        ? maintainedAt is null ? 0 : 100
+        : goal.ProgressType is ProgressType.Maintenance or ProgressType.Streak or ProgressType.Decay
+        ? ProgressCalculator.CalculateRatio(rollingCompletedDays, rollingTarget)
+        : ProgressCalculator.CalculateGoalProgress(goal);
     var decayGraceDays = goal.Title.Equals("Lean muscle recomposition", StringComparison.OrdinalIgnoreCase) ? 14 : 0;
     var decayAnchor = maintainedAt?.AddDays(decayGraceDays);
     var decayedProgress = goal.DecayRatePercentPerWeek > 0
@@ -1843,8 +1919,10 @@ static object ToGoalProgressResponse(Goal goal, IReadOnlyCollection<Activity> co
         LongestStreakDays = longestStreak,
         DecayGraceDays = decayGraceDays,
         FirstTrackedAt = completedActivities.Select(ActivityCompletionDate).OrderBy(date => date).Cast<DateTimeOffset?>().FirstOrDefault(),
-        MaintenanceSatisfied = decayedProgress >= goal.MaintenanceThreshold
-            && (goal.MaintenanceTargetPerWeek is null || completedThisWeek >= goal.MaintenanceTargetPerWeek)
+        MaintenanceSatisfied = isWeeklyGrooming
+            ? maintainedAt is not null && DateTimeOffset.UtcNow - maintainedAt.Value < TimeSpan.FromDays(7)
+            : decayedProgress >= goal.MaintenanceThreshold
+                && (goal.MaintenanceTargetPerWeek is null || completedThisWeek >= goal.MaintenanceTargetPerWeek)
     };
 }
 
@@ -1930,12 +2008,14 @@ static object ToActivityResponse(Activity activity)
 
 static object ToCountdownResponse(Countdown countdown)
 {
-    var remaining = countdown.TargetAt - DateTimeOffset.UtcNow;
+    var now = DateTimeOffset.UtcNow;
+    var remaining = countdown.TargetAt - now;
     var totalSeconds = Math.Max(0, remaining.TotalSeconds);
     var createdDate = DateOnly.FromDateTime(countdown.CreatedAt.LocalDateTime);
     var targetDate = DateOnly.FromDateTime(countdown.TargetAt.LocalDateTime);
+    var today = DateOnly.FromDateTime(DateTime.Now);
     var totalDurationDays = Math.Max(0, targetDate.DayNumber - createdDate.DayNumber);
-    var elapsedDays = Math.Clamp(DateOnly.FromDateTime(DateTime.Now).DayNumber - createdDate.DayNumber, 0, totalDurationDays);
+    var elapsedDays = Math.Clamp(today.DayNumber - createdDate.DayNumber, 0, totalDurationDays);
     var (calendarMonths, calendarDays) = CalendarMonthDayDifference(createdDate, targetDate);
 
     return new
@@ -2164,6 +2244,11 @@ static bool IsWithinDailyLogWindow(string title, DateTimeOffset? value)
 
     var day = value.Value.LocalDateTime.Date;
     return day >= DateTime.Now.Date.AddDays(-2) && day <= DateTime.Now.Date;
+}
+
+static bool IsDailyMetricActivity(string title)
+{
+    return title is "Daily nutrition" or "Steps" or "Water intake";
 }
 
 static async Task SyncActivityMetricAsync(AxisDbContext db, Activity activity, CancellationToken cancellationToken)
@@ -2448,6 +2533,8 @@ public sealed record MoveActivityRequest(DateTimeOffset PlannedStartAt, DateTime
 public sealed record MetricRequest(Guid? LifeAreaId, Guid? GoalId, string Name, string? Unit, MetricValueType ValueType, decimal? TargetValue, int SortOrder, bool IsActive);
 
 public sealed record MetricEntryRequest(decimal Value, DateTimeOffset? RecordedAt, string? Notes);
+
+public sealed record DailyMeasurementsRequest(DateOnly RecordedOn, decimal? Steps, decimal? WaterMl, decimal? Calories, decimal? Protein, decimal? Carbohydrates, decimal? Fat, decimal? Fiber, string? Notes);
 
 public sealed record CountdownRequest(string Title, string? Description, DateTimeOffset TargetAt, string? Category, string? Color, bool IsPinned, bool IsArchived);
 

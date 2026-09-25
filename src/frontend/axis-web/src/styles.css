@@ -1754,6 +1754,99 @@ textarea:focus {
   overflow: hidden;
 }
 
+.daily-measurements-panel {
+  position: relative;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--cyan) 38%, var(--line));
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--cyan) 5%, transparent), transparent 38%),
+    var(--panel);
+}
+
+.daily-measurements-panel::after {
+  position: absolute;
+  top: -54px;
+  right: -34px;
+  width: 150px;
+  height: 150px;
+  border: 1px solid color-mix(in srgb, var(--pink) 22%, transparent);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 18px color-mix(in srgb, var(--cyan) 3%, transparent), inset 0 0 0 36px color-mix(in srgb, var(--pink) 3%, transparent);
+  content: '';
+  pointer-events: none;
+  animation: slow-spin 12s linear infinite;
+}
+
+.daily-measurements-panel > * { position: relative; z-index: 1; }
+
+.daily-measurements-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+
+.daily-measurements-heading h3 { margin: 3px 0 5px; }
+.daily-measurements-heading p:last-child { max-width: 720px; margin: 0; color: var(--muted); font-size: 12px; }
+
+.daily-measurement-targets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.daily-measurement-targets span {
+  display: grid;
+  gap: 2px;
+  min-width: 120px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.daily-measurement-targets strong { color: var(--text); font-size: 15px; }
+
+.daily-measurement-date {
+  display: grid;
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.daily-measurement-date p { margin: 0 0 9px; color: var(--muted); font-size: 11px; }
+
+.daily-measurement-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.daily-measurement-grid .field {
+  position: relative;
+  padding-left: 8px;
+  border-left: 2px solid var(--line-strong);
+}
+
+.daily-measurement-grid .metric-accent-cyan { border-left-color: var(--cyan); }
+.daily-measurement-grid .metric-accent-violet { border-left-color: var(--violet); }
+.daily-measurement-grid .metric-accent-gold { border-left-color: var(--gold); }
+.daily-measurement-grid .metric-accent-pink { border-left-color: var(--pink); }
+
+.daily-measurement-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.daily-measurement-actions button { min-width: 180px; }
+
 .metric-comparison-panel {
   position: relative;
   overflow: hidden;
@@ -4021,20 +4114,25 @@ button,
 
 .exercise-table {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
-.exercise-row {
+.exercise-card {
   display: grid;
-  grid-template-columns: minmax(170px, 2fr) minmax(110px, 1fr) repeat(4, minmax(64px, .55fr)) 36px;
-  gap: 8px;
-  align-items: end;
-  padding: 10px;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid var(--line);
   background: var(--surface);
 }
 
-.exercise-row .field span {
+.exercise-card-heading {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(120px, 1fr) 36px;
+  gap: 8px;
+  align-items: end;
+}
+
+.exercise-card .field span {
   font-size: 9px;
 }
 
@@ -4042,6 +4140,51 @@ button,
   width: 36px;
   height: 40px;
   padding: 0;
+}
+
+.exercise-sets {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+  background: var(--bg-alt);
+}
+
+.exercise-set-row {
+  display: grid;
+  grid-template-columns: minmax(52px, .6fr) repeat(2, minmax(82px, 1fr)) minmax(82px, .9fr) 36px;
+  gap: 8px;
+  align-items: end;
+}
+
+.exercise-set-row > strong,
+.set-volume {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+}
+
+.exercise-set-row > strong {
+  color: var(--text);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.set-volume {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.set-remove {
+  width: 36px;
+  height: 40px;
+  padding: 0;
+}
+
+.add-set-button {
+  justify-self: start;
 }
 
 .today-chart-grid,
@@ -4322,8 +4465,8 @@ button,
   border-top: 1px solid var(--line-strong);
 }
 
-.app-editor-drawer .exercise-row {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.app-editor-drawer .exercise-card-heading {
+  grid-template-columns: minmax(0, 2fr) minmax(110px, 1fr) 36px;
 }
 
 .app-editor-drawer .exercise-name {
@@ -5042,6 +5185,10 @@ button,
     grid-template-columns: 1fr;
   }
 
+  .daily-measurement-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .nutrition-log-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -5055,8 +5202,8 @@ button,
     grid-template-columns: 1fr;
   }
 
-  .exercise-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .exercise-card-heading {
+    grid-template-columns: minmax(0, 2fr) minmax(110px, 1fr) 36px;
   }
 
   .exercise-name {
@@ -5140,7 +5287,10 @@ button,
 
   .metric-comparison-toolbar,
   .comparison-controls,
-  .measurement-hint {
+  .measurement-hint,
+  .daily-measurements-heading,
+  .daily-measurement-date,
+  .daily-measurement-actions {
     display: grid;
     grid-template-columns: 1fr;
   }
@@ -5148,6 +5298,9 @@ button,
   .comparison-controls { justify-content: stretch; }
   .comparison-controls .compact-field { min-width: 0; }
   .measurement-hint span { text-align: left; }
+  .daily-measurement-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .daily-measurement-targets { justify-self: stretch; }
+  .daily-measurement-actions button { width: 100%; }
 
   .signal-mode-tabs {
     width: 100%;
@@ -5220,9 +5373,21 @@ button,
     border-bottom: 1px solid var(--line);
   }
 
-  .exercise-row,
+  .exercise-card-heading,
   .journal-sliders {
     grid-template-columns: 1fr;
+  }
+
+  .exercise-set-row {
+    grid-template-columns: 48px repeat(2, minmax(0, 1fr)) 36px;
+  }
+
+  .set-volume {
+    display: none;
+  }
+
+  .exercise-remove {
+    width: 100%;
   }
 
   .exercise-name {
@@ -5542,6 +5707,19 @@ button,
 }
 
 .countdown-interval span { color: var(--muted); font-size: 11px; }
+.countdown-mirror {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 14px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--countdown-color) 32%, var(--line));
+  background: linear-gradient(105deg, color-mix(in srgb, var(--countdown-color) 9%, var(--surface-raised)), var(--surface-raised));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--countdown-color) 74%, var(--cyan));
+}
+.countdown-mirror span { color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.countdown-mirror strong { color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums; }
+.countdown-mirror small { grid-column: 1 / -1; color: color-mix(in srgb, var(--countdown-color) 62%, var(--text)); font-size: 11px; }
 .countdown-card { animation: vapor-enter 460ms ease both; }
 .countdown-orbit { animation: orbit-breathe 4.8s ease-in-out infinite; }
 

@@ -9,6 +9,7 @@ services:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__Axis: Data Source=/data/axis.db
       Backup__Directory: /backups
+      SeedData: "false"
       Cors__AllowedOrigins__0: http://localhost:3001
       Cors__AllowedOrigins__1: http://localhost:5174
     ports:

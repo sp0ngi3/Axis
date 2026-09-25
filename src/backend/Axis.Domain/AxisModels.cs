@@ -273,6 +273,21 @@ public sealed class LifeLesson : Entity
     public bool IsPinned { get; set; }
 }
 
+public sealed class FocusNote : Entity
+{
+    public string Title { get; set; } = string.Empty;
+
+    public string Content { get; set; } = string.Empty;
+
+    public string Label { get; set; } = string.Empty;
+
+    public string Color { get; set; } = "#7f6cff";
+
+    public bool IsPinned { get; set; }
+
+    public bool IsArchived { get; set; }
+}
+
 public sealed class SavingsEntry : Entity
 {
     public DateTimeOffset RecordedAt { get; set; } = DateTimeOffset.UtcNow;

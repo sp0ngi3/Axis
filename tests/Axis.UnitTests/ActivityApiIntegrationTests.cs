@@ -15,6 +15,47 @@ namespace Axis.UnitTests;
 public sealed class ActivityApiIntegrationTests
 {
     [Fact]
+    public async Task Focus_notes_support_create_edit_archive_list_and_delete()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+
+        var created = await client.PostAsJsonAsync("/api/focus-notes", new
+        {
+            title = "Learning wins this week",
+            content = "Protect the best evening hours for interview preparation.",
+            label = "This week",
+            color = "#7f6cff",
+            isPinned = true,
+            isArchived = false
+        });
+        await AssertStatusAsync(created, HttpStatusCode.Created);
+        using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var id = createdJson.RootElement.GetProperty("id").GetGuid();
+
+        using var active = JsonDocument.Parse(await client.GetStringAsync("/api/focus-notes"));
+        Assert.Contains(active.RootElement.EnumerateArray(), item => item.GetProperty("id").GetGuid() == id);
+
+        await AssertStatusAsync(await client.PutAsJsonAsync($"/api/focus-notes/{id}", new
+        {
+            title = "Learning stays first",
+            content = "Archive after the week is reviewed.",
+            label = "Learning",
+            color = "#39d9e6",
+            isPinned = false,
+            isArchived = true
+        }), HttpStatusCode.OK);
+
+        using var activeAfterArchive = JsonDocument.Parse(await client.GetStringAsync("/api/focus-notes"));
+        Assert.DoesNotContain(activeAfterArchive.RootElement.EnumerateArray(), item => item.GetProperty("id").GetGuid() == id);
+        using var all = JsonDocument.Parse(await client.GetStringAsync("/api/focus-notes?includeArchived=true"));
+        Assert.Contains(all.RootElement.EnumerateArray(), item => item.GetProperty("id").GetGuid() == id && item.GetProperty("isArchived").GetBoolean());
+
+        await AssertStatusAsync(await client.DeleteAsync($"/api/focus-notes/{id}"), HttpStatusCode.NoContent);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
     public async Task Starter_data_can_be_disabled_without_disabling_database_schema()
     {
         await using var factory = new AxisApiFactory(seedData: false);

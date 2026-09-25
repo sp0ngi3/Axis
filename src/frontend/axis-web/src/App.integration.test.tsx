@@ -183,6 +183,18 @@ const review = {
   insights: [{ id: 'insight-1', message: 'Progress was made.', severity: 'Success' }]
 };
 
+const focusNote = {
+  id: 'focus-note-1',
+  title: 'Learning wins this week',
+  content: 'Protect the best evening hours for interview preparation. Reduce optional training volume.',
+  label: 'This week',
+  color: '#7f6cff',
+  isPinned: true,
+  isArchived: false,
+  createdAt: '2026-09-25T08:00:00.000Z',
+  updatedAt: '2026-09-25T08:00:00.000Z'
+};
+
 type FetchCall = { method: string; path: string; body?: string };
 
 const calls: FetchCall[] = [];
@@ -234,6 +246,8 @@ function installFetchMock() {
         return jsonResponse([{ id: 'water-entry', metricId: 'metric-water', value: 2600, recordedAt: '2026-09-18T21:00:00.000Z', notes: '' }]);
       case '/api/reviews':
         return jsonResponse([review]);
+      case '/api/focus-notes':
+        return jsonResponse([focusNote]);
       case '/api/mood':
       case '/api/diary':
       case '/api/countdowns':
@@ -280,6 +294,22 @@ async function openPage(name: RegExp) {
 }
 
 describe('Axis app integration workflows', () => {
+  it('shows current focus on Today and supports creating notes on the Focus page', async () => {
+    render(<App />);
+    expect(await screen.findByText('Learning wins this week')).toBeInTheDocument();
+    expect(screen.getByText('Protect the best evening hours for interview preparation. Reduce optional training volume.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole('button', { name: /focus/i })[0]);
+    expect(await screen.findByText('1 active focus notes')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'New focus note' }));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Ship the important work' } });
+    fireEvent.change(screen.getByLabelText('What matters right now'), { target: { value: 'Keep the week narrow.' } });
+    fireEvent.change(screen.getByLabelText('Label'), { target: { value: 'Work' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save focus note' }));
+
+    await waitFor(() => expect(calls.some((item) => item.method === 'POST' && item.path === '/api/focus-notes' && item.body?.includes('Ship the important work'))).toBe(true));
+  });
+
   it('moves the countdown and its mirrored past date together as time advances', () => {
     const now = new Date('2026-09-25T12:00:00.000Z');
     const target = new Date(now.getTime() + 54 * 86400000).toISOString();

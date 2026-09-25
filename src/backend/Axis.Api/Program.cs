@@ -60,6 +60,7 @@ MapPhysique(app);
 MapMood(app);
 MapDiary(app);
 MapHistory(app);
+MapFocusNotes(app);
 MapLifeLessons(app);
 MapMoney(app);
 MapWiki(app);
@@ -1181,6 +1182,73 @@ static void MapLifeLessons(WebApplication app)
         var item = await db.LifeLessons.FindAsync([id], ct); if (item is null) return Results.NotFound();
         db.LifeLessons.Remove(item); await db.SaveChangesAsync(ct); return Results.NoContent();
     });
+}
+
+static void MapFocusNotes(WebApplication app)
+{
+    var group = app.MapGroup("/api/focus-notes");
+
+    group.MapGet("/", async (bool? includeArchived, AxisDbContext db, CancellationToken ct) =>
+    {
+        var query = db.FocusNotes.AsNoTracking().AsQueryable();
+        if (includeArchived != true)
+        {
+            query = query.Where(item => !item.IsArchived);
+        }
+
+        var notes = (await query.ToListAsync(ct))
+            .OrderByDescending(item => item.IsPinned)
+            .ThenByDescending(item => item.UpdatedAt)
+            .ToList();
+        return Results.Ok(notes);
+    });
+
+    group.MapPost("/", async (FocusNoteRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Title) && string.IsNullOrWhiteSpace(request.Content))
+        {
+            return Results.BadRequest("A focus note needs a title or content.");
+        }
+
+        var item = new FocusNote();
+        ApplyFocusNote(item, request);
+        db.FocusNotes.Add(item);
+        await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/focus-notes/{item.Id}", item);
+    });
+
+    group.MapPut("/{id:guid}", async (Guid id, FocusNoteRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Title) && string.IsNullOrWhiteSpace(request.Content))
+        {
+            return Results.BadRequest("A focus note needs a title or content.");
+        }
+
+        var item = await db.FocusNotes.FindAsync([id], ct);
+        if (item is null) return Results.NotFound();
+        ApplyFocusNote(item, request);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(item);
+    });
+
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.FocusNotes.FindAsync([id], ct);
+        if (item is null) return Results.NotFound();
+        db.FocusNotes.Remove(item);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+}
+
+static void ApplyFocusNote(FocusNote item, FocusNoteRequest request)
+{
+    item.Title = request.Title?.Trim() ?? string.Empty;
+    item.Content = request.Content?.Trim() ?? string.Empty;
+    item.Label = request.Label?.Trim() ?? string.Empty;
+    item.Color = string.IsNullOrWhiteSpace(request.Color) ? "#7f6cff" : request.Color.Trim();
+    item.IsPinned = request.IsPinned;
+    item.IsArchived = request.IsArchived;
 }
 
 static void ApplyLesson(LifeLesson item, LifeLessonRequest request)
@@ -2545,6 +2613,8 @@ public sealed record MoodEntryRequest(DateTimeOffset? RecordedAt, int Score, int
 public sealed record DiaryEntryRequest(DateTimeOffset? OccurredAt, string Title, string? Body, string? Tags);
 
 public sealed record LifeLessonRequest(string Title, string Content, string? Category, string? Source, bool IsPinned);
+
+public sealed record FocusNoteRequest(string? Title, string? Content, string? Label, string? Color, bool IsPinned, bool IsArchived);
 
 public sealed record SavingsEntryRequest(decimal Amount, string? Note);
 

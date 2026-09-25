@@ -328,6 +328,18 @@ public static class DatabaseStartupExtensions
             """, cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "FocusNotes" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_FocusNotes" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL,
+                "Title" TEXT NOT NULL, "Content" TEXT NOT NULL, "Label" TEXT NOT NULL,
+                "Color" TEXT NOT NULL, "IsPinned" INTEGER NOT NULL, "IsArchived" INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_FocusNotes_IsPinned" ON "FocusNotes" ("IsPinned");
+            CREATE INDEX IF NOT EXISTS "IX_FocusNotes_IsArchived" ON "FocusNotes" ("IsArchived");
+            CREATE INDEX IF NOT EXISTS "IX_FocusNotes_UpdatedAt" ON "FocusNotes" ("UpdatedAt");
+            """, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS "WikiPages" (
                 "Id" TEXT NOT NULL CONSTRAINT "PK_WikiPages" PRIMARY KEY,
                 "CreatedAt" TEXT NOT NULL,

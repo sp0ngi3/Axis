@@ -35,12 +35,13 @@ import type {
   DiaryEntry,
   HistoryDay,
   LifeLesson,
+  FocusNote,
   SavingsEntry,
   WishlistItem,
   WikiPage
 } from './types';
 
-type Page = 'today' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'lessons' | 'money' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
+type Page = 'today' | 'focus' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'lessons' | 'money' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
 type Theme = 'light' | 'dark';
 type CalendarView = 'day' | 'week' | 'month';
 type WorkoutSet = {
@@ -72,6 +73,7 @@ type QuickLogDraft = {
 
 const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = [
   { id: 'today', label: 'Today', kicker: 'Operate', icon: '//' },
+  { id: 'focus', label: 'Focus', kicker: 'Direction', icon: '::' },
   { id: 'dashboard', label: 'Insights', kicker: 'Signals', icon: '==' },
   { id: 'calendar', label: 'Calendar', kicker: 'Plan', icon: '[]' },
   { id: 'countdowns', label: 'Countdowns', kicker: 'Anticipate', icon: '>>' },
@@ -89,7 +91,7 @@ const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = 
   { id: 'backup', label: 'Backup', kicker: 'Safety', icon: '!!' }
 ];
 
-const primaryPageIds: Page[] = ['today', 'calendar', 'dashboard', 'goals', 'journal'];
+const primaryPageIds: Page[] = ['today', 'focus', 'calendar', 'dashboard', 'goals', 'journal'];
 
 const loadLevels: LoadLevel[] = ['Low', 'Medium', 'High'];
 const activityStatuses: ActivityStatus[] = ['Planned', 'Completed', 'Skipped', 'Moved', 'Cancelled'];
@@ -126,6 +128,7 @@ export default function App() {
   const [moodEntries, setMoodEntries] = useState<MoodEntry[]>([]);
   const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
   const [lifeLessons, setLifeLessons] = useState<LifeLesson[]>([]);
+  const [focusNotes, setFocusNotes] = useState<FocusNote[]>([]);
   const [savingsEntries, setSavingsEntries] = useState<SavingsEntry[]>([]);
   const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
@@ -151,7 +154,7 @@ export default function App() {
     setIsLoading(true);
     try {
       setError('');
-      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, lessonRows, savingsRows, wishlistRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
+      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, lessonRows, focusRows, savingsRows, wishlistRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
         api.get<LifeArea[]>('/api/life-areas'),
         api.get<Goal[]>('/api/goals'),
         api.get<GoalProgress[]>('/api/dashboard/progress'),
@@ -164,6 +167,7 @@ export default function App() {
         api.get<MoodEntry[]>('/api/mood'),
         api.get<DiaryEntry[]>('/api/diary'),
         api.get<LifeLesson[]>('/api/life-lessons'),
+        api.get<FocusNote[]>('/api/focus-notes?includeArchived=true'),
         api.get<SavingsEntry[]>('/api/money/savings'),
         api.get<WishlistItem[]>('/api/money/wishlist'),
         api.get<WikiPage[]>('/api/wiki-pages'),
@@ -186,6 +190,7 @@ export default function App() {
       setMoodEntries(moodRows);
       setDiaryEntries(diaryRows);
       setLifeLessons(lessonRows);
+      setFocusNotes(focusRows);
       setSavingsEntries(savingsRows);
       setWishlistItems(wishlistRows);
       setWikiPages(wikiRows);
@@ -362,7 +367,9 @@ export default function App() {
             areas={areas}
             activities={activities}
             templates={templates}
+            focusNotes={focusNotes}
             busy={isBusy}
+            onOpenFocus={() => setPage('focus')}
             onQuickLog={(template, draft) => runAction(() => quickLogTemplate(template, draft), `${template.title} logged.`)}
             onDeleteLog={(activity) => runAction(() => deleteQuickLog(activity), `${activity.title} log deleted.`)}
             onComplete={(id) => runAction(() => api.post(`/api/activities/${id}/complete`), 'Activity completed.')}
@@ -372,6 +379,17 @@ export default function App() {
               id ? 'Main focus updated.' : 'Main focus planned.'
             )}
             onDeleteActivity={(id) => runAction(() => api.delete(`/api/activities/${id}`), 'Activity deleted.')}
+          />
+        )}
+        {page === 'focus' && (
+          <FocusNotesPage
+            notes={focusNotes}
+            busy={isBusy}
+            onSave={(body, id) => runAction(
+              () => id ? api.put(`/api/focus-notes/${id}`, body) : api.post('/api/focus-notes', body),
+              id ? 'Focus note updated.' : 'Focus note added.'
+            )}
+            onDelete={(id) => runAction(() => api.delete(`/api/focus-notes/${id}`), 'Focus note deleted.')}
           />
         )}
         {page === 'dashboard' && (
@@ -713,7 +731,9 @@ function TodayPage(props: {
   areas: LifeArea[];
   activities: Activity[];
   templates: ActivityTemplate[];
+  focusNotes: FocusNote[];
   busy: boolean;
+  onOpenFocus: () => void;
   onQuickLog: (template: ActivityTemplate, draft: QuickLogDraft) => void;
   onDeleteLog: (activity: Activity) => void;
   onComplete: (id: string) => void;
@@ -765,6 +785,7 @@ function TodayPage(props: {
 
   return (
     <section className="page-grid today-page">
+      <TodayFocusNotes notes={props.focusNotes} onOpen={props.onOpenFocus} />
       <div className="hero-panel">
         <div>
           <p className="eyebrow">Suggested next move</p>
@@ -2021,6 +2042,125 @@ function CalendarReviewPanel(props: {
         {sorted.length === 0 && <EmptyState text="Nothing needs catch-up in this range." />}
       </div>
     </div>
+  );
+}
+
+function TodayFocusNotes(props: { notes: FocusNote[]; onOpen: () => void }) {
+  const visible = props.notes
+    .filter((note) => !note.isArchived)
+    .sort((first, second) => Number(second.isPinned) - Number(first.isPinned) || new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime())
+    .slice(0, 4);
+
+  return (
+    <section className="today-focus-rail">
+      <div className="today-focus-heading">
+        <div><p className="eyebrow">Current direction</p><h3>Focus notes</h3></div>
+        <button className="secondary-button" onClick={props.onOpen}>{visible.length ? 'Open Focus' : 'Add focus note'}</button>
+      </div>
+      {visible.length > 0 ? (
+        <div className="today-focus-notes">
+          {visible.map((note) => (
+            <article className="today-focus-note" style={{ '--focus-color': note.color } as CSSProperties} key={note.id}>
+              <span>{note.label || 'Now'}{note.isPinned ? ' · pinned' : ''}</span>
+              <strong>{note.title || 'Untitled focus'}</strong>
+              <p>{note.content}</p>
+            </article>
+          ))}
+        </div>
+      ) : <p className="today-focus-empty">Write down what deserves your attention before the rest of the day starts competing for it.</p>}
+    </section>
+  );
+}
+
+function FocusNotesPage(props: { notes: FocusNote[]; busy: boolean; onSave: (body: unknown, id?: string) => void; onDelete: (id: string) => void }) {
+  const [selected, setSelected] = useState<FocusNote | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState('');
+  const [label, setLabel] = useState('');
+  const [visibility, setVisibility] = useState<'active' | 'archived' | 'all'>('active');
+  const [page, setPage] = useState(1);
+  const labels = Array.from(new Set(props.notes.map((note) => note.label).filter(Boolean))).sort();
+  const filtered = props.notes.filter((note) => {
+    const matchesQuery = !query || `${note.title} ${note.content} ${note.label}`.toLowerCase().includes(query.toLowerCase());
+    const matchesLabel = !label || note.label === label;
+    const matchesVisibility = visibility === 'all' || (visibility === 'archived' ? note.isArchived : !note.isArchived);
+    return matchesQuery && matchesLabel && matchesVisibility;
+  });
+  const paged = paginate(filtered, page, defaultPageSize);
+
+  useEffect(() => setPage(1), [query, label, visibility]);
+
+  function updateNote(note: FocusNote, changes: Partial<FocusNote>) {
+    props.onSave({
+      title: note.title,
+      content: note.content,
+      label: note.label,
+      color: note.color,
+      isPinned: note.isPinned,
+      isArchived: note.isArchived,
+      ...changes
+    }, note.id);
+  }
+
+  return (
+    <section className="workspace-grid drawer-workspace focus-page">
+      <div className="workspace-main">
+        <section className="focus-board-header">
+          <div><p className="eyebrow">Attention board</p><h3>{props.notes.filter((note) => !note.isArchived).length} active focus notes</h3><p>Keep the current week visible. Pin the few notes that should win your attention.</p></div>
+          <button onClick={() => { setSelected(null); setCreating(true); }}>New focus note</button>
+        </section>
+        <div className="filter-bar focus-filter-bar">
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search focus notes" />
+          <select value={label} onChange={(event) => setLabel(event.target.value)}><option value="">All labels</option>{labels.map((item) => <option key={item}>{item}</option>)}</select>
+          <select value={visibility} onChange={(event) => setVisibility(event.target.value as 'active' | 'archived' | 'all')}><option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option></select>
+        </div>
+        <div className="focus-note-grid">
+          {paged.items.map((note) => (
+            <article className={`focus-note ${note.isPinned ? 'pinned' : ''} ${note.isArchived ? 'archived' : ''}`} style={{ '--focus-color': note.color } as CSSProperties} key={note.id}>
+              <i className="focus-note-fold" aria-hidden="true" />
+              <div className="focus-note-meta"><span>{note.label || 'Focus'}</span>{note.isPinned && <strong>PINNED</strong>}</div>
+              <h3>{note.title || 'Untitled focus'}</h3>
+              <p>{note.content || 'No details yet.'}</p>
+              <small>Updated {formatDateTime(note.updatedAt)}</small>
+              <div className="focus-note-actions">
+                <button className="secondary-button" disabled={props.busy} onClick={() => updateNote(note, { isPinned: !note.isPinned })}>{note.isPinned ? 'Unpin' : 'Pin'}</button>
+                <button className="secondary-button" disabled={props.busy} onClick={() => updateNote(note, { isArchived: !note.isArchived })}>{note.isArchived ? 'Restore' : 'Archive'}</button>
+                <button className="secondary-button" onClick={() => { setSelected(note); setCreating(false); }}>Edit</button>
+                <button className="danger-button" onClick={() => confirmDelete('Delete this focus note?') && props.onDelete(note.id)}>Delete</button>
+              </div>
+            </article>
+          ))}
+        </div>
+        {filtered.length === 0 && <EmptyState text="No focus notes match this view." />}
+        <PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} />
+      </div>
+      <EditorDrawer open={creating || selected !== null} label={selected ? 'Edit focus note' : 'New focus note'} onClose={() => { setCreating(false); setSelected(null); }}>
+        <FocusNoteForm note={selected} busy={props.busy} onSave={(body) => { props.onSave(body, selected?.id); setCreating(false); setSelected(null); }} />
+      </EditorDrawer>
+    </section>
+  );
+}
+
+function FocusNoteForm(props: { note: FocusNote | null; busy: boolean; onSave: (body: unknown) => void }) {
+  const [draft, setDraft] = useState({
+    title: props.note?.title ?? '',
+    content: props.note?.content ?? '',
+    label: props.note?.label ?? '',
+    color: props.note?.color ?? '#7f6cff',
+    isPinned: props.note?.isPinned ?? true,
+    isArchived: props.note?.isArchived ?? false
+  });
+
+  return (
+    <form className="editor-form focus-note-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}>
+      <TextField label="Title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} />
+      <TextArea label="What matters right now" value={draft.content} onChange={(content) => setDraft({ ...draft, content })} />
+      <TextField label="Label" value={draft.label} onChange={(label) => setDraft({ ...draft, label })} />
+      <label className="field"><span>Note color</span><div className="focus-color-control"><input aria-label="Focus note color picker" type="color" value={isHexColor(draft.color) ? draft.color : '#7f6cff'} onChange={(event) => setDraft({ ...draft, color: event.target.value })} /><input aria-label="Focus note color hex" value={draft.color} onChange={(event) => setDraft({ ...draft, color: event.target.value })} placeholder="#7f6cff" /></div></label>
+      <label className="toggle-field"><input type="checkbox" checked={draft.isPinned} onChange={(event) => setDraft({ ...draft, isPinned: event.target.checked })} /><span>Pin on Today</span></label>
+      <label className="toggle-field"><input type="checkbox" checked={draft.isArchived} onChange={(event) => setDraft({ ...draft, isArchived: event.target.checked })} /><span>Archived</span></label>
+      <button disabled={props.busy || (!draft.title.trim() && !draft.content.trim())}>Save focus note</button>
+    </form>
   );
 }
 

@@ -29,6 +29,8 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
 
     public DbSet<LifeLesson> LifeLessons => Set<LifeLesson>();
 
+    public DbSet<FocusNote> FocusNotes => Set<FocusNote>();
+
     public DbSet<SavingsEntry> SavingsEntries => Set<SavingsEntry>();
 
     public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
@@ -60,6 +62,7 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
         ConfigureMoodEntries(modelBuilder);
         ConfigureDiaryEntries(modelBuilder);
         ConfigureLifeLessons(modelBuilder);
+        ConfigureFocusNotes(modelBuilder);
         ConfigureMoney(modelBuilder);
         ConfigureWikiPages(modelBuilder);
         ConfigureReviews(modelBuilder);
@@ -229,6 +232,20 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
             entity.Property(item => item.Category).HasMaxLength(100);
             entity.Property(item => item.Source).HasMaxLength(500);
             entity.HasIndex(item => item.IsPinned);
+        });
+    }
+
+    private static void ConfigureFocusNotes(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<FocusNote>(entity =>
+        {
+            entity.Property(item => item.Title).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.Content).HasMaxLength(8000).IsRequired();
+            entity.Property(item => item.Label).HasMaxLength(80);
+            entity.Property(item => item.Color).HasMaxLength(24).IsRequired();
+            entity.HasIndex(item => item.IsPinned);
+            entity.HasIndex(item => item.IsArchived);
+            entity.HasIndex(item => item.UpdatedAt);
         });
     }
 

@@ -199,6 +199,18 @@ export interface LifeLesson {
   id: string; title: string; content: string; category: string; source: string; isPinned: boolean; createdAt: string; updatedAt: string;
 }
 
+export interface FocusNote {
+  id: string;
+  title: string;
+  content: string;
+  label: string;
+  color: string;
+  isPinned: boolean;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SavingsEntry {
   id: string; recordedAt: string; amount: number; note: string;
 }

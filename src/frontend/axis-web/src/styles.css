@@ -6424,6 +6424,124 @@ button,
 .page-lessons .page-ambient b,
 .page-wiki .page-ambient b { right: 16px; transform-origin: left; animation: page-flip-right 6s ease-in-out infinite; }
 
+.page-focus .page-ambient {
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  transform: rotate(-3deg);
+  animation: focus-paper-float 6.5s ease-in-out infinite;
+}
+.page-focus .page-ambient::before,
+.page-focus .page-ambient::after,
+.page-focus .page-ambient i {
+  position: absolute;
+  width: 68px;
+  height: 82px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line));
+  background: repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent) 7%, var(--surface)) 0 11px, color-mix(in srgb, var(--cyan) 14%, transparent) 11px 12px);
+  content: '';
+}
+.page-focus .page-ambient::before { top: 24px; left: 22px; transform: rotate(-9deg); }
+.page-focus .page-ambient i { top: 18px; left: 48px; transform: rotate(7deg); animation: focus-paper-shift 4.8s ease-in-out infinite; }
+.page-focus .page-ambient::after { top: 29px; left: 76px; transform: rotate(15deg); }
+
+.today-focus-rail {
+  position: relative;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 42%),
+    repeating-linear-gradient(90deg, transparent 0 47px, color-mix(in srgb, var(--cyan) 5%, transparent) 47px 48px),
+    var(--panel);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--cyan) 18%, transparent), var(--shadow);
+}
+.today-focus-rail::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 34%;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--cyan), transparent);
+  content: '';
+  animation: focus-line-scan 5.5s ease-in-out infinite;
+}
+.today-focus-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
+.today-focus-heading h3 { margin: 2px 0 0; font-size: 18px; }
+.today-focus-notes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.today-focus-note {
+  --focus-color: var(--accent);
+  min-width: 0;
+  min-height: 112px;
+  padding: 12px 13px 13px;
+  border: 1px solid color-mix(in srgb, var(--focus-color) 34%, var(--line));
+  border-top: 3px solid var(--focus-color);
+  background: color-mix(in srgb, var(--focus-color) 5%, var(--surface-raised));
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--focus-color) 7%, transparent);
+  animation: focus-note-arrive 420ms ease both;
+}
+.today-focus-note span { display: block; overflow: hidden; margin-bottom: 6px; color: color-mix(in srgb, var(--focus-color) 62%, var(--text)); font-size: 9px; font-weight: 850; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.today-focus-note strong { display: block; overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.today-focus-note p { display: -webkit-box; overflow: hidden; margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.today-focus-empty { margin: 0; padding: 12px; border-left: 3px solid var(--accent); color: var(--muted); background: var(--bg-alt); }
+
+.focus-board-header {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  overflow: hidden;
+  padding: 20px 22px;
+  border-block: 1px solid var(--line-strong);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 8%, var(--panel)), var(--panel) 52%, color-mix(in srgb, var(--cyan) 5%, var(--panel)));
+}
+.focus-board-header::after { position: absolute; right: 11%; bottom: -34px; width: 150px; height: 70px; border: 1px solid color-mix(in srgb, var(--cyan) 20%, transparent); transform: skewX(-28deg); content: ''; animation: focus-warp 7s ease-in-out infinite; }
+.focus-board-header h3 { margin: 3px 0 5px; font-size: 25px; }
+.focus-board-header p:last-child { max-width: 680px; margin: 0; color: var(--muted); font-size: 12px; }
+.focus-filter-bar { grid-template-columns: minmax(240px, 2fr) repeat(2, minmax(150px, .7fr)); }
+.focus-note-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)); gap: 16px; align-items: start; }
+.focus-note {
+  --focus-color: var(--accent);
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(78px, 1fr) auto auto;
+  gap: 10px;
+  min-height: 270px;
+  overflow: hidden;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--focus-color) 42%, var(--line));
+  border-top: 4px solid var(--focus-color);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 27px, color-mix(in srgb, var(--focus-color) 8%, transparent) 27px 28px),
+    linear-gradient(135deg, color-mix(in srgb, var(--focus-color) 7%, var(--surface-raised)), var(--surface-raised) 62%);
+  box-shadow: var(--shadow), 8px 10px 0 color-mix(in srgb, var(--focus-color) 4%, transparent);
+  animation: focus-note-arrive 460ms ease both;
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+.focus-note:nth-child(3n + 2) { animation-delay: 70ms; }
+.focus-note:nth-child(3n + 3) { animation-delay: 140ms; }
+.focus-note:hover { z-index: 2; transform: translateY(-4px) rotate(.2deg); border-color: color-mix(in srgb, var(--focus-color) 72%, var(--line)); box-shadow: var(--shadow), 10px 13px 0 color-mix(in srgb, var(--focus-color) 7%, transparent), 0 0 25px color-mix(in srgb, var(--focus-color) 10%, transparent); }
+.focus-note.archived { opacity: .62; filter: saturate(.6); }
+.focus-note-fold { position: absolute; top: -1px; right: -1px; width: 30px; height: 30px; background: linear-gradient(225deg, var(--panel) 0 48%, color-mix(in srgb, var(--focus-color) 42%, var(--surface-raised)) 49% 100%); box-shadow: -1px 1px 0 color-mix(in srgb, var(--focus-color) 32%, var(--line)); }
+.focus-note-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-right: 24px; }
+.focus-note-meta span { overflow: hidden; color: color-mix(in srgb, var(--focus-color) 68%, var(--text)); font-size: 10px; font-weight: 850; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.focus-note-meta strong { color: var(--focus-color); font-size: 9px; letter-spacing: 0; }
+.focus-note h3 { overflow-wrap: anywhere; margin: 0; color: var(--text); font-size: 19px; line-height: 1.2; }
+.focus-note > p { overflow-wrap: anywhere; margin: 0; color: var(--text); font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
+.focus-note > small { color: var(--muted); font-size: 10px; }
+.focus-note-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--focus-color) 18%, var(--line)); }
+.focus-note-actions button { min-width: 0; padding-inline: 8px; font-size: 10px; }
+.focus-color-control { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; }
+.focus-color-control input[type="color"] { width: 58px; }
+
+:root[data-theme="light"] .focus-note,
+:root[data-theme="light"] .today-focus-note { box-shadow: 0 10px 24px rgba(68, 44, 104, .1); }
+
+@keyframes focus-note-arrive { from { opacity: 0; transform: translateY(9px) rotate(-.35deg); } }
+@keyframes focus-line-scan { 50% { width: 58%; transform: translateX(68%); opacity: .7; } }
+@keyframes focus-paper-float { 50% { transform: translateY(4px) rotate(2deg); opacity: .24; } }
+@keyframes focus-paper-shift { 50% { transform: translateX(5px) rotate(3deg); } }
+@keyframes focus-warp { 50% { transform: translateX(18px) skewX(-18deg) scaleX(.8); opacity: .38; } }
+
 .page-money .page-ambient {
   border-radius: 50%;
   background: repeating-radial-gradient(circle, transparent 0 24px, color-mix(in srgb, var(--sun) 22%, transparent) 25px 27px), color-mix(in srgb, var(--surface) 62%, transparent);
@@ -6584,4 +6702,28 @@ button,
   .page-wiki .page-ambient i { left: 10px; }
   .page-lessons .page-ambient b,
   .page-wiki .page-ambient b { right: 10px; }
+  .page-focus .page-ambient::before,
+  .page-focus .page-ambient::after,
+  .page-focus .page-ambient i { width: 42px; height: 54px; }
+  .today-focus-notes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .focus-filter-bar { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 560px) {
+  .today-focus-heading,
+  .focus-board-header { align-items: flex-start; flex-direction: column; }
+  .today-focus-heading button,
+  .focus-board-header button { width: 100%; }
+  .today-focus-notes,
+  .focus-note-grid { grid-template-columns: 1fr; }
+  .focus-note-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-note,
+  .today-focus-note,
+  .today-focus-rail::before,
+  .page-focus .page-ambient,
+  .page-focus .page-ambient i,
+  .focus-board-header::after { animation: none; }
 }

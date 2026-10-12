@@ -36,6 +36,15 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
+var bundledFrontendPath = Path.Combine(app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot"), "index.html");
+var hasBundledFrontend = File.Exists(bundledFrontendPath);
+
+if (hasBundledFrontend)
+{
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+}
+
 app.UseCors();
 
 if (app.Environment.IsDevelopment())
@@ -67,6 +76,11 @@ MapWiki(app);
 MapReviews(app);
 MapDashboard(app);
 MapBackup(app);
+
+if (hasBundledFrontend)
+{
+    app.MapFallbackToFile("index.html");
+}
 
 app.Run();
 

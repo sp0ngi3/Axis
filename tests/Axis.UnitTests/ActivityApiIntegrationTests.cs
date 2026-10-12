@@ -15,6 +15,42 @@ namespace Axis.UnitTests;
 public sealed class ActivityApiIntegrationTests
 {
     [Fact]
+    public async Task Existing_backup_format_round_trips_without_losing_data()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+
+        var created = await client.PostAsJsonAsync("/api/focus-notes", new
+        {
+            title = "Keep this through backup",
+            content = "Desktop and Docker must share the same backup contract.",
+            label = "Safety",
+            color = "#39d9e6",
+            isPinned = true,
+            isArchived = false
+        });
+        await AssertStatusAsync(created, HttpStatusCode.Created);
+        using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var id = createdJson.RootElement.GetProperty("id").GetGuid();
+
+        var backupResponse = await client.GetAsync("/api/backup/export");
+        await AssertStatusAsync(backupResponse, HttpStatusCode.OK);
+        var backupBytes = await backupResponse.Content.ReadAsByteArrayAsync();
+
+        await AssertStatusAsync(await client.DeleteAsync($"/api/focus-notes/{id}"), HttpStatusCode.NoContent);
+
+        using var form = new MultipartFormDataContent();
+        using var backupContent = new ByteArrayContent(backupBytes);
+        backupContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        form.Add(backupContent, "file", "axis-backup-existing.zip");
+        await AssertStatusAsync(await client.PostAsync("/api/backup/import", form), HttpStatusCode.OK);
+
+        using var restored = JsonDocument.Parse(await client.GetStringAsync("/api/focus-notes?includeArchived=true"));
+        Assert.Contains(restored.RootElement.EnumerateArray(), item => item.GetProperty("id").GetGuid() == id);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
     public async Task Focus_notes_support_create_edit_archive_list_and_delete()
     {
         await using var factory = new AxisApiFactory();
@@ -495,6 +531,7 @@ public sealed class ActivityApiIntegrationTests
         }
 
         public string DatabasePath { get; } = Path.Combine(Path.GetTempPath(), $"axis-integration-{Guid.NewGuid():N}.db");
+        public string BackupDirectory { get; } = Path.Combine(Path.GetTempPath(), $"axis-backups-{Guid.NewGuid():N}");
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -509,7 +546,7 @@ public sealed class ActivityApiIntegrationTests
 
             builder.UseSetting("ConnectionStrings:Axis", connectionString);
             builder.UseSetting("SeedData", _seedData.ToString());
-            builder.UseSetting("Backup:Directory", Path.Combine(Path.GetTempPath(), $"axis-backups-{Guid.NewGuid():N}"));
+            builder.UseSetting("Backup:Directory", BackupDirectory);
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<AxisDbContext>();
@@ -533,6 +570,7 @@ public sealed class ActivityApiIntegrationTests
             DeleteIfPresent(DatabasePath);
             DeleteIfPresent($"{DatabasePath}-wal");
             DeleteIfPresent($"{DatabasePath}-shm");
+            if (Directory.Exists(BackupDirectory)) Directory.Delete(BackupDirectory, recursive: true);
         }
 
         private static void DeleteIfPresent(string path)

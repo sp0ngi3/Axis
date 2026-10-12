@@ -10,6 +10,8 @@
     <Project Path="tests/Axis.UnitTests/Axis.UnitTests.csproj" />
   </Folder>
   <Folder Name="/tools/">
+    <Project Path="tools/Axis.Desktop/Axis.Desktop.csproj" />
+    <Project Path="tools/Axis.Installer/Axis.Installer.csproj" />
     <Project Path="tools/Axis.Launcher/Axis.Launcher.csproj" />
   </Folder>
 </Solution>

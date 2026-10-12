@@ -12,7 +12,10 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddAxisInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
-        var configuredConnectionString = configuration.GetConnectionString("Axis") ?? "Data Source=data/axis.db";
+        var databasePath = configuration["Storage:DatabasePath"];
+        var configuredConnectionString = string.IsNullOrWhiteSpace(databasePath)
+            ? configuration.GetConnectionString("Axis") ?? "Data Source=data/axis.db"
+            : new SqliteConnectionStringBuilder { DataSource = Path.GetFullPath(databasePath) }.ToString();
         var connectionString = new SqliteConnectionStringBuilder(configuredConnectionString)
         {
             ForeignKeys = true,

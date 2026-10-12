@@ -224,6 +224,12 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
 
     private string GetDatabasePath()
     {
+        var configuredPath = configuration["Storage:DatabasePath"];
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            return Path.GetFullPath(configuredPath);
+        }
+
         var connectionString = configuration.GetConnectionString("Axis") ?? "Data Source=data/axis.db";
         const string marker = "Data Source=";
         var start = connectionString.IndexOf(marker, StringComparison.OrdinalIgnoreCase);

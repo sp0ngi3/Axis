@@ -288,6 +288,64 @@ public sealed class FocusNote : Entity
     public bool IsArchived { get; set; }
 }
 
+public sealed class JobApplication : Entity
+{
+    public string CompanyName { get; set; } = string.Empty;
+    public string PositionTitle { get; set; } = string.Empty;
+    public JobApplicationStatus Status { get; set; } = JobApplicationStatus.Scouted;
+    public JobWorkMode WorkMode { get; set; } = JobWorkMode.Hybrid;
+    public string EmploymentType { get; set; } = string.Empty;
+    public string Location { get; set; } = string.Empty;
+    public string Country { get; set; } = string.Empty;
+    public decimal? SalaryMin { get; set; }
+    public decimal? SalaryMax { get; set; }
+    public string Currency { get; set; } = "EUR";
+    public int DesireRating { get; set; } = 5;
+    public int FitRating { get; set; } = 5;
+    public int Priority { get; set; } = 3;
+    public string CompanyUrl { get; set; } = string.Empty;
+    public string PostingUrl { get; set; } = string.Empty;
+    public string ApplicationUrl { get; set; } = string.Empty;
+    public string Source { get; set; } = string.Empty;
+    public string ContactName { get; set; } = string.Empty;
+    public string ContactEmail { get; set; } = string.Empty;
+    public string JobDescription { get; set; } = string.Empty;
+    public string Notes { get; set; } = string.Empty;
+    public DateTimeOffset DiscoveredAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? AppliedAt { get; set; }
+    public DateTimeOffset? LastContactAt { get; set; }
+    public DateTimeOffset? FollowUpAt { get; set; }
+    public DateTimeOffset? DeadlineAt { get; set; }
+    public DateTimeOffset? DecisionAt { get; set; }
+    public bool IsArchived { get; set; }
+    public List<JobApplicationStage> Stages { get; set; } = [];
+}
+
+public sealed class JobApplicationStage : Entity
+{
+    public Guid JobApplicationId { get; set; }
+    public JobApplication? JobApplication { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public JobStageStatus Status { get; set; } = JobStageStatus.Planned;
+    public string Focus { get; set; } = string.Empty;
+    public string Notes { get; set; } = string.Empty;
+    public DateTimeOffset? ScheduledAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public int SortOrder { get; set; }
+    public List<JobPreparationItem> Checklist { get; set; } = [];
+}
+
+public sealed class JobPreparationItem : Entity
+{
+    public Guid JobApplicationStageId { get; set; }
+    public JobApplicationStage? JobApplicationStage { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string Notes { get; set; } = string.Empty;
+    public bool IsCompleted { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public int SortOrder { get; set; }
+}
+
 public sealed class SavingsEntry : Entity
 {
     public DateTimeOffset RecordedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -465,4 +523,34 @@ public enum RecurrenceFrequency
     Daily,
     Weekly,
     Monthly
+}
+
+public enum JobApplicationStatus
+{
+    Scouted,
+    Shortlisted,
+    Preparing,
+    Applied,
+    Interviewing,
+    Offer,
+    Accepted,
+    Rejected,
+    Withdrawn,
+    Archived
+}
+
+public enum JobWorkMode
+{
+    OnSite,
+    Hybrid,
+    Remote
+}
+
+public enum JobStageStatus
+{
+    Planned,
+    Preparing,
+    Scheduled,
+    Completed,
+    Cancelled
 }

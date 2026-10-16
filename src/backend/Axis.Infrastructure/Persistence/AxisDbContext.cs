@@ -31,6 +31,12 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
 
     public DbSet<FocusNote> FocusNotes => Set<FocusNote>();
 
+    public DbSet<JobApplication> JobApplications => Set<JobApplication>();
+
+    public DbSet<JobApplicationStage> JobApplicationStages => Set<JobApplicationStage>();
+
+    public DbSet<JobPreparationItem> JobPreparationItems => Set<JobPreparationItem>();
+
     public DbSet<SavingsEntry> SavingsEntries => Set<SavingsEntry>();
 
     public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
@@ -63,6 +69,7 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
         ConfigureDiaryEntries(modelBuilder);
         ConfigureLifeLessons(modelBuilder);
         ConfigureFocusNotes(modelBuilder);
+        ConfigureJobApplications(modelBuilder);
         ConfigureMoney(modelBuilder);
         ConfigureWikiPages(modelBuilder);
         ConfigureReviews(modelBuilder);
@@ -262,6 +269,58 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
             entity.Property(item => item.Description).HasMaxLength(2000);
             entity.HasIndex(item => item.IsPurchased);
             entity.HasIndex(item => item.Priority);
+        });
+    }
+
+    private static void ConfigureJobApplications(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<JobApplication>(entity =>
+        {
+            entity.Property(item => item.CompanyName).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.PositionTitle).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.Status).HasConversion<string>().HasMaxLength(40);
+            entity.Property(item => item.WorkMode).HasConversion<string>().HasMaxLength(40);
+            entity.Property(item => item.EmploymentType).HasMaxLength(80);
+            entity.Property(item => item.Location).HasMaxLength(200);
+            entity.Property(item => item.Country).HasMaxLength(120);
+            entity.Property(item => item.Currency).HasMaxLength(8);
+            entity.Property(item => item.CompanyUrl).HasMaxLength(1000);
+            entity.Property(item => item.PostingUrl).HasMaxLength(1000);
+            entity.Property(item => item.ApplicationUrl).HasMaxLength(1000);
+            entity.Property(item => item.Source).HasMaxLength(200);
+            entity.Property(item => item.ContactName).HasMaxLength(200);
+            entity.Property(item => item.ContactEmail).HasMaxLength(320);
+            entity.Property(item => item.JobDescription).HasMaxLength(12000);
+            entity.Property(item => item.Notes).HasMaxLength(8000);
+            entity.HasIndex(item => item.Status);
+            entity.HasIndex(item => item.Location);
+            entity.HasIndex(item => item.DiscoveredAt);
+            entity.HasIndex(item => item.FollowUpAt);
+            entity.HasIndex(item => item.IsArchived);
+        });
+
+        modelBuilder.Entity<JobApplicationStage>(entity =>
+        {
+            entity.Property(item => item.Title).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.Status).HasConversion<string>().HasMaxLength(40);
+            entity.Property(item => item.Focus).HasMaxLength(4000);
+            entity.Property(item => item.Notes).HasMaxLength(4000);
+            entity.HasIndex(item => new { item.JobApplicationId, item.SortOrder });
+            entity.HasOne(item => item.JobApplication)
+                .WithMany(item => item.Stages)
+                .HasForeignKey(item => item.JobApplicationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<JobPreparationItem>(entity =>
+        {
+            entity.Property(item => item.Title).HasMaxLength(500).IsRequired();
+            entity.Property(item => item.Notes).HasMaxLength(2000);
+            entity.HasIndex(item => new { item.JobApplicationStageId, item.SortOrder });
+            entity.HasOne(item => item.JobApplicationStage)
+                .WithMany(item => item.Checklist)
+                .HasForeignKey(item => item.JobApplicationStageId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 

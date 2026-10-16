@@ -340,6 +340,52 @@ public static class DatabaseStartupExtensions
             """, cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "JobApplications" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_JobApplications" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL,
+                "CompanyName" TEXT NOT NULL, "PositionTitle" TEXT NOT NULL,
+                "Status" TEXT NOT NULL, "WorkMode" TEXT NOT NULL,
+                "EmploymentType" TEXT NOT NULL, "Location" TEXT NOT NULL, "Country" TEXT NOT NULL,
+                "SalaryMin" TEXT NULL, "SalaryMax" TEXT NULL, "Currency" TEXT NOT NULL,
+                "DesireRating" INTEGER NOT NULL, "FitRating" INTEGER NOT NULL, "Priority" INTEGER NOT NULL,
+                "CompanyUrl" TEXT NOT NULL, "PostingUrl" TEXT NOT NULL, "ApplicationUrl" TEXT NOT NULL,
+                "Source" TEXT NOT NULL, "ContactName" TEXT NOT NULL, "ContactEmail" TEXT NOT NULL,
+                "JobDescription" TEXT NOT NULL, "Notes" TEXT NOT NULL,
+                "DiscoveredAt" TEXT NOT NULL, "AppliedAt" TEXT NULL, "LastContactAt" TEXT NULL,
+                "FollowUpAt" TEXT NULL, "DeadlineAt" TEXT NULL, "DecisionAt" TEXT NULL,
+                "IsArchived" INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_JobApplications_Status" ON "JobApplications" ("Status");
+            CREATE INDEX IF NOT EXISTS "IX_JobApplications_Location" ON "JobApplications" ("Location");
+            CREATE INDEX IF NOT EXISTS "IX_JobApplications_DiscoveredAt" ON "JobApplications" ("DiscoveredAt");
+            CREATE INDEX IF NOT EXISTS "IX_JobApplications_FollowUpAt" ON "JobApplications" ("FollowUpAt");
+            CREATE INDEX IF NOT EXISTS "IX_JobApplications_IsArchived" ON "JobApplications" ("IsArchived");
+
+            CREATE TABLE IF NOT EXISTS "JobApplicationStages" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_JobApplicationStages" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL,
+                "JobApplicationId" TEXT NOT NULL, "Title" TEXT NOT NULL, "Status" TEXT NOT NULL,
+                "Focus" TEXT NOT NULL, "Notes" TEXT NOT NULL,
+                "ScheduledAt" TEXT NULL, "CompletedAt" TEXT NULL, "SortOrder" INTEGER NOT NULL,
+                CONSTRAINT "FK_JobApplicationStages_JobApplications_JobApplicationId"
+                    FOREIGN KEY ("JobApplicationId") REFERENCES "JobApplications" ("Id") ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS "IX_JobApplicationStages_JobApplicationId_SortOrder"
+                ON "JobApplicationStages" ("JobApplicationId", "SortOrder");
+
+            CREATE TABLE IF NOT EXISTS "JobPreparationItems" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_JobPreparationItems" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL,
+                "JobApplicationStageId" TEXT NOT NULL, "Title" TEXT NOT NULL, "Notes" TEXT NOT NULL,
+                "IsCompleted" INTEGER NOT NULL, "CompletedAt" TEXT NULL, "SortOrder" INTEGER NOT NULL,
+                CONSTRAINT "FK_JobPreparationItems_JobApplicationStages_JobApplicationStageId"
+                    FOREIGN KEY ("JobApplicationStageId") REFERENCES "JobApplicationStages" ("Id") ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS "IX_JobPreparationItems_JobApplicationStageId_SortOrder"
+                ON "JobPreparationItems" ("JobApplicationStageId", "SortOrder");
+            """, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS "WikiPages" (
                 "Id" TEXT NOT NULL CONSTRAINT "PK_WikiPages" PRIMARY KEY,
                 "CreatedAt" TEXT NOT NULL,

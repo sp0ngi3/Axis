@@ -352,10 +352,13 @@ internal static class BrowserLauncher
 {
     public static void Open(string url, string profileDirectory)
     {
+        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "desktop";
+        var separator = url.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+        var versionedUrl = $"{url}{separator}desktopVersion={Uri.EscapeDataString(version)}";
         var edgePath = FindEdge();
         if (edgePath is null)
         {
-            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+            Process.Start(new ProcessStartInfo { FileName = versionedUrl, UseShellExecute = true });
             return;
         }
 
@@ -365,7 +368,7 @@ internal static class BrowserLauncher
             FileName = edgePath,
             UseShellExecute = false
         };
-        startInfo.ArgumentList.Add($"--app={url}");
+        startInfo.ArgumentList.Add($"--app={versionedUrl}");
         startInfo.ArgumentList.Add($"--user-data-dir={profileDirectory}");
         startInfo.ArgumentList.Add("--no-first-run");
         startInfo.ArgumentList.Add("--disable-session-crashed-bubble");

@@ -42,7 +42,18 @@ var hasBundledFrontend = File.Exists(bundledFrontendPath);
 if (hasBundledFrontend)
 {
     app.UseDefaultFiles();
-    app.UseStaticFiles();
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        OnPrepareResponse = context =>
+        {
+            if (string.Equals(context.File.Name, "index.html", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+                context.Context.Response.Headers.Pragma = "no-cache";
+                context.Context.Response.Headers.Expires = "0";
+            }
+        }
+    });
 }
 
 app.UseCors();
@@ -70,6 +81,7 @@ MapMood(app);
 MapDiary(app);
 MapHistory(app);
 MapFocusNotes(app);
+MapJobApplications(app);
 MapLifeLessons(app);
 MapMoney(app);
 MapWiki(app);
@@ -1265,6 +1277,236 @@ static void ApplyFocusNote(FocusNote item, FocusNoteRequest request)
     item.IsArchived = request.IsArchived;
 }
 
+static void MapJobApplications(WebApplication app)
+{
+    var group = app.MapGroup("/api/job-applications");
+
+    group.MapGet("/", async (bool? includeArchived, AxisDbContext db, CancellationToken ct) =>
+    {
+        var query = db.JobApplications.AsNoTracking()
+            .Include(item => item.Stages.OrderBy(stage => stage.SortOrder))
+            .ThenInclude(stage => stage.Checklist.OrderBy(item => item.SortOrder))
+            .AsQueryable();
+        if (includeArchived != true) query = query.Where(item => !item.IsArchived);
+        var rows = (await query.ToListAsync(ct)).OrderByDescending(item => item.UpdatedAt).ToList();
+        return Results.Ok(rows.Select(ToJobApplicationResponse));
+    });
+
+    group.MapPost("/", async (JobApplicationRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.CompanyName) || string.IsNullOrWhiteSpace(request.PositionTitle))
+            return Results.BadRequest("Company and position are required.");
+        var item = new JobApplication();
+        ApplyJobApplication(item, request);
+        AddDefaultJobStages(item);
+        db.JobApplications.Add(item);
+        await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/job-applications/{item.Id}", ToJobApplicationResponse(item));
+    });
+
+    group.MapPut("/{id:guid}", async (Guid id, JobApplicationRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.JobApplications.Include(row => row.Stages).ThenInclude(stage => stage.Checklist).SingleOrDefaultAsync(row => row.Id == id, ct);
+        if (item is null) return Results.NotFound();
+        if (string.IsNullOrWhiteSpace(request.CompanyName) || string.IsNullOrWhiteSpace(request.PositionTitle))
+            return Results.BadRequest("Company and position are required.");
+        ApplyJobApplication(item, request);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ToJobApplicationResponse(item));
+    });
+
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.JobApplications.FindAsync([id], ct);
+        if (item is null) return Results.NotFound();
+        db.JobApplications.Remove(item);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+
+    group.MapPost("/{applicationId:guid}/stages", async (Guid applicationId, JobStageRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (!await db.JobApplications.AnyAsync(item => item.Id == applicationId, ct)) return Results.NotFound();
+        if (string.IsNullOrWhiteSpace(request.Title)) return Results.BadRequest("Stage title is required.");
+        var nextOrder = (await db.JobApplicationStages.Where(item => item.JobApplicationId == applicationId).MaxAsync(item => (int?)item.SortOrder, ct) ?? -1) + 1;
+        var stage = new JobApplicationStage { JobApplicationId = applicationId };
+        ApplyJobStage(stage, request, nextOrder);
+        db.JobApplicationStages.Add(stage);
+        await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/job-applications/{applicationId}/stages/{stage.Id}", stage);
+    });
+
+    group.MapPut("/stages/{stageId:guid}", async (Guid stageId, JobStageRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var stage = await db.JobApplicationStages.FindAsync([stageId], ct);
+        if (stage is null) return Results.NotFound();
+        if (string.IsNullOrWhiteSpace(request.Title)) return Results.BadRequest("Stage title is required.");
+        ApplyJobStage(stage, request, stage.SortOrder);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(stage);
+    });
+
+    group.MapDelete("/stages/{stageId:guid}", async (Guid stageId, AxisDbContext db, CancellationToken ct) =>
+    {
+        var stage = await db.JobApplicationStages.FindAsync([stageId], ct);
+        if (stage is null) return Results.NotFound();
+        db.JobApplicationStages.Remove(stage);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+
+    group.MapPost("/stages/{stageId:guid}/checklist", async (Guid stageId, JobPreparationItemRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (!await db.JobApplicationStages.AnyAsync(item => item.Id == stageId, ct)) return Results.NotFound();
+        if (string.IsNullOrWhiteSpace(request.Title)) return Results.BadRequest("Checklist item is required.");
+        var nextOrder = (await db.JobPreparationItems.Where(item => item.JobApplicationStageId == stageId).MaxAsync(item => (int?)item.SortOrder, ct) ?? -1) + 1;
+        var item = new JobPreparationItem { JobApplicationStageId = stageId, SortOrder = nextOrder };
+        ApplyJobPreparationItem(item, request);
+        db.JobPreparationItems.Add(item);
+        await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/job-applications/stages/{stageId}/checklist/{item.Id}", item);
+    });
+
+    group.MapPut("/checklist/{itemId:guid}", async (Guid itemId, JobPreparationItemRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.JobPreparationItems.FindAsync([itemId], ct);
+        if (item is null) return Results.NotFound();
+        if (string.IsNullOrWhiteSpace(request.Title)) return Results.BadRequest("Checklist item is required.");
+        ApplyJobPreparationItem(item, request);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(item);
+    });
+
+    group.MapDelete("/checklist/{itemId:guid}", async (Guid itemId, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.JobPreparationItems.FindAsync([itemId], ct);
+        if (item is null) return Results.NotFound();
+        db.JobPreparationItems.Remove(item);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+}
+
+static void ApplyJobApplication(JobApplication item, JobApplicationRequest request)
+{
+    item.CompanyName = request.CompanyName.Trim();
+    item.PositionTitle = request.PositionTitle.Trim();
+    item.Status = request.Status;
+    item.WorkMode = request.WorkMode;
+    item.EmploymentType = request.EmploymentType?.Trim() ?? string.Empty;
+    item.Location = request.Location?.Trim() ?? string.Empty;
+    item.Country = request.Country?.Trim() ?? string.Empty;
+    item.SalaryMin = request.SalaryMin is null ? null : Math.Max(0, request.SalaryMin.Value);
+    item.SalaryMax = request.SalaryMax is null ? null : Math.Max(item.SalaryMin ?? 0, request.SalaryMax.Value);
+    item.Currency = string.IsNullOrWhiteSpace(request.Currency) ? "EUR" : request.Currency.Trim().ToUpperInvariant();
+    item.DesireRating = Math.Clamp(request.DesireRating, 1, 10);
+    item.FitRating = Math.Clamp(request.FitRating, 1, 10);
+    item.Priority = Math.Clamp(request.Priority, 1, 5);
+    item.CompanyUrl = request.CompanyUrl?.Trim() ?? string.Empty;
+    item.PostingUrl = request.PostingUrl?.Trim() ?? string.Empty;
+    item.ApplicationUrl = request.ApplicationUrl?.Trim() ?? string.Empty;
+    item.Source = request.Source?.Trim() ?? string.Empty;
+    item.ContactName = request.ContactName?.Trim() ?? string.Empty;
+    item.ContactEmail = request.ContactEmail?.Trim() ?? string.Empty;
+    item.JobDescription = request.JobDescription?.Trim() ?? string.Empty;
+    item.Notes = request.Notes?.Trim() ?? string.Empty;
+    item.DiscoveredAt = request.DiscoveredAt;
+    item.AppliedAt = request.AppliedAt;
+    item.LastContactAt = request.LastContactAt;
+    item.FollowUpAt = request.FollowUpAt;
+    item.DeadlineAt = request.DeadlineAt;
+    item.DecisionAt = request.DecisionAt;
+    item.IsArchived = request.IsArchived;
+}
+
+static void ApplyJobStage(JobApplicationStage stage, JobStageRequest request, int fallbackOrder)
+{
+    stage.Title = request.Title.Trim();
+    stage.Status = request.Status;
+    stage.Focus = request.Focus?.Trim() ?? string.Empty;
+    stage.Notes = request.Notes?.Trim() ?? string.Empty;
+    stage.ScheduledAt = request.ScheduledAt;
+    stage.CompletedAt = request.Status == JobStageStatus.Completed ? request.CompletedAt ?? DateTimeOffset.Now : request.CompletedAt;
+    stage.SortOrder = request.SortOrder ?? fallbackOrder;
+}
+
+static void ApplyJobPreparationItem(JobPreparationItem item, JobPreparationItemRequest request)
+{
+    item.Title = request.Title.Trim();
+    item.Notes = request.Notes?.Trim() ?? string.Empty;
+    item.IsCompleted = request.IsCompleted;
+    item.CompletedAt = request.IsCompleted ? request.CompletedAt ?? DateTimeOffset.Now : null;
+    if (request.SortOrder is not null) item.SortOrder = request.SortOrder.Value;
+}
+
+static void AddDefaultJobStages(JobApplication application)
+{
+    application.Stages.Add(new JobApplicationStage
+    {
+        Title = "Scout and qualify", Status = JobStageStatus.Preparing, SortOrder = 0,
+        Focus = "Confirm the role, location, compensation range and fit before investing application time.",
+        Checklist =
+        [
+            new JobPreparationItem { Title = "Read and save the complete job description", SortOrder = 0 },
+            new JobPreparationItem { Title = "Check salary, location and work-mode fit", SortOrder = 1 },
+            new JobPreparationItem { Title = "Identify must-have skills and gaps", SortOrder = 2 }
+        ]
+    });
+    application.Stages.Add(new JobApplicationStage
+    {
+        Title = "Application package", SortOrder = 1,
+        Focus = "Tailor the evidence in the CV and application to this exact position.",
+        Checklist =
+        [
+            new JobPreparationItem { Title = "Research the company and product", SortOrder = 0 },
+            new JobPreparationItem { Title = "Tailor CV and project evidence", SortOrder = 1 },
+            new JobPreparationItem { Title = "Submit and record the application date", SortOrder = 2 }
+        ]
+    });
+    application.Stages.Add(new JobApplicationStage
+    {
+        Title = "Interview 1", SortOrder = 2,
+        Focus = "Clarify the interview format, prepare concise stories and questions for the interviewer.",
+        Checklist =
+        [
+            new JobPreparationItem { Title = "Confirm format, participants and focus", SortOrder = 0 },
+            new JobPreparationItem { Title = "Prepare role-relevant stories and questions", SortOrder = 1 },
+            new JobPreparationItem { Title = "Run one timed practice", SortOrder = 2 }
+        ]
+    });
+    application.Stages.Add(new JobApplicationStage
+    {
+        Title = "Decision", SortOrder = 3,
+        Focus = "Record the outcome, compensation and what to learn from the process.",
+        Checklist =
+        [
+            new JobPreparationItem { Title = "Record outcome and compensation details", SortOrder = 0 },
+            new JobPreparationItem { Title = "Write follow-up or thank-you message", SortOrder = 1 },
+            new JobPreparationItem { Title = "Capture lessons for the next process", SortOrder = 2 }
+        ]
+    });
+}
+
+static object ToJobApplicationResponse(JobApplication item) => new
+{
+    item.Id, item.CreatedAt, item.UpdatedAt, item.CompanyName, item.PositionTitle,
+    item.Status, item.WorkMode, item.EmploymentType, item.Location, item.Country,
+    item.SalaryMin, item.SalaryMax, item.Currency, item.DesireRating, item.FitRating, item.Priority,
+    item.CompanyUrl, item.PostingUrl, item.ApplicationUrl, item.Source, item.ContactName, item.ContactEmail,
+    item.JobDescription, item.Notes, item.DiscoveredAt, item.AppliedAt, item.LastContactAt,
+    item.FollowUpAt, item.DeadlineAt, item.DecisionAt, item.IsArchived,
+    Stages = item.Stages.OrderBy(stage => stage.SortOrder).Select(stage => new
+    {
+        stage.Id, stage.CreatedAt, stage.UpdatedAt, stage.Title, stage.Status, stage.Focus, stage.Notes,
+        stage.ScheduledAt, stage.CompletedAt, stage.SortOrder,
+        Checklist = stage.Checklist.OrderBy(check => check.SortOrder).Select(check => new
+        {
+            check.Id, check.CreatedAt, check.UpdatedAt, check.Title, check.Notes,
+            check.IsCompleted, check.CompletedAt, check.SortOrder
+        })
+    })
+};
+
 static void ApplyLesson(LifeLesson item, LifeLessonRequest request)
 {
     item.Title = request.Title.Trim(); item.Content = request.Content.Trim(); item.Category = request.Category?.Trim() ?? string.Empty;
@@ -1882,12 +2124,17 @@ static void MapBackup(WebApplication app)
     {
         await using var stream = file.OpenReadStream();
         var result = await backups.ImportAsync(stream, ct);
+        if (result.Imported)
+        {
+            await app.Services.InitializeAxisDatabaseAsync(seedData: false, ct);
+        }
         return result.Imported ? Results.Ok(result) : Results.BadRequest(result);
     }).DisableAntiforgery();
 
     group.MapPost("/restore", async (bool replaceExisting, HttpRequest request, IAxisBackupService backups, CancellationToken ct) =>
     {
         await backups.RestoreAsync(request.Body, replaceExisting, ct);
+        await app.Services.InitializeAxisDatabaseAsync(seedData: false, ct);
         return Results.NoContent();
     });
 }
@@ -2629,6 +2876,52 @@ public sealed record DiaryEntryRequest(DateTimeOffset? OccurredAt, string Title,
 public sealed record LifeLessonRequest(string Title, string Content, string? Category, string? Source, bool IsPinned);
 
 public sealed record FocusNoteRequest(string? Title, string? Content, string? Label, string? Color, bool IsPinned, bool IsArchived);
+
+public sealed record JobApplicationRequest(
+    string CompanyName,
+    string PositionTitle,
+    JobApplicationStatus Status,
+    JobWorkMode WorkMode,
+    string? EmploymentType,
+    string? Location,
+    string? Country,
+    decimal? SalaryMin,
+    decimal? SalaryMax,
+    string? Currency,
+    int DesireRating,
+    int FitRating,
+    int Priority,
+    string? CompanyUrl,
+    string? PostingUrl,
+    string? ApplicationUrl,
+    string? Source,
+    string? ContactName,
+    string? ContactEmail,
+    string? JobDescription,
+    string? Notes,
+    DateTimeOffset DiscoveredAt,
+    DateTimeOffset? AppliedAt,
+    DateTimeOffset? LastContactAt,
+    DateTimeOffset? FollowUpAt,
+    DateTimeOffset? DeadlineAt,
+    DateTimeOffset? DecisionAt,
+    bool IsArchived);
+
+public sealed record JobStageRequest(
+    string Title,
+    JobStageStatus Status,
+    string? Focus,
+    string? Notes,
+    DateTimeOffset? ScheduledAt,
+    DateTimeOffset? CompletedAt,
+    int? SortOrder);
+
+public sealed record JobPreparationItemRequest(
+    string Title,
+    string? Notes,
+    bool IsCompleted,
+    DateTimeOffset? CompletedAt,
+    int? SortOrder);
 
 public sealed record SavingsEntryRequest(decimal Amount, string? Note);
 

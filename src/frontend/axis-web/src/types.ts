@@ -211,6 +211,70 @@ export interface FocusNote {
   updatedAt: string;
 }
 
+export type JobApplicationStatus = 'Scouted' | 'Shortlisted' | 'Preparing' | 'Applied' | 'Interviewing' | 'Offer' | 'Accepted' | 'Rejected' | 'Withdrawn' | 'Archived';
+export type JobWorkMode = 'OnSite' | 'Hybrid' | 'Remote';
+export type JobStageStatus = 'Planned' | 'Preparing' | 'Scheduled' | 'Completed' | 'Cancelled';
+
+export interface JobPreparationItem {
+  id: string;
+  title: string;
+  notes: string;
+  isCompleted: boolean;
+  completedAt?: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JobApplicationStage {
+  id: string;
+  title: string;
+  status: JobStageStatus;
+  focus: string;
+  notes: string;
+  scheduledAt?: string | null;
+  completedAt?: string | null;
+  sortOrder: number;
+  checklist: JobPreparationItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JobApplication {
+  id: string;
+  companyName: string;
+  positionTitle: string;
+  status: JobApplicationStatus;
+  workMode: JobWorkMode;
+  employmentType: string;
+  location: string;
+  country: string;
+  salaryMin?: number | null;
+  salaryMax?: number | null;
+  currency: string;
+  desireRating: number;
+  fitRating: number;
+  priority: number;
+  companyUrl: string;
+  postingUrl: string;
+  applicationUrl: string;
+  source: string;
+  contactName: string;
+  contactEmail: string;
+  jobDescription: string;
+  notes: string;
+  discoveredAt: string;
+  appliedAt?: string | null;
+  lastContactAt?: string | null;
+  followUpAt?: string | null;
+  deadlineAt?: string | null;
+  decisionAt?: string | null;
+  isArchived: boolean;
+  stages: JobApplicationStage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SavingsEntry {
   id: string; recordedAt: string; amount: number; note: string;
 }

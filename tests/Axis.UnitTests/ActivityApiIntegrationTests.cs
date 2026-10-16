@@ -92,6 +92,145 @@ public sealed class ActivityApiIntegrationTests
     }
 
     [Fact]
+    public async Task Job_pipeline_crud_and_backup_round_trip_preserve_stages_and_checklists()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+
+        var created = await client.PostAsJsonAsync("/api/job-applications", JobApplicationPayload("Scouted"));
+        await AssertStatusAsync(created, HttpStatusCode.Created);
+        using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var applicationId = createdJson.RootElement.GetProperty("id").GetGuid();
+        var defaultStages = createdJson.RootElement.GetProperty("stages").EnumerateArray().ToList();
+        Assert.Equal(4, defaultStages.Count);
+        Assert.All(defaultStages, stage => Assert.NotEmpty(stage.GetProperty("checklist").EnumerateArray()));
+
+        var stageResponse = await client.PostAsJsonAsync($"/api/job-applications/{applicationId}/stages", new
+        {
+            title = "Technical interview 2",
+            status = "Scheduled",
+            focus = "System design and trade-offs",
+            notes = "Prepare one architecture walkthrough.",
+            scheduledAt = DateTimeOffset.UtcNow.AddDays(5),
+            completedAt = (DateTimeOffset?)null,
+            sortOrder = (int?)null
+        });
+        await AssertStatusAsync(stageResponse, HttpStatusCode.Created);
+        using var stageJson = JsonDocument.Parse(await stageResponse.Content.ReadAsStringAsync());
+        var stageId = stageJson.RootElement.GetProperty("id").GetGuid();
+
+        var checklistResponse = await client.PostAsJsonAsync($"/api/job-applications/stages/{stageId}/checklist", new
+        {
+            title = "Practice capacity estimation",
+            notes = "Use the target company's scale.",
+            isCompleted = false,
+            completedAt = (DateTimeOffset?)null,
+            sortOrder = (int?)null
+        });
+        await AssertStatusAsync(checklistResponse, HttpStatusCode.Created);
+        using var checklistJson = JsonDocument.Parse(await checklistResponse.Content.ReadAsStringAsync());
+        var checklistId = checklistJson.RootElement.GetProperty("id").GetGuid();
+
+        await AssertStatusAsync(await client.PutAsJsonAsync($"/api/job-applications/checklist/{checklistId}", new
+        {
+            title = "Practice capacity estimation",
+            notes = "Completed in 18 minutes.",
+            isCompleted = true,
+            completedAt = DateTimeOffset.UtcNow,
+            sortOrder = 0
+        }), HttpStatusCode.OK);
+        await AssertStatusAsync(await client.PutAsJsonAsync($"/api/job-applications/{applicationId}", JobApplicationPayload("Interviewing")), HttpStatusCode.OK);
+
+        var backupResponse = await client.GetAsync("/api/backup/export");
+        await AssertStatusAsync(backupResponse, HttpStatusCode.OK);
+        var backupBytes = await backupResponse.Content.ReadAsByteArrayAsync();
+        await AssertStatusAsync(await client.DeleteAsync($"/api/job-applications/{applicationId}"), HttpStatusCode.NoContent);
+
+        using var form = new MultipartFormDataContent();
+        using var backupContent = new ByteArrayContent(backupBytes);
+        backupContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        form.Add(backupContent, "file", "axis-job-pipeline.zip");
+        await AssertStatusAsync(await client.PostAsync("/api/backup/import", form), HttpStatusCode.OK);
+
+        using var restored = JsonDocument.Parse(await client.GetStringAsync("/api/job-applications?includeArchived=true"));
+        var application = restored.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == applicationId);
+        Assert.Equal("Interviewing", application.GetProperty("status").GetString());
+        var restoredStage = application.GetProperty("stages").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == stageId);
+        var restoredCheck = restoredStage.GetProperty("checklist").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == checklistId);
+        Assert.True(restoredCheck.GetProperty("isCompleted").GetBoolean());
+        Assert.Equal("Completed in 18 minutes.", restoredCheck.GetProperty("notes").GetString());
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task Backup_created_before_job_pipeline_tables_is_upgraded_immediately_after_import()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+
+        await using (var connection = new SqliteConnection($"Data Source={factory.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                PRAGMA foreign_keys=OFF;
+                DROP TABLE "JobPreparationItems";
+                DROP TABLE "JobApplicationStages";
+                DROP TABLE "JobApplications";
+                PRAGMA foreign_keys=ON;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var oldBackupResponse = await client.GetAsync("/api/backup/export");
+        await AssertStatusAsync(oldBackupResponse, HttpStatusCode.OK);
+        var oldBackupBytes = await oldBackupResponse.Content.ReadAsByteArrayAsync();
+
+        using var form = new MultipartFormDataContent();
+        using var backupContent = new ByteArrayContent(oldBackupBytes);
+        backupContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        form.Add(backupContent, "file", "axis-backup-before-job-pipeline.zip");
+        await AssertStatusAsync(await client.PostAsync("/api/backup/import", form), HttpStatusCode.OK);
+
+        using var applications = JsonDocument.Parse(await client.GetStringAsync("/api/job-applications?includeArchived=true"));
+        Assert.Empty(applications.RootElement.EnumerateArray());
+        await AssertStatusAsync(await client.PostAsJsonAsync("/api/job-applications", JobApplicationPayload("Scouted")), HttpStatusCode.Created);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    private static object JobApplicationPayload(string status) => new
+    {
+        companyName = "Vapor Systems",
+        positionTitle = "Senior Software Engineer",
+        status,
+        workMode = "Hybrid",
+        employmentType = "Full-time",
+        location = "Berlin",
+        country = "Germany",
+        salaryMin = 80000,
+        salaryMax = 95000,
+        currency = "EUR",
+        desireRating = 9,
+        fitRating = 8,
+        priority = 5,
+        companyUrl = "https://example.com",
+        postingUrl = "https://example.com/job",
+        applicationUrl = "https://example.com/apply",
+        source = "Company careers page",
+        contactName = "Recruiter",
+        contactEmail = "recruiter@example.com",
+        jobDescription = "Build reliable systems.",
+        notes = "High-priority role.",
+        discoveredAt = DateTimeOffset.UtcNow.AddDays(-2),
+        appliedAt = (DateTimeOffset?)null,
+        lastContactAt = (DateTimeOffset?)null,
+        followUpAt = DateTimeOffset.UtcNow.AddDays(3),
+        deadlineAt = DateTimeOffset.UtcNow.AddDays(10),
+        decisionAt = (DateTimeOffset?)null,
+        isArchived = false
+    };
+
+    [Fact]
     public async Task Starter_data_can_be_disabled_without_disabling_database_schema()
     {
         await using var factory = new AxisApiFactory(seedData: false);

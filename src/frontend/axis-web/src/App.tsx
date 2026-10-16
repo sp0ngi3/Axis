@@ -1,5 +1,6 @@
 import { ChangeEvent, FormEvent, Fragment, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
+import { ReadableChart } from './ReadableChart';
 import { buildDashboardTracks, getDayStatus } from './signals';
 import type { DashboardTrack } from './signals';
 import type {
@@ -36,12 +37,18 @@ import type {
   HistoryDay,
   LifeLesson,
   FocusNote,
+  JobApplication,
+  JobApplicationStage,
+  JobApplicationStatus,
+  JobPreparationItem,
+  JobStageStatus,
+  JobWorkMode,
   SavingsEntry,
   WishlistItem,
   WikiPage
 } from './types';
 
-type Page = 'today' | 'focus' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'lessons' | 'money' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
+type Page = 'today' | 'focus' | 'jobs' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'lessons' | 'money' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
 type Theme = 'light' | 'dark';
 type CalendarView = 'day' | 'week' | 'month';
 type WorkoutSet = {
@@ -74,6 +81,7 @@ type QuickLogDraft = {
 const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = [
   { id: 'today', label: 'Today', kicker: 'Operate', icon: '//' },
   { id: 'focus', label: 'Focus', kicker: 'Direction', icon: '::' },
+  { id: 'jobs', label: 'Career Pipeline', kicker: 'Job search', icon: '//>' },
   { id: 'dashboard', label: 'Insights', kicker: 'Signals', icon: '==' },
   { id: 'calendar', label: 'Calendar', kicker: 'Plan', icon: '[]' },
   { id: 'countdowns', label: 'Countdowns', kicker: 'Anticipate', icon: '>>' },
@@ -91,7 +99,7 @@ const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = 
   { id: 'backup', label: 'Backup', kicker: 'Safety', icon: '!!' }
 ];
 
-const primaryPageIds: Page[] = ['today', 'focus', 'calendar', 'dashboard', 'goals', 'journal'];
+const primaryPageIds: Page[] = ['today', 'focus', 'jobs', 'calendar', 'dashboard', 'goals', 'journal'];
 
 const loadLevels: LoadLevel[] = ['Low', 'Medium', 'High'];
 const activityStatuses: ActivityStatus[] = ['Planned', 'Completed', 'Skipped', 'Moved', 'Cancelled'];
@@ -102,6 +110,9 @@ const milestoneTypes: MilestoneType[] = ['Count', 'Repetition', 'Binary', 'Metri
 const milestoneStatuses: MilestoneStatus[] = ['Active', 'Completed', 'Paused', 'Archived'];
 const metricTypes: MetricValueType[] = ['Number', 'Percentage', 'Duration', 'Currency', 'Rating', 'Boolean'];
 const recurrenceFrequencies: RecurrenceFrequency[] = ['Daily', 'Weekly', 'Monthly'];
+const jobStatuses: JobApplicationStatus[] = ['Scouted', 'Shortlisted', 'Preparing', 'Applied', 'Interviewing', 'Offer', 'Accepted', 'Rejected', 'Withdrawn', 'Archived'];
+const jobWorkModes: JobWorkMode[] = ['OnSite', 'Hybrid', 'Remote'];
+const jobStageStatuses: JobStageStatus[] = ['Planned', 'Preparing', 'Scheduled', 'Completed', 'Cancelled'];
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const workoutMuscles = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core'];
 const workoutMarker = '[axis-workout-v1]';
@@ -129,6 +140,7 @@ export default function App() {
   const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
   const [lifeLessons, setLifeLessons] = useState<LifeLesson[]>([]);
   const [focusNotes, setFocusNotes] = useState<FocusNote[]>([]);
+  const [jobApplications, setJobApplications] = useState<JobApplication[]>([]);
   const [savingsEntries, setSavingsEntries] = useState<SavingsEntry[]>([]);
   const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
@@ -154,7 +166,7 @@ export default function App() {
     setIsLoading(true);
     try {
       setError('');
-      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, lessonRows, focusRows, savingsRows, wishlistRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
+      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, lessonRows, focusRows, jobRows, savingsRows, wishlistRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
         api.get<LifeArea[]>('/api/life-areas'),
         api.get<Goal[]>('/api/goals'),
         api.get<GoalProgress[]>('/api/dashboard/progress'),
@@ -168,6 +180,7 @@ export default function App() {
         api.get<DiaryEntry[]>('/api/diary'),
         api.get<LifeLesson[]>('/api/life-lessons'),
         api.get<FocusNote[]>('/api/focus-notes?includeArchived=true'),
+        api.get<JobApplication[]>('/api/job-applications?includeArchived=true'),
         api.get<SavingsEntry[]>('/api/money/savings'),
         api.get<WishlistItem[]>('/api/money/wishlist'),
         api.get<WikiPage[]>('/api/wiki-pages'),
@@ -191,6 +204,7 @@ export default function App() {
       setDiaryEntries(diaryRows);
       setLifeLessons(lessonRows);
       setFocusNotes(focusRows);
+      setJobApplications(jobRows);
       setSavingsEntries(savingsRows);
       setWishlistItems(wishlistRows);
       setWikiPages(wikiRows);
@@ -390,6 +404,27 @@ export default function App() {
               id ? 'Focus note updated.' : 'Focus note added.'
             )}
             onDelete={(id) => runAction(() => api.delete(`/api/focus-notes/${id}`), 'Focus note deleted.')}
+          />
+        )}
+        {page === 'jobs' && (
+          <JobApplicationsPage
+            applications={jobApplications}
+            busy={isBusy}
+            onSave={(body, id) => runAction(
+              () => id ? api.put(`/api/job-applications/${id}`, body) : api.post('/api/job-applications', body),
+              id ? 'Job application updated.' : 'Job opportunity added.'
+            )}
+            onDelete={(id) => runAction(() => api.delete(`/api/job-applications/${id}`), 'Job application deleted.')}
+            onStageSave={(applicationId, body, id) => runAction(
+              () => id ? api.put(`/api/job-applications/stages/${id}`, body) : api.post(`/api/job-applications/${applicationId}/stages`, body),
+              id ? 'Recruitment stage updated.' : 'Recruitment stage added.'
+            )}
+            onStageDelete={(id) => runAction(() => api.delete(`/api/job-applications/stages/${id}`), 'Recruitment stage deleted.')}
+            onChecklistSave={(stageId, body, id) => runAction(
+              () => id ? api.put(`/api/job-applications/checklist/${id}`, body) : api.post(`/api/job-applications/stages/${stageId}/checklist`, body),
+              id ? 'Preparation item updated.' : 'Preparation item added.'
+            )}
+            onChecklistDelete={(id) => runAction(() => api.delete(`/api/job-applications/checklist/${id}`), 'Preparation item deleted.')}
           />
         )}
         {page === 'dashboard' && (
@@ -674,17 +709,13 @@ function JournalMoodChart({ entries }: { entries: MoodEntry[] }) {
   const [mode, setMode] = useState<'lines' | 'bands'>('lines');
   const [selected, setSelected] = useState<MoodEntry | null>(null);
   const sorted = [...entries].sort((first, second) => new Date(first.recordedAt).getTime() - new Date(second.recordedAt).getTime());
-  const points = (field: 'score' | 'energy' | 'stress') => sorted.map((entry, index) => `${sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100},${92 - entry[field] / 10 * 78}`).join(' ');
   const latest = selected ?? sorted.at(-1);
   const average = (field: 'score' | 'energy' | 'stress') => sorted.length ? roundNumber(sorted.reduce((sum, item) => sum + item[field], 0) / sorted.length) : 0;
+  const data = sorted.map((entry) => ({ id: entry.id, label: formatShortDate(entry.recordedAt), values: { mood: entry.score, energy: entry.energy, stress: entry.stress }, detail: entry.context || entry.notes || formatDateTime(entry.recordedAt) }));
   return <div className="journal-chart professional-chart">
     <div className="chart-control-row"><div className="chart-legend"><span className="mood">Mood</span><span className="energy">Energy</span><span className="stress">Stress</span></div><div className="segmented-control compact"><button className={mode === 'lines' ? 'active' : ''} onClick={() => setMode('lines')}>Lines</button><button className={mode === 'bands' ? 'active' : ''} onClick={() => setMode('bands')}>Bands</button></div></div>
     <div className="chart-insight-strip"><span><small>Mood avg</small><strong>{average('score')}/10</strong></span><span><small>Energy avg</small><strong>{average('energy')}/10</strong></span><span><small>Stress avg</small><strong>{average('stress')}/10</strong></span><span><small>Selected</small><strong>{latest ? `${latest.score}/${latest.energy}/${latest.stress}` : '-'}</strong></span></div>
-    <div className="journal-plot-shell">
-      <div className="journal-y-axis"><span>10</span><span>5</span><span>1</span></div>
-      <div className="journal-plot"><span className="plot-unit">score / 10</span><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Mood, energy, and stress trend over recent check-ins"><line x1="0" x2="100" y1="14" y2="14" className="chart-grid" /><line x1="0" x2="100" y1="53" y2="53" className="chart-grid" /><line x1="0" x2="100" y1="92" y2="92" className="chart-axis" />{mode === 'lines' && sorted.length > 0 && <><polyline className="mood" points={points('score')} /><polyline className="energy" points={points('energy')} /><polyline className="stress" points={points('stress')} /></>}{mode === 'bands' && sorted.map((entry, index) => { const x = sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100; const width = Math.min(2.2, 62 / Math.max(1, sorted.length)); return <g key={entry.id} className="journal-bands"><rect x={x - width * 1.6} y={92 - entry.score / 10 * 78} width={width} height={entry.score / 10 * 78} className="mood" /><rect x={x - width / 2} y={92 - entry.energy / 10 * 78} width={width} height={entry.energy / 10 * 78} className="energy" /><rect x={x + width * .6} y={92 - entry.stress / 10 * 78} width={width} height={entry.stress / 10 * 78} className="stress" /></g>; })}{sorted.map((entry, index) => <g className="journal-hit" key={`hit-${entry.id}`} onClick={() => setSelected(entry)}><rect x={Math.max(0, (sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100) - 2)} y="0" width="4" height="96" /><circle cx={sorted.length === 1 ? 50 : index / (sorted.length - 1) * 100} cy={92 - entry.score / 10 * 78} r="1.6"><title>{formatDateTime(entry.recordedAt)}: mood {entry.score}, energy {entry.energy}, stress {entry.stress}</title></circle></g>)}</svg></div>
-    </div>
-    <div className="chart-range"><span>{sorted[0] ? formatShortDate(sorted[0].recordedAt) : 'No data'}</span><span>{latest ? `${formatShortDate(latest.recordedAt)} · ${latest.context || 'No context'}` : ''}</span><span>{sorted.at(-1) ? formatShortDate(sorted.at(-1)!.recordedAt) : ''}</span></div>
+    <ReadableChart data={data} series={[{ key: 'mood', label: 'Mood', color: '#42d9f5' }, { key: 'energy', label: 'Energy', color: '#68efaf' }, { key: 'stress', label: 'Stress', color: '#ff5fa2' }]} mode={mode === 'lines' ? 'line' : 'bars'} min={0} max={10} formatValue={(value) => `${roundNumber(value)}/10`} ariaLabel="Mood, energy and stress over recent check-ins" onSelect={(datum) => setSelected(sorted.find((entry) => entry.id === datum.id) ?? null)} />
   </div>;
 }
 
@@ -1347,11 +1378,10 @@ function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[];
   const [selectedRoutines, setSelectedRoutines] = useState<string[]>(() => props.tracks.slice(0, 4).map((track) => track.title));
   const [selectedDayKey, setSelectedDayKey] = useState(() => dateKey(props.days.at(-1) ?? new Date()));
   const [visibleSeries, setVisibleSeries] = useState({ done: true, missed: true, planned: true });
-  const points = props.days.map((day, index) => {
+  const points = props.days.map((day) => {
     const key = dateKey(day);
     const statuses = props.tracks.map((track) => track.days.find((item) => item.key === key)?.status);
     return {
-      x: props.days.length === 1 ? 50 : index / (props.days.length - 1) * 100,
       day,
       done: statuses.filter((status) => status === 'done').length,
       missed: statuses.filter((status) => status === 'missed' || status === 'skipped').length,
@@ -1359,8 +1389,7 @@ function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[];
     };
   });
   const ceiling = Math.max(1, ...points.flatMap((point) => [point.done, point.missed, point.planned]));
-  const chartY = (value: number) => 90 - value / ceiling * 72;
-  const line = (key: 'done' | 'missed' | 'planned') => points.map((point) => `${point.x},${chartY(point[key])}`).join(' ');
+  const momentumData = points.map((point) => ({ id: dateKey(point.day), label: formatShortDate(point.day.toISOString()), values: { done: point.done, missed: point.missed, planned: point.planned }, detail: `${point.done} completed · ${point.missed} gaps · ${point.planned} planned` }));
   const totalDone = points.reduce((sum, point) => sum + point.done, 0);
   const totalMissed = points.reduce((sum, point) => sum + point.missed, 0);
   const totalPlanned = points.reduce((sum, point) => sum + point.planned, 0);
@@ -1470,36 +1499,12 @@ function DashboardMomentumChart(props: { days: Date[]; tracks: DashboardTrack[];
                 </Fragment>)}
               </div>
             </div>
-          ) : <div className="chart-frame">
-            <div className="chart-scale"><span>{ceiling}</span><span>{roundNumber(ceiling / 2)}</span><span>0</span></div>
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Completed, missed, and planned activities over the selected range">
-              <line x1="0" y1="90" x2="100" y2="90" className="chart-axis" />
-              {visualization === 'lines' && visibleSeries.planned && <polyline points={line('planned')} className="chart-line planned" />}
-              {visualization === 'lines' && visibleSeries.missed && <polyline points={line('missed')} className="chart-line missed" />}
-              {visualization === 'lines' && visibleSeries.done && <polyline points={line('done')} className="chart-line done" />}
-              {visualization === 'bars' && points.map((point, index) => {
-                const width = Math.min(5, 72 / Math.max(1, points.length));
-                const offset = width * 1.1;
-                return <g key={`bars-${dateKey(point.day)}`} className="signal-bars">
-                  {visibleSeries.done && <rect x={point.x - offset} y={chartY(point.done)} width={width} height={90 - chartY(point.done)} className="done" />}
-                  {visibleSeries.missed && <rect x={point.x - width / 2} y={chartY(point.missed)} width={width} height={90 - chartY(point.missed)} className="missed" />}
-                  {visibleSeries.planned && <rect x={point.x + offset - width} y={chartY(point.planned)} width={width} height={90 - chartY(point.planned)} className="planned" />}
-                  <title>{props.days[index].toLocaleDateString()}</title>
-                </g>;
-              })}
-              {points.map((point) => (
-                <g key={dateKey(point.day)} className={`chart-day-hit ${selectedDayKey === dateKey(point.day) ? 'selected' : ''}`} onClick={() => setSelectedDayKey(dateKey(point.day))}>
-                  <title>{`${point.day.toLocaleDateString()}: ${point.done} completed, ${point.missed} gaps, ${point.planned} planned`}</title>
-                  <rect x={Math.max(0, point.x - Math.max(1.5, 45 / points.length))} y="0" width={Math.max(3, 90 / points.length)} height="94" className="chart-hit-zone" />
-                  {selectedDayKey === dateKey(point.day) && <line x1={point.x} y1="0" x2={point.x} y2="94" className="chart-selection-line" />}
-                  {visualization === 'lines' && visibleSeries.planned && <circle cx={point.x} cy={chartY(point.planned)} r="1.5" className="chart-point planned" />}
-                  {visualization === 'lines' && visibleSeries.missed && <circle cx={point.x} cy={chartY(point.missed)} r="1.7" className="chart-point missed" />}
-                  {visualization === 'lines' && visibleSeries.done && <circle cx={point.x} cy={chartY(point.done)} r="1.9" className="chart-point done" />}
-                </g>
-              ))}
-            </svg>
-          </div>}
-          <div className="chart-range"><span>{props.days[0]?.toLocaleDateString()}</span><span>{props.days.at(-1)?.toLocaleDateString()}</span></div>
+          ) : <ReadableChart data={momentumData} series={[
+            ...(visibleSeries.done ? [{ key: 'done', label: 'Completed', color: '#39d9e6' }] : []),
+            ...(visibleSeries.missed ? [{ key: 'missed', label: 'Gaps', color: '#ff4da6' }] : []),
+            ...(visibleSeries.planned ? [{ key: 'planned', label: 'Planned', color: '#f5c451' }] : [])
+          ]} mode={visualization === 'lines' ? 'line' : 'bars'} min={0} max={Math.max(4, ceiling)} formatValue={(value) => `${Math.round(value)}`} ariaLabel="Completed, missed and planned activities over the selected range" onSelect={(datum) => setSelectedDayKey(datum.id)} />}
+          {visualization === 'routines' && <div className="chart-range"><span>{props.days[0]?.toLocaleDateString()}</span><span>{props.days.at(-1)?.toLocaleDateString()}</span></div>}
           <div className="status-color-key">
             <span className="done"><i />Done</span>
             <span className="missed"><i />Missed or skipped</span>
@@ -1646,6 +1651,17 @@ function MetricComparisonPanel({ metrics }: { metrics: Metric[] }) {
     });
     return { metric, color: comparisonColors[index], values, min, max, points };
   });
+  const comparisonDays = Array.from(new Set(series.flatMap((row) => row.values.map((entry) => localDateKey(entry.recordedAt))))).sort();
+  const comparisonData = comparisonDays.map((day) => ({
+    id: day,
+    label: formatShortDate(`${day}T12:00:00`),
+    values: Object.fromEntries(series.map((row) => {
+      const entry = row.values.filter((value) => localDateKey(value.recordedAt) === day).at(-1);
+      const normalized = entry ? (row.max === row.min ? 50 : (entry.value - row.min) / (row.max - row.min) * 100) : null;
+      return [row.metric.id, normalized];
+    })),
+    detail: 'Normalized percentile within the selected period'
+  }));
   const available = candidates.filter((metric) => !selectedIds.includes(metric.id));
 
   function addMetric(id: string) {
@@ -1668,19 +1684,7 @@ function MetricComparisonPanel({ metrics }: { metrics: Metric[] }) {
     </div>
     <div className="metric-comparison-layout">
       <div className={`metric-comparison-chart ${isLoading ? 'loading' : ''}`}>
-        <div className="comparison-axis"><span>Personal high</span><span>Mid-range</span><span>Personal low</span></div>
-        <svg viewBox="0 0 1000 320" preserveAspectRatio="none" role="img" aria-label="Normalized comparison of selected metrics over time">
-          <defs><linearGradient id="comparisonGlow" x1="0" x2="1"><stop offset="0" stopColor="#39d9e6" stopOpacity=".12" /><stop offset=".5" stopColor="#ff4da6" stopOpacity=".1" /><stop offset="1" stopColor="#8b7dff" stopOpacity=".12" /></linearGradient></defs>
-          <rect x="48" y="34" width="910" height="242" className="comparison-plot-bg" />
-          {[48, 105, 162, 219, 276].map((y) => <line key={y} x1="48" y1={y} x2="958" y2={y} className="comparison-grid-line" />)}
-          {series.map((row) => <g key={row.metric.id} style={{ '--series-color': row.color } as CSSProperties} className="comparison-series">
-            {row.points.length > 1 && <polyline points={row.points.map((point) => `${point.x},${point.y}`).join(' ')} />}
-            {row.points.map((point) => <circle key={point.entry.id} cx={point.x} cy={point.y} r={selectedDay === localDateKey(point.entry.recordedAt) ? 7 : 4.5} className={selectedDay === localDateKey(point.entry.recordedAt) ? 'selected' : ''} onClick={() => setSelectedDay(localDateKey(point.entry.recordedAt))}><title>{`${row.metric.name}: ${formatMetricValue(row.metric, point.entry.value)} on ${formatShortDate(point.entry.recordedAt)}`}</title></circle>)}
-          </g>)}
-          <line x1="48" y1="276" x2="958" y2="276" className="comparison-baseline" />
-          <rect x="48" y="34" width="910" height="242" className="comparison-scan" />
-        </svg>
-        <div className="comparison-dates"><span>{formatShortDate(new Date(fromTime).toISOString())}</span><span>Each line uses its own low-to-high scale</span><span>Today</span></div>
+        <ReadableChart data={comparisonData} series={series.map((row) => ({ key: row.metric.id, label: row.metric.name, color: row.color }))} min={0} max={100} formatValue={(value) => `${Math.round(value)}%`} ariaLabel="Normalized comparison of selected metrics over time" onSelect={(datum) => setSelectedDay(datum.id)} emptyText="Log one of the selected metrics to start the comparison." />
         {series.every((row) => row.points.length === 0) && !isLoading && <div className="comparison-empty"><strong>No points in this range</strong><span>Log one of the selected metrics to start the comparison.</span></div>}
         {loadError && <div className="comparison-empty error"><strong>Could not load comparison</strong><span>{summarizeError(loadError)}</span></div>}
       </div>
@@ -2164,6 +2168,221 @@ function FocusNoteForm(props: { note: FocusNote | null; busy: boolean; onSave: (
   );
 }
 
+function JobApplicationsPage(props: {
+  applications: JobApplication[];
+  busy: boolean;
+  onSave: (body: unknown, id?: string) => void;
+  onDelete: (id: string) => void;
+  onStageSave: (applicationId: string, body: unknown, id?: string) => void;
+  onStageDelete: (id: string) => void;
+  onChecklistSave: (stageId: string, body: unknown, id?: string) => void;
+  onChecklistDelete: (id: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState('active');
+  const [workMode, setWorkMode] = useState('');
+  const [location, setLocation] = useState('');
+  const [minimumSalary, setMinimumSalary] = useState('');
+  const [minimumDesire, setMinimumDesire] = useState('');
+  const [sort, setSort] = useState('updated');
+  const [page, setPage] = useState(1);
+  const [editing, setEditing] = useState<JobApplication | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const locations = Array.from(new Set(props.applications.map((item) => item.location).filter(Boolean))).sort();
+  const terminalStatuses: JobApplicationStatus[] = ['Accepted', 'Rejected', 'Withdrawn', 'Archived'];
+  const filtered = props.applications.filter((item) => {
+    const haystack = `${item.companyName} ${item.positionTitle} ${item.location} ${item.country} ${item.source} ${item.notes}`.toLowerCase();
+    const salary = item.salaryMax ?? item.salaryMin ?? 0;
+    const matchesStatus = status === 'all' || (status === 'active'
+      ? !item.isArchived && !terminalStatuses.includes(item.status)
+      : item.status === status);
+    return (!query || haystack.includes(query.toLowerCase()))
+      && matchesStatus
+      && (!workMode || item.workMode === workMode)
+      && (!location || item.location === location)
+      && (!minimumSalary || salary >= Number(minimumSalary))
+      && (!minimumDesire || item.desireRating >= Number(minimumDesire));
+  }).sort((first, second) => {
+    if (sort === 'salary') return (second.salaryMax ?? second.salaryMin ?? 0) - (first.salaryMax ?? first.salaryMin ?? 0);
+    if (sort === 'desire') return second.desireRating - first.desireRating;
+    if (sort === 'deadline') return nullableDateSort(first.deadlineAt, second.deadlineAt);
+    return new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime();
+  });
+  const paged = paginate(filtered, page, 10);
+  const selected = props.applications.find((item) => item.id === selectedId) ?? null;
+  const totalChecklist = props.applications.flatMap((item) => item.stages).flatMap((stage) => stage.checklist);
+  const dueFollowUps = props.applications.filter((item) => item.followUpAt && new Date(item.followUpAt) <= addDays(new Date(), 7) && !terminalStatuses.includes(item.status)).length;
+  const pipelineGroups: Array<{ id: string; label: string; statuses: JobApplicationStatus[] }> = [
+    { id: 'scout', label: 'Scout', statuses: ['Scouted', 'Shortlisted'] },
+    { id: 'prepare', label: 'Prepare', statuses: ['Preparing'] },
+    { id: 'applied', label: 'Applied', statuses: ['Applied'] },
+    { id: 'interview', label: 'Interview', statuses: ['Interviewing'] },
+    { id: 'decision', label: 'Decision', statuses: ['Offer', 'Accepted', 'Rejected'] }
+  ];
+  const pipelineData = pipelineGroups.map((group) => ({
+    id: group.id,
+    label: group.label,
+    values: { count: props.applications.filter((application) => group.statuses.includes(application.status)).length }
+  }));
+  const pipelineMax = Math.max(4, ...pipelineData.map((item) => item.values.count));
+
+  useEffect(() => setPage(1), [query, status, workMode, location, minimumSalary, minimumDesire, sort]);
+
+  return <section className="stack jobs-page">
+    <div className="stats-grid four job-stats">
+      <StatCard label="Active pipeline" value={props.applications.filter((item) => !item.isArchived && !terminalStatuses.includes(item.status)).length} />
+      <StatCard label="Interviews" value={props.applications.filter((item) => item.status === 'Interviewing').length} />
+      <StatCard label="Follow-ups due" value={dueFollowUps} />
+      <StatCard label="Prep complete" value={totalChecklist.length ? `${Math.round(totalChecklist.filter((item) => item.isCompleted).length / totalChecklist.length * 100)}%` : '—'} />
+    </div>
+
+    <section className="surface professional-chart job-pipeline-chart">
+      <div className="collection-header flush-header"><SectionTitle kicker="Recruitment flow" title="Application pipeline" /><button onClick={() => setCreating(true)}>Add opportunity</button></div>
+      <ReadableChart data={pipelineData} series={[{ key: 'count', label: 'Applications', color: '#32d6e9' }]} mode="bars" min={0} max={pipelineMax} formatValue={(value) => `${Math.round(value)}`} ariaLabel="Applications grouped by recruitment status" />
+    </section>
+
+    <section className="surface collection-shell job-ledger">
+      <div className="collection-header"><SectionTitle kicker="Career ledger" title="Opportunities" /><span className="record-count">{filtered.length} matching</span></div>
+      <div className="filter-bar job-filter-bar">
+        <input aria-label="Search job applications" placeholder="Search company, role, location, source..." value={query} onChange={(event) => setQuery(event.target.value)} />
+        <select aria-label="Filter by status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="active">Active pipeline</option><option value="all">All statuses</option>{jobStatuses.map((item) => <option key={item} value={item}>{splitPascalCase(item)}</option>)}</select>
+        <select aria-label="Filter by work mode" value={workMode} onChange={(event) => setWorkMode(event.target.value)}><option value="">All work modes</option>{jobWorkModes.map((item) => <option key={item} value={item}>{splitPascalCase(item)}</option>)}</select>
+        <select aria-label="Filter by location" value={location} onChange={(event) => setLocation(event.target.value)}><option value="">All locations</option>{locations.map((item) => <option key={item}>{item}</option>)}</select>
+        <input aria-label="Minimum salary" type="number" min="0" placeholder="Min salary" value={minimumSalary} onChange={(event) => setMinimumSalary(event.target.value)} />
+        <input aria-label="Minimum desire rating" type="number" min="1" max="10" placeholder="Min desire /10" value={minimumDesire} onChange={(event) => setMinimumDesire(event.target.value)} />
+        <select aria-label="Sort applications" value={sort} onChange={(event) => setSort(event.target.value)}><option value="updated">Recently updated</option><option value="deadline">Next deadline</option><option value="salary">Highest salary</option><option value="desire">Most wanted</option></select>
+      </div>
+      <div className="job-table-wrap">
+        <table className="job-table">
+          <thead><tr><th>Company / position</th><th>Status</th><th>Location</th><th>Compensation</th><th>Fit</th><th>Next action</th><th aria-label="Actions" /></tr></thead>
+          <tbody>{paged.items.map((item) => {
+            const checklist = item.stages.flatMap((stage) => stage.checklist);
+            const nextStage = item.stages.find((stage) => stage.status !== 'Completed' && stage.status !== 'Cancelled');
+            return <tr key={item.id} className={selectedId === item.id ? 'selected' : ''}>
+              <td><button className="job-name-button" onClick={() => setSelectedId(item.id)}><strong>{item.companyName}</strong><span>{item.positionTitle}</span></button></td>
+              <td><span className={`status-chip status-${item.status.toLowerCase()}`}>{splitPascalCase(item.status)}</span></td>
+              <td><strong>{item.location || 'Not set'}</strong><span>{splitPascalCase(item.workMode)}{item.country ? ` · ${item.country}` : ''}</span></td>
+              <td>{formatSalaryRange(item)}</td>
+              <td><strong>{item.desireRating}/10 want</strong><span>{item.fitRating}/10 fit</span></td>
+              <td><strong>{nextStage?.title ?? 'Process complete'}</strong><span>{formatJobDate(item.followUpAt ?? nextStage?.scheduledAt ?? item.deadlineAt)}</span><div className="mini-progress"><i style={{ width: `${checklist.length ? checklist.filter((check) => check.isCompleted).length / checklist.length * 100 : 0}%` }} /></div></td>
+              <td><div className="row-actions"><button className="secondary-button" onClick={() => setSelectedId(item.id)}>Process</button><button className="secondary-button" onClick={() => setEditing(item)}>Edit</button><button className="danger-button" onClick={() => window.confirm(`Delete ${item.companyName} application and its stages?`) && props.onDelete(item.id)}>Delete</button></div></td>
+            </tr>;
+          })}</tbody>
+        </table>
+        {!paged.items.length && <EmptyState text="No opportunities match these filters." />}
+      </div>
+      <PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} />
+    </section>
+
+    {selected && <JobProcessWorkspace application={selected} busy={props.busy} onClose={() => setSelectedId(null)} onEdit={() => setEditing(selected)} onStageSave={props.onStageSave} onStageDelete={props.onStageDelete} onChecklistSave={props.onChecklistSave} onChecklistDelete={props.onChecklistDelete} />}
+
+    <EditorDrawer open={creating || editing !== null} label={editing ? `Edit ${editing.companyName}` : 'New opportunity'} onClose={() => { setCreating(false); setEditing(null); }}>
+      <JobApplicationForm application={editing} busy={props.busy} onSave={(body) => { props.onSave(body, editing?.id); setCreating(false); setEditing(null); }} />
+    </EditorDrawer>
+  </section>;
+}
+
+function JobApplicationForm(props: { application: JobApplication | null; busy: boolean; onSave: (body: unknown) => void }) {
+  const item = props.application;
+  const [draft, setDraft] = useState({
+    companyName: item?.companyName ?? '', positionTitle: item?.positionTitle ?? '', status: item?.status ?? 'Scouted' as JobApplicationStatus,
+    workMode: item?.workMode ?? 'Hybrid' as JobWorkMode, employmentType: item?.employmentType ?? 'Full-time', location: item?.location ?? '', country: item?.country ?? '',
+    salaryMin: item?.salaryMin?.toString() ?? '', salaryMax: item?.salaryMax?.toString() ?? '', currency: item?.currency ?? 'EUR', desireRating: item?.desireRating ?? 7,
+    fitRating: item?.fitRating ?? 7, priority: item?.priority ?? 3, companyUrl: item?.companyUrl ?? '', postingUrl: item?.postingUrl ?? '', applicationUrl: item?.applicationUrl ?? '',
+    source: item?.source ?? '', contactName: item?.contactName ?? '', contactEmail: item?.contactEmail ?? '', jobDescription: item?.jobDescription ?? '', notes: item?.notes ?? '',
+    discoveredAt: toLocalInput(new Date(item?.discoveredAt ?? Date.now())), appliedAt: item?.appliedAt ? toLocalInput(new Date(item.appliedAt)) : '',
+    lastContactAt: item?.lastContactAt ? toLocalInput(new Date(item.lastContactAt)) : '', followUpAt: item?.followUpAt ? toLocalInput(new Date(item.followUpAt)) : '',
+    deadlineAt: item?.deadlineAt ? toLocalInput(new Date(item.deadlineAt)) : '', decisionAt: item?.decisionAt ? toLocalInput(new Date(item.decisionAt)) : '', isArchived: item?.isArchived ?? false
+  });
+  const update = <K extends keyof typeof draft>(key: K, value: typeof draft[K]) => setDraft((current) => ({ ...current, [key]: value }));
+  return <form className="editor-form job-application-form" onSubmit={(event) => { event.preventDefault(); props.onSave({ ...draft, salaryMin: optionalNumeric(draft.salaryMin), salaryMax: optionalNumeric(draft.salaryMax), discoveredAt: new Date(draft.discoveredAt).toISOString(), appliedAt: optionalDateIso(draft.appliedAt), lastContactAt: optionalDateIso(draft.lastContactAt), followUpAt: optionalDateIso(draft.followUpAt), deadlineAt: optionalDateIso(draft.deadlineAt), decisionAt: optionalDateIso(draft.decisionAt) }); }}>
+    <div className="form-grid two"><TextField label="Company" value={draft.companyName} onChange={(value) => update('companyName', value)} required /><TextField label="Position" value={draft.positionTitle} onChange={(value) => update('positionTitle', value)} required /></div>
+    <div className="form-grid three"><SelectField label="Status" value={draft.status} onChange={(value) => update('status', value as JobApplicationStatus)} options={jobStatuses.map((value) => ({ value, label: splitPascalCase(value) }))} /><SelectField label="Work mode" value={draft.workMode} onChange={(value) => update('workMode', value as JobWorkMode)} options={jobWorkModes.map((value) => ({ value, label: splitPascalCase(value) }))} /><TextField label="Employment type" value={draft.employmentType} onChange={(value) => update('employmentType', value)} /></div>
+    <div className="form-grid two"><TextField label="Location" value={draft.location} onChange={(value) => update('location', value)} /><TextField label="Country" value={draft.country} onChange={(value) => update('country', value)} /></div>
+    <div className="form-grid three"><NumberOrBlankField label="Salary minimum" value={draft.salaryMin} min={0} step={100} onChange={(value) => update('salaryMin', value)} /><NumberOrBlankField label="Salary maximum" value={draft.salaryMax} min={0} step={100} onChange={(value) => update('salaryMax', value)} /><TextField label="Currency" value={draft.currency} onChange={(value) => update('currency', value)} /></div>
+    <div className="form-grid three"><NumberField label="How much I want it (1-10)" value={draft.desireRating} min={1} max={10} onChange={(value) => update('desireRating', value)} /><NumberField label="My fit (1-10)" value={draft.fitRating} min={1} max={10} onChange={(value) => update('fitRating', value)} /><NumberField label="Priority (1-5)" value={draft.priority} min={1} max={5} onChange={(value) => update('priority', value)} /></div>
+    <div className="form-grid two"><TextField label="Company website" value={draft.companyUrl} onChange={(value) => update('companyUrl', value)} /><TextField label="Job posting URL" value={draft.postingUrl} onChange={(value) => update('postingUrl', value)} /></div>
+    <div className="form-grid two"><TextField label="Application URL" value={draft.applicationUrl} onChange={(value) => update('applicationUrl', value)} /><TextField label="Source" value={draft.source} onChange={(value) => update('source', value)} /></div>
+    <div className="form-grid two"><TextField label="Contact name" value={draft.contactName} onChange={(value) => update('contactName', value)} /><TextField label="Contact email" value={draft.contactEmail} onChange={(value) => update('contactEmail', value)} /></div>
+    <div className="form-grid two"><JobDateField label="Discovered" value={draft.discoveredAt} onChange={(value) => update('discoveredAt', value)} /><JobDateField label="Applied" value={draft.appliedAt} onChange={(value) => update('appliedAt', value)} /></div>
+    <div className="form-grid two"><JobDateField label="Last contact" value={draft.lastContactAt} onChange={(value) => update('lastContactAt', value)} /><JobDateField label="Follow up" value={draft.followUpAt} onChange={(value) => update('followUpAt', value)} /></div>
+    <div className="form-grid two"><JobDateField label="Application deadline" value={draft.deadlineAt} onChange={(value) => update('deadlineAt', value)} /><JobDateField label="Decision" value={draft.decisionAt} onChange={(value) => update('decisionAt', value)} /></div>
+    <TextArea label="Job description / saved offer" value={draft.jobDescription} onChange={(value) => update('jobDescription', value)} /><TextArea label="Private notes" value={draft.notes} onChange={(value) => update('notes', value)} />
+    <label className="toggle-field"><input type="checkbox" checked={draft.isArchived} onChange={(event) => update('isArchived', event.target.checked)} /><span>Archive this opportunity</span></label>
+    <button disabled={props.busy}>Save opportunity</button>
+  </form>;
+}
+
+function JobProcessWorkspace(props: { application: JobApplication; busy: boolean; onClose: () => void; onEdit: () => void; onStageSave: (applicationId: string, body: unknown, id?: string) => void; onStageDelete: (id: string) => void; onChecklistSave: (stageId: string, body: unknown, id?: string) => void; onChecklistDelete: (id: string) => void }) {
+  const [newStage, setNewStage] = useState(false);
+  const completed = props.application.stages.flatMap((stage) => stage.checklist).filter((item) => item.isCompleted).length;
+  const total = props.application.stages.flatMap((stage) => stage.checklist).length;
+  return <section className="surface job-process-workspace">
+    <div className="collection-header"><div><p className="eyebrow">Recruitment process</p><h3>{props.application.companyName} · {props.application.positionTitle}</h3><p>{props.application.location || 'Location not set'} · {splitPascalCase(props.application.workMode)} · {formatSalaryRange(props.application)}</p></div><div className="button-row"><button className="secondary-button" onClick={props.onEdit}>Edit opportunity</button><button className="secondary-button" onClick={props.onClose}>Close</button></div></div>
+    <div className="job-process-summary"><span><small>Status</small><strong>{splitPascalCase(props.application.status)}</strong></span><span><small>Preparation</small><strong>{completed}/{total}</strong></span><span><small>Follow-up</small><strong>{formatJobDate(props.application.followUpAt)}</strong></span><span><small>Deadline</small><strong>{formatJobDate(props.application.deadlineAt)}</strong></span></div>
+    <div className="job-links">{safeExternalLink(props.application.companyUrl, 'Company')}{safeExternalLink(props.application.postingUrl, 'Job posting')}{safeExternalLink(props.application.applicationUrl, 'Application')}</div>
+    <div className="job-stage-list">{props.application.stages.map((stage, index) => <JobStagePanel key={stage.id} applicationId={props.application.id} stage={stage} index={index} busy={props.busy} onSave={props.onStageSave} onDelete={props.onStageDelete} onChecklistSave={props.onChecklistSave} onChecklistDelete={props.onChecklistDelete} />)}</div>
+    {newStage ? <JobStageForm applicationId={props.application.id} stage={null} order={props.application.stages.length} busy={props.busy} onSave={(body) => { props.onStageSave(props.application.id, body); setNewStage(false); }} onCancel={() => setNewStage(false)} /> : <button className="secondary-button" onClick={() => setNewStage(true)}>Add interview or stage</button>}
+  </section>;
+}
+
+function JobStagePanel(props: { applicationId: string; stage: JobApplicationStage; index: number; busy: boolean; onSave: (applicationId: string, body: unknown, id?: string) => void; onDelete: (id: string) => void; onChecklistSave: (stageId: string, body: unknown, id?: string) => void; onChecklistDelete: (id: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [newItem, setNewItem] = useState('');
+  const done = props.stage.checklist.filter((item) => item.isCompleted).length;
+  return <article className={`job-stage status-${props.stage.status.toLowerCase()}`}>
+    <div className="job-stage-index">{String(props.index + 1).padStart(2, '0')}</div>
+    <div className="job-stage-main">
+      <div className="job-stage-header"><div><p className="eyebrow">{splitPascalCase(props.stage.status)}</p><h4>{props.stage.title}</h4></div><div className="row-actions"><span>{done}/{props.stage.checklist.length} ready</span><button className="secondary-button" onClick={() => setEditing(!editing)}>{editing ? 'Close editor' : 'Edit'}</button>{props.stage.status !== 'Completed' && <button onClick={() => props.onSave(props.applicationId, { ...stageRequest(props.stage), status: 'Completed', completedAt: new Date().toISOString() }, props.stage.id)}>Complete stage</button>}<button className="danger-button" onClick={() => window.confirm(`Delete stage ${props.stage.title}?`) && props.onDelete(props.stage.id)}>Delete</button></div></div>
+      {props.stage.focus && <p className="job-stage-focus">{props.stage.focus}</p>}
+      {props.stage.scheduledAt && <p className="job-stage-date">Scheduled {formatDateTime(props.stage.scheduledAt)}</p>}
+      {editing && <JobStageForm applicationId={props.applicationId} stage={props.stage} order={props.stage.sortOrder} busy={props.busy} onSave={(body) => { props.onSave(props.applicationId, body, props.stage.id); setEditing(false); }} onCancel={() => setEditing(false)} />}
+      <div className="job-checklist">{props.stage.checklist.map((item) => <JobChecklistRow key={item.id} stageId={props.stage.id} item={item} onSave={props.onChecklistSave} onDelete={props.onChecklistDelete} />)}</div>
+      <form className="job-checklist-add" onSubmit={(event) => { event.preventDefault(); if (!newItem.trim()) return; props.onChecklistSave(props.stage.id, { title: newItem, notes: '', isCompleted: false, completedAt: null, sortOrder: null }); setNewItem(''); }}><input aria-label={`Add preparation item to ${props.stage.title}`} value={newItem} onChange={(event) => setNewItem(event.target.value)} placeholder="Add preparation item..." /><button disabled={props.busy || !newItem.trim()}>Add</button></form>
+    </div>
+  </article>;
+}
+
+function JobChecklistRow(props: { stageId: string; item: JobPreparationItem; onSave: (stageId: string, body: unknown, id?: string) => void; onDelete: (id: string) => void }) {
+  return <div className={props.item.isCompleted ? 'job-check done' : 'job-check'}><label><input type="checkbox" checked={props.item.isCompleted} onChange={(event) => props.onSave(props.stageId, { title: props.item.title, notes: props.item.notes, isCompleted: event.target.checked, completedAt: event.target.checked ? new Date().toISOString() : null, sortOrder: props.item.sortOrder }, props.item.id)} /><span>{props.item.title}</span></label>{props.item.notes && <small>{props.item.notes}</small>}<button className="icon-button danger-button" aria-label={`Delete ${props.item.title}`} title="Delete checklist item" onClick={() => window.confirm(`Delete checklist item ${props.item.title}?`) && props.onDelete(props.item.id)}>×</button></div>;
+}
+
+function JobStageForm(props: { applicationId: string; stage: JobApplicationStage | null; order: number; busy: boolean; onSave: (body: unknown) => void; onCancel: () => void }) {
+  const [draft, setDraft] = useState({ title: props.stage?.title ?? `Interview ${Math.max(1, props.order - 1)}`, status: props.stage?.status ?? 'Planned' as JobStageStatus, focus: props.stage?.focus ?? '', notes: props.stage?.notes ?? '', scheduledAt: props.stage?.scheduledAt ? toLocalInput(new Date(props.stage.scheduledAt)) : '', completedAt: props.stage?.completedAt ? toLocalInput(new Date(props.stage.completedAt)) : '' });
+  return <form className="job-stage-form" onSubmit={(event) => { event.preventDefault(); props.onSave({ ...draft, scheduledAt: optionalDateIso(draft.scheduledAt), completedAt: optionalDateIso(draft.completedAt), sortOrder: props.order }); }}><div className="form-grid two"><TextField label="Stage name" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} required /><SelectField label="Status" value={draft.status} onChange={(status) => setDraft({ ...draft, status: status as JobStageStatus })} options={jobStageStatuses.map((value) => ({ value, label: value }))} /></div><TextArea label="Preparation focus" value={draft.focus} onChange={(focus) => setDraft({ ...draft, focus })} /><TextArea label="Stage notes" value={draft.notes} onChange={(notes) => setDraft({ ...draft, notes })} /><JobDateField label="Scheduled at" value={draft.scheduledAt} onChange={(scheduledAt) => setDraft({ ...draft, scheduledAt })} /><div className="button-row"><button disabled={props.busy}>Save stage</button><button type="button" className="secondary-button" onClick={props.onCancel}>Cancel</button></div></form>;
+}
+
+function JobDateField(props: { label: string; value: string; onChange: (value: string) => void }) {
+  return <label className="field"><span>{props.label}</span><input type="datetime-local" value={props.value} onChange={(event) => props.onChange(event.target.value)} /></label>;
+}
+
+function stageRequest(stage: JobApplicationStage) {
+  return { title: stage.title, status: stage.status, focus: stage.focus, notes: stage.notes, scheduledAt: stage.scheduledAt, completedAt: stage.completedAt, sortOrder: stage.sortOrder };
+}
+
+function nullableDateSort(first?: string | null, second?: string | null) {
+  if (!first && !second) return 0;
+  if (!first) return 1;
+  if (!second) return -1;
+  return new Date(first).getTime() - new Date(second).getTime();
+}
+
+function optionalNumeric(value: string) { return value.trim() === '' ? null : Number(value); }
+function optionalDateIso(value: string) { return value ? new Date(value).toISOString() : null; }
+function splitPascalCase(value: string) { return value.replace(/([a-z])([A-Z])/g, '$1 $2'); }
+function formatJobDate(value?: string | null) { return value ? formatShortDate(value) : 'Not scheduled'; }
+function formatSalaryRange(item: JobApplication) {
+  if (item.salaryMin == null && item.salaryMax == null) return 'Not disclosed';
+  const format = (value: number) => `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)} ${item.currency}`;
+  if (item.salaryMin != null && item.salaryMax != null) return `${format(item.salaryMin)}–${format(item.salaryMax)}`;
+  return format((item.salaryMax ?? item.salaryMin)!);
+}
+function safeExternalLink(value: string, label: string) {
+  if (!/^https?:\/\//i.test(value)) return null;
+  return <a href={value} target="_blank" rel="noreferrer">{label} ↗</a>;
+}
+
 function LifeLessonsPage(props: { lessons: LifeLesson[]; busy: boolean; onSave: (body: unknown, id?: string) => void; onDelete: (id: string) => void }) {
   const [selected, setSelected] = useState<LifeLesson | null>(null);
   const [creating, setCreating] = useState(false);
@@ -2218,13 +2437,9 @@ function MoneyTrajectoryChart({ entries, wishlistTotal }: { entries: SavingsEntr
   const [mode, setMode] = useState<'line' | 'bars'>('line');
   const rows = [...entries].sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
   const values = rows.map((item) => item.amount);
-  const min = values.length ? Math.min(...values) : 0;
-  const max = values.length ? Math.max(...values, wishlistTotal) : Math.max(1, wishlistTotal);
-  const range = Math.max(1, max - Math.min(0, min));
-  const y = (value: number) => 34 - (value - Math.min(0, min)) / range * 30;
-  const x = (index: number) => rows.length <= 1 ? 50 : index / (rows.length - 1) * 100;
   const delta = rows.length > 1 ? rows.at(-1)!.amount - rows[0].amount : 0;
-  return <section className="surface money-trend professional-chart"><div className="collection-header flush-header"><SectionTitle kicker="Savings history" title="Capital trajectory" /><div className="segmented-control compact"><button className={mode === 'line' ? 'active' : ''} onClick={() => setMode('line')}>Line</button><button className={mode === 'bars' ? 'active' : ''} onClick={() => setMode('bars')}>Bars</button></div></div><div className="chart-insight-strip"><span><small>Current</small><strong>{formatMoney(rows.at(-1)?.amount ?? 0)}</strong></span><span><small>Change</small><strong>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</strong></span><span><small>Highest</small><strong>{formatMoney(values.length ? Math.max(...values) : 0)}</strong></span><span><small>Wishlist target</small><strong>{formatMoney(wishlistTotal)}</strong></span></div><div className="axis-chart money-axis"><div className="axis-labels"><span>{formatMoney(max)}</span><span>{formatMoney(max / 2)}</span><span>{formatMoney(0)}</span></div><svg viewBox="0 0 100 36" preserveAspectRatio="none" aria-label="Savings balance in EUR over time"><line x1="0" x2="100" y1={y(wishlistTotal)} y2={y(wishlistTotal)} className="sparkline-target"><title>Wishlist target {formatMoney(wishlistTotal)}</title></line>{mode === 'line' ? <polyline points={moneySparklinePoints(rows)} /> : rows.map((item, index) => <rect key={item.id} x={x(index) - Math.min(2, 35 / Math.max(1, rows.length))} y={y(item.amount)} width={Math.min(4, 70 / Math.max(1, rows.length))} height={34 - y(item.amount)}><title>{formatShortDate(item.recordedAt)}: {formatMoney(item.amount)}</title></rect>)}{rows.map((item, index) => <circle key={`point-${item.id}`} cx={x(index)} cy={y(item.amount)} r="1.1"><title>{formatDateTime(item.recordedAt)}: {formatMoney(item.amount)}</title></circle>)}</svg></div><div className="chart-range"><span>{rows[0] ? formatShortDate(rows[0].recordedAt) : 'No balances yet'}</span><span>EUR · {rows.length} balance records</span><span>{rows.at(-1) ? formatShortDate(rows.at(-1)!.recordedAt) : ''}</span></div></section>;
+  const data = rows.map((item) => ({ id: item.id, label: formatShortDate(item.recordedAt), values: { balance: item.amount }, detail: item.note || formatDateTime(item.recordedAt) }));
+  return <section className="surface money-trend professional-chart"><div className="collection-header flush-header"><SectionTitle kicker="Savings history" title="Capital trajectory" /><div className="segmented-control compact"><button className={mode === 'line' ? 'active' : ''} onClick={() => setMode('line')}>Line</button><button className={mode === 'bars' ? 'active' : ''} onClick={() => setMode('bars')}>Bars</button></div></div><div className="chart-insight-strip"><span><small>Current</small><strong>{formatMoney(rows.at(-1)?.amount ?? 0)}</strong></span><span><small>Change</small><strong>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</strong></span><span><small>Highest</small><strong>{formatMoney(values.length ? Math.max(...values) : 0)}</strong></span><span><small>Wishlist target</small><strong>{formatMoney(wishlistTotal)}</strong></span></div><ReadableChart data={data} series={[{ key: 'balance', label: 'Saved balance', color: '#55f0d0' }]} mode={mode} min={0} references={wishlistTotal > 0 ? [{ label: 'Wishlist target', value: wishlistTotal, color: '#d66cf2' }] : []} formatValue={formatMoney} ariaLabel="Savings balance and wishlist target over time" emptyText="Record a savings balance to start the chart." /></section>;
 }
 
 function WishlistForm(props: { item: WishlistItem | null; busy: boolean; onSave: (body: unknown) => void }) { const [draft, setDraft] = useState({ name: props.item?.name ?? '', description: props.item?.description ?? '', price: props.item?.price ?? 0, priority: props.item?.priority ?? 3, isPurchased: props.item?.isPurchased ?? false }); return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}><TextField label="Item" value={draft.name} onChange={(name) => setDraft({ ...draft, name })} required /><TextArea label="Why I want it" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} /><NumberField label="Price" value={draft.price} step={0.01} onChange={(price) => setDraft({ ...draft, price })} /><NumberField label="Priority 1-5" value={draft.priority} min={1} max={5} onChange={(priority) => setDraft({ ...draft, priority })} /><label className="toggle-field"><input type="checkbox" checked={draft.isPurchased} onChange={(event) => setDraft({ ...draft, isPurchased: event.target.checked })} /><span>Purchased</span></label><button disabled={props.busy}>Save item</button></form>; }
@@ -3552,31 +3767,16 @@ function formatMetricDelta(metric: Metric, value: number) {
 function MetricSparkline(props: { entries: MetricEntry[]; metric: Metric; large?: boolean }) {
   const sorted = [...props.entries].sort((first, second) => new Date(first.recordedAt).getTime() - new Date(second.recordedAt).getTime());
   const values = sorted.map((entry) => entry.value);
-  const domain = props.metric.targetValue == null ? values : [...values, props.metric.targetValue];
-  const min = domain.length ? Math.min(...domain) : 0;
-  const max = domain.length ? Math.max(...domain) : 1;
-  const y = (value: number) => min === max ? 36 : 60 - (value - min) / (max - min) * 48;
-  const x = (index: number) => sorted.length <= 1 ? 110 : index / (sorted.length - 1) * 220;
-  const path = sorted.length < 2 ? '' : sorted.map((entry, index) => `${index ? 'L' : 'M'} ${roundNumber(x(index))} ${roundNumber(y(entry.value))}`).join(' ');
-  const targetY = props.metric.targetValue == null ? null : y(props.metric.targetValue);
   const yesCount = values.filter((value) => value >= .5).length;
   const latest = sorted.at(-1);
   const previous = sorted.at(-2);
   const delta = latest && previous ? latest.value - previous.value : null;
+  const data = sorted.map((entry) => ({ id: entry.id, label: formatShortDate(entry.recordedAt), values: { value: entry.value }, detail: entry.notes || formatDateTime(entry.recordedAt) }));
 
   return (
     <div className={props.large ? 'metric-chart large professional-chart' : 'metric-chart professional-chart'}>
       <div className="metric-chart-head"><span>Current</span><strong>{latest ? formatMetricValue(props.metric, latest.value) : 'No data'}</strong>{delta !== null && props.metric.valueType !== 'Boolean' && <em>{formatMetricDelta(props.metric, delta)}</em>}</div>
-      <div className="metric-plot-shell">
-        <div className="metric-y-axis"><span>{formatMetricAxisValue(props.metric, max)}</span><span>{formatMetricAxisValue(props.metric, (max + min) / 2)}</span><span>{formatMetricAxisValue(props.metric, min)}</span></div>
-        <div className="metric-plot"><span className="plot-unit">{props.metric.unit || (props.metric.valueType === 'Boolean' ? 'yes / no' : 'value')}</span><svg viewBox="0 0 220 72" preserveAspectRatio="none" role="img" aria-label={`${props.metric.name} trend in ${props.metric.unit || 'units'}`}>
-          <line x1="0" x2="220" y1="12" y2="12" className="chart-grid" /><line x1="0" x2="220" y1="36" y2="36" className="chart-grid" /><line x1="0" x2="220" y1="60" y2="60" className="chart-grid" />
-          {targetY !== null && <line x1="0" x2="220" y1={targetY} y2={targetY} className="sparkline-target" />}
-          {path ? <path d={path} /> : <line x1="0" x2="220" y1="58" y2="58" className="sparkline-empty" />}
-          {sorted.map((entry, index) => <circle key={entry.id} cx={x(index)} cy={y(entry.value)} r={props.large ? 2.4 : 2}><title>{formatDateTime(entry.recordedAt)}: {formatMetricValue(props.metric, entry.value)}{entry.notes ? ` · ${entry.notes}` : ''}</title></circle>)}
-        </svg></div>
-      </div>
-      <div className="metric-chart-range"><span>{sorted[0] ? formatShortDate(sorted[0].recordedAt) : 'No data'}</span>{props.metric.targetValue != null && <span>Target {formatMetricValue(props.metric, props.metric.targetValue)}</span>}<span>{latest ? formatShortDate(latest.recordedAt) : ''}</span></div>
+      <ReadableChart data={data} series={[{ key: 'value', label: props.metric.name, color: '#42d9f5' }]} mode={props.metric.valueType === 'Boolean' ? 'bars' : 'line'} min={props.metric.valueType === 'Boolean' ? 0 : undefined} max={props.metric.valueType === 'Boolean' ? 1 : undefined} references={props.metric.targetValue == null ? [] : [{ label: 'Target', value: props.metric.targetValue, color: '#f5c451' }]} formatValue={(value) => formatMetricAxisValue(props.metric, value)} ariaLabel={`${props.metric.name} trend in ${props.metric.unit || 'units'}`} emptyText="No entries in this period." />
       {values.length > 0 && (props.metric.valueType === 'Boolean'
         ? <div className="metric-chart-stats"><span>{yesCount} yes</span><span>{values.length} logs</span><span>{Math.round(yesCount / values.length * 100)}% success</span></div>
         : <div className="metric-chart-stats"><span>Low {formatMetricValue(props.metric, Math.min(...values))}</span><span>{values.length} logs</span><span>High {formatMetricValue(props.metric, Math.max(...values))}</span></div>)}
@@ -4384,6 +4584,10 @@ function SummaryPill({ label, value }: { label: string; value: string | number }
   return <div className="summary-pill"><span>{label}</span><strong>{value}</strong><i aria-hidden="true" /></div>;
 }
 
+function StatCard({ label, value }: { label: string; value: string | number }) {
+  return <div className="summary-card"><span>{label}</span><strong>{value}</strong></div>;
+}
+
 function EmptyState({ text }: { text: string }) {
   return <p className="empty-state">{text}</p>;
 }
@@ -4528,14 +4732,7 @@ function PhysiqueDiagram({ entry, entries }: { entry?: PhysiqueEntry; entries: P
   const history = [...entries]
     .sort((first, second) => new Date(first.recordedAt).getTime() - new Date(second.recordedAt).getTime())
     .slice(-12);
-  const weights = history.map((item) => item.weightKg);
-  const minimum = Math.min(...weights, weight) - 1;
-  const maximum = Math.max(...weights, weight) + 1;
-  const range = Math.max(1, maximum - minimum);
-  const weightPoints = history.map((item, index) => {
-    const x = history.length === 1 ? 50 : index / (history.length - 1) * 100;
-    return `${x},${90 - (item.weightKg - minimum) / range * 72}`;
-  }).join(' ');
+  const weightData = history.map((item) => ({ id: item.id, label: formatShortDate(item.recordedAt), values: { weight: item.weightKg }, detail: `${item.waistCm ?? '—'} cm waist` }));
 
   return (
     <div className="physique-diagram" aria-label="Physique composition diagram">
@@ -4548,14 +4745,7 @@ function PhysiqueDiagram({ entry, entries }: { entry?: PhysiqueEntry; entries: P
       </div>
       <div className="body-readout">
         <div><strong>{weight} kg</strong><span>{waist} cm waist · {entry?.estimatedBodyFatPercent ? `${bodyFat}% fat` : 'tape needed'}</span></div>
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Recent body weight trend">
-          <polyline points={weightPoints} />
-          {history.map((item, index) => {
-            const x = history.length === 1 ? 50 : index / (history.length - 1) * 100;
-            const y = 90 - (item.weightKg - minimum) / range * 72;
-            return <circle key={item.id} cx={x} cy={y} r="2.4" />;
-          })}
-        </svg>
+        <div className="physique-mini-chart"><ReadableChart data={weightData} series={[{ key: 'weight', label: 'Body weight', color: '#42d9f5' }]} formatValue={(value) => `${roundNumber(value)} kg`} ariaLabel="Recent body weight trend" /></div>
         <small>Weight trend · last {history.length} logs</small>
       </div>
     </div>
@@ -5015,15 +5205,6 @@ export function liveCountdownTiming(targetAt: string, now = new Date()) {
     pastEquivalentDate,
     isPast: new Date(targetAt).getTime() < now.getTime()
   };
-}
-
-function moneySparklinePoints(entries: SavingsEntry[]) {
-  const rows = [...entries].sort((first, second) => new Date(first.recordedAt).getTime() - new Date(second.recordedAt).getTime());
-  if (rows.length === 0) return '0,34 100,34';
-  const min = Math.min(...rows.map((item) => item.amount));
-  const max = Math.max(...rows.map((item) => item.amount));
-  const range = Math.max(1, max - min);
-  return rows.map((item, index) => `${rows.length === 1 ? 50 : index / (rows.length - 1) * 100},${32 - (item.amount - min) / range * 28}`).join(' ');
 }
 
 function localDateKey(value: string) {

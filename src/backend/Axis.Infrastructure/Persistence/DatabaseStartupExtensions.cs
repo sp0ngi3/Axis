@@ -7,19 +7,37 @@ namespace Axis.Infrastructure.Persistence;
 
 public static class DatabaseStartupExtensions
 {
-    public static async Task InitializeAxisDatabaseAsync(this IServiceProvider services, bool seedData = false, CancellationToken cancellationToken = default)
+    public static async Task VerifyAxisDatabaseIntegrityAsync(this IServiceProvider services, CancellationToken cancellationToken = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AxisDbContext>();
+        await VerifyDatabaseIntegrityAsync(dbContext, cancellationToken);
+    }
+
+    public static async Task InitializeAxisDatabaseAsync(
+        this IServiceProvider services,
+        bool seedData = false,
+        bool verifyIntegrity = true,
+        CancellationToken cancellationToken = default)
     {
         await using var scope = services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AxisDbContext>();
 
-        await VerifyDatabaseIntegrityAsync(dbContext, cancellationToken);
+        if (verifyIntegrity)
+        {
+            await VerifyDatabaseIntegrityAsync(dbContext, cancellationToken);
+        }
         await dbContext.Database.EnsureCreatedAsync(cancellationToken);
         await ConfigureSqliteDurabilityAsync(dbContext, cancellationToken);
-        await EnsureAxisSchemaAsync(dbContext, cancellationToken);
+        var addedTemplateGoalLink = await EnsureAxisSchemaAsync(dbContext, cancellationToken);
         if (seedData)
         {
             await SeedDefaultsAsync(dbContext, cancellationToken);
             await SeedStarterPackAsync(dbContext, cancellationToken);
+        }
+        if (addedTemplateGoalLink || seedData)
+        {
+            await BackfillTemplateGoalLinksAsync(dbContext, cancellationToken);
         }
         await RemoveRetiredDsaStarterGoalAsync(dbContext, cancellationToken);
         await ReplaceOutdoorWalkWithStepsAsync(dbContext, cancellationToken);
@@ -237,7 +255,7 @@ public static class DatabaseStartupExtensions
         await dbContext.Database.ExecuteSqlRawAsync("PRAGMA wal_autocheckpoint=1000;", cancellationToken);
     }
 
-    private static async Task EnsureAxisSchemaAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    private static async Task<bool> EnsureAxisSchemaAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
     {
         await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS "Countdowns" (
@@ -404,6 +422,81 @@ public static class DatabaseStartupExtensions
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_WikiPages_Slug" ON "WikiPages" ("Slug");
             CREATE INDEX IF NOT EXISTS "IX_WikiPages_SortOrder" ON "WikiPages" ("SortOrder");
             """, cancellationToken);
+
+        var templateColumns = await ReadTableColumnsAsync(dbContext, "ActivityTemplates", cancellationToken);
+        var addedTemplateGoalLink = false;
+        if (!templateColumns.Contains("GoalId"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync("ALTER TABLE \"ActivityTemplates\" ADD COLUMN \"GoalId\" TEXT NULL;", cancellationToken);
+            addedTemplateGoalLink = true;
+        }
+
+        await dbContext.Database.ExecuteSqlRawAsync("CREATE INDEX IF NOT EXISTS \"IX_ActivityTemplates_GoalId\" ON \"ActivityTemplates\" (\"GoalId\");", cancellationToken);
+        return addedTemplateGoalLink;
+    }
+
+    private static async Task<HashSet<string>> ReadTableColumnsAsync(AxisDbContext dbContext, string tableName, CancellationToken cancellationToken)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await dbContext.Database.OpenConnectionAsync(cancellationToken);
+        try
+        {
+            await using var command = dbContext.Database.GetDbConnection().CreateCommand();
+            command.CommandText = $"PRAGMA table_info(\"{tableName.Replace("\"", "\"\"")}\");";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columns.Add(reader.GetString(1));
+            }
+        }
+        finally
+        {
+            await dbContext.Database.CloseConnectionAsync();
+        }
+
+        return columns;
+    }
+
+    private static async Task BackfillTemplateGoalLinksAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var templates = await dbContext.ActivityTemplates.Where(template => template.GoalId == null).ToListAsync(cancellationToken);
+        if (templates.Count == 0)
+        {
+            return;
+        }
+
+        var goals = await dbContext.Goals.AsNoTracking().ToListAsync(cancellationToken);
+        foreach (var template in templates)
+        {
+            var goal = FindGoalForTemplate(template.Title, template.LifeAreaId, goals);
+            if (goal is not null)
+            {
+                template.GoalId = goal.Id;
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static Goal? FindGoalForTemplate(string templateTitle, Guid lifeAreaId, IReadOnlyCollection<Goal> goals)
+    {
+        var preferredTitles = templateTitle switch
+        {
+            "Creatine dose" => new[] { "Creatine saturation and maintenance" },
+            "Desk mobility reset" => new[] { "Desk mobility and pain-control streak" },
+            "Hypertrophy workout" => new[] { "Lean muscle recomposition" },
+            "No alcohol check-in" => new[] { "Alcohol-free baseline" },
+            "No vape check-in" => new[] { "Vape-free baseline" },
+            "Diet check-in" => new[] { "Diet adherence for leanness" },
+            "Grooming reset" => new[] { "Weekly grooming maintenance" },
+            "DSA problem rep" => new[] { "DSA Job Prep" },
+            "System design case study" => new[] { "System Design Study", "System design interview track" },
+            _ => []
+        };
+
+        return preferredTitles
+            .Select(title => goals.FirstOrDefault(goal => goal.LifeAreaId == lifeAreaId && goal.Title.Equals(title, StringComparison.OrdinalIgnoreCase)))
+            .FirstOrDefault(goal => goal is not null);
     }
 
     private static async Task SeedDefaultsAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
@@ -915,6 +1008,7 @@ public static class DatabaseStartupExtensions
                 dbContext.Activities.Add(new Activity
                 {
                     LifeAreaId = rule.Template.LifeAreaId,
+                    GoalId = rule.Template.GoalId,
                     TemplateId = rule.TemplateId,
                     Title = rule.Template.Title,
                     Description = rule.Template.Description,

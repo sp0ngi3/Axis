@@ -10,6 +10,7 @@ services:
       ConnectionStrings__Axis: Data Source=/data/axis.db
       Backup__Directory: /backups
       SeedData: "false"
+      App__Runtime: Docker
       Cors__AllowedOrigins__0: http://localhost:3001
       Cors__AllowedOrigins__1: http://localhost:5174
     ports:
@@ -17,3 +18,9 @@ services:
     volumes:
       - ./data:/data
       - ./backups:/backups
+    healthcheck:
+      test: ["CMD", "dotnet", "Axis.Api.dll", "--healthcheck", "http://127.0.0.1:8080/api/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 120
+      start_period: 10s

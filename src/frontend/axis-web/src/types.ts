@@ -102,6 +102,8 @@ export interface ActivityTemplate {
   lifeAreaId: string;
   lifeAreaName: string;
   lifeAreaColor: string;
+  goalId?: string | null;
+  goalTitle?: string | null;
   title: string;
   description: string;
   defaultDurationMinutes: number;
@@ -371,6 +373,15 @@ export interface BackupStatus {
   databasePath: string;
   backupDirectory: string;
   recentBackups: string[];
+}
+
+export interface AppInfo {
+  status: 'healthy';
+  app: string;
+  version: string;
+  runtime: string;
+  database: 'ready';
+  time: string;
 }
 
 export interface BackupValidation {

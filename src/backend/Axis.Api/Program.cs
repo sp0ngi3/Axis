@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Reflection;
 using System.Security;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -8,9 +9,24 @@ using Axis.Application.Reviews;
 using Axis.Domain;
 using Axis.Infrastructure;
 using Axis.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 
+if (args.FirstOrDefault() == "--healthcheck")
+{
+    var healthUrl = args.ElementAtOrDefault(1) ?? "http://127.0.0.1:8080/api/health";
+    Environment.ExitCode = await RunHealthCheckAsync(healthUrl);
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
+
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = null);
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = long.MaxValue;
+    options.MemoryBufferThreshold = 64 * 1024;
+});
 
 builder.Services.AddHostedService<RecurringActivityRefreshService>();
 
@@ -35,9 +51,14 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 var app = builder.Build();
+var appVersion = builder.Configuration["App:Version"]
+    ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)
+    ?? "unknown";
 
 var bundledFrontendPath = Path.Combine(app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot"), "index.html");
 var hasBundledFrontend = File.Exists(bundledFrontendPath);
+var appRuntime = builder.Configuration["App:Runtime"]
+    ?? (hasBundledFrontend ? "Desktop" : app.Environment.IsDevelopment() ? "Development" : "Server");
 
 if (hasBundledFrontend)
 {
@@ -64,9 +85,23 @@ if (app.Environment.IsDevelopment())
 }
 
 var seedData = builder.Configuration.GetValue<bool>("SeedData");
-await app.Services.InitializeAxisDatabaseAsync(seedData);
+await app.Services.VerifyAxisDatabaseIntegrityAsync();
+await using (var safetyScope = app.Services.CreateAsyncScope())
+{
+    var backups = safetyScope.ServiceProvider.GetRequiredService<IAxisBackupService>();
+    await backups.CreatePreUpgradeBackupAsync(appVersion);
+}
+await app.Services.InitializeAxisDatabaseAsync(seedData, verifyIntegrity: false);
 
-app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", app = "Axis", time = DateTimeOffset.UtcNow }));
+app.MapGet("/api/health", () => Results.Ok(new
+{
+    status = "healthy",
+    app = "Axis",
+    version = appVersion,
+    runtime = appRuntime,
+    database = "ready",
+    time = DateTimeOffset.UtcNow
+}));
 
 MapLifeAreas(app);
 MapGoals(app);
@@ -270,14 +305,27 @@ static void MapGoals(WebApplication app)
 
     group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
     {
-        var goal = await db.Goals.FindAsync([id], ct);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var goal = await db.Goals.Include(item => item.Milestones).FirstOrDefaultAsync(item => item.Id == id, ct);
         if (goal is null)
         {
             return Results.NotFound();
         }
 
+        var milestoneIds = goal.Milestones.Select(item => item.Id).ToList();
+        var activities = await db.Activities.Where(item => item.GoalId == id || (item.MilestoneId != null && milestoneIds.Contains(item.MilestoneId.Value))).ToListAsync(ct);
+        foreach (var activity in activities)
+        {
+            activity.GoalId = null;
+            if (activity.MilestoneId is not null && milestoneIds.Contains(activity.MilestoneId.Value)) activity.MilestoneId = null;
+        }
+
+        foreach (var metric in await db.Metrics.Where(item => item.GoalId == id).ToListAsync(ct)) metric.GoalId = null;
+        foreach (var template in await db.ActivityTemplates.Where(item => item.GoalId == id).ToListAsync(ct)) template.GoalId = null;
+        db.Milestones.RemoveRange(goal.Milestones);
         db.Goals.Remove(goal);
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         return Results.NoContent();
     });
 }
@@ -402,6 +450,8 @@ static void MapActivityTemplates(WebApplication app)
             {
                 template.Id,
                 template.LifeAreaId,
+                template.GoalId,
+                GoalTitle = template.GoalId == null ? null : db.Goals.Where(goal => goal.Id == template.GoalId).Select(goal => goal.Title).FirstOrDefault(),
                 LifeAreaName = template.LifeArea == null ? "" : template.LifeArea.Name,
                 LifeAreaColor = template.LifeArea == null ? "#4f8cff" : template.LifeArea.Color,
                 template.Title,
@@ -420,6 +470,11 @@ static void MapActivityTemplates(WebApplication app)
 
     group.MapPost("/", async (ActivityTemplateRequest request, AxisDbContext db, CancellationToken ct) =>
     {
+        if (request.GoalId is not null && !await db.Goals.AnyAsync(goal => goal.Id == request.GoalId && goal.LifeAreaId == request.LifeAreaId, ct))
+        {
+            return Results.BadRequest("Linked goal must exist in the selected life area.");
+        }
+
         var template = new ActivityTemplate();
         Apply(template, request);
         db.ActivityTemplates.Add(template);
@@ -435,6 +490,11 @@ static void MapActivityTemplates(WebApplication app)
             return Results.NotFound();
         }
 
+        if (request.GoalId is not null && !await db.Goals.AnyAsync(goal => goal.Id == request.GoalId && goal.LifeAreaId == request.LifeAreaId, ct))
+        {
+            return Results.BadRequest("Linked goal must exist in the selected life area.");
+        }
+
         Apply(template, request);
         await db.SaveChangesAsync(ct);
         return Results.Ok(template);
@@ -442,20 +502,25 @@ static void MapActivityTemplates(WebApplication app)
 
     group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
     {
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var template = await db.ActivityTemplates.FindAsync([id], ct);
         if (template is null)
         {
             return Results.NotFound();
         }
 
+        foreach (var activity in await db.Activities.Where(item => item.TemplateId == id).ToListAsync(ct)) activity.TemplateId = null;
+        db.RecurrenceRules.RemoveRange(await db.RecurrenceRules.Where(item => item.TemplateId == id).ToListAsync(ct));
         db.ActivityTemplates.Remove(template);
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         return Results.NoContent();
     });
 
     static void Apply(ActivityTemplate template, ActivityTemplateRequest request)
     {
         template.LifeAreaId = request.LifeAreaId;
+        template.GoalId = request.GoalId;
         template.Title = request.Title.Trim();
         template.Description = request.Description?.Trim() ?? string.Empty;
         template.DefaultDurationMinutes = Math.Max(5, request.DefaultDurationMinutes);
@@ -572,6 +637,7 @@ static void MapRecurrenceRules(WebApplication app)
             var activity = new Activity
             {
                 LifeAreaId = rule.Template.LifeAreaId,
+                GoalId = rule.Template.GoalId,
                 TemplateId = rule.TemplateId,
                 Title = rule.Template.Title,
                 Description = rule.Template.Description,
@@ -2126,7 +2192,7 @@ static void MapBackup(WebApplication app)
         var result = await backups.ImportAsync(stream, ct);
         if (result.Imported)
         {
-            await app.Services.InitializeAxisDatabaseAsync(seedData: false, ct);
+            await app.Services.InitializeAxisDatabaseAsync(seedData: false, cancellationToken: ct);
         }
         return result.Imported ? Results.Ok(result) : Results.BadRequest(result);
     }).DisableAntiforgery();
@@ -2134,7 +2200,7 @@ static void MapBackup(WebApplication app)
     group.MapPost("/restore", async (bool replaceExisting, HttpRequest request, IAxisBackupService backups, CancellationToken ct) =>
     {
         await backups.RestoreAsync(request.Body, replaceExisting, ct);
-        await app.Services.InitializeAxisDatabaseAsync(seedData: false, ct);
+        await app.Services.InitializeAxisDatabaseAsync(seedData: false, cancellationToken: ct);
         return Results.NoContent();
     });
 }
@@ -2226,7 +2292,7 @@ static object ToGoalProgressResponse(Goal goal, IReadOnlyCollection<Activity> co
     var decayGraceDays = goal.Title.Equals("Lean muscle recomposition", StringComparison.OrdinalIgnoreCase) ? 14 : 0;
     var decayAnchor = maintainedAt?.AddDays(decayGraceDays);
     var decayedProgress = goal.DecayRatePercentPerWeek > 0
-        ? ProgressCalculator.ApplyDailyDecay(baseProgress, goal.DecayRatePercentPerWeek, decayAnchor, DateTimeOffset.UtcNow)
+        ? ProgressCalculator.ApplyWeeklyDecay(baseProgress, goal.DecayRatePercentPerWeek, decayAnchor, DateTimeOffset.UtcNow)
         : baseProgress;
     var weekStart = today.AddDays(-((7 + (int)today.DayOfWeek - (int)DayOfWeek.Monday) % 7));
     var completedThisWeek = completionDates.Count(date => date >= weekStart);
@@ -2763,9 +2829,10 @@ static void ApplyActivityStatusTransition(Activity activity, ActivityStatus prev
 
 static void ApplyActivityProgress(Activity activity)
 {
+    var progressAmount = ParseActivityProgressAmount(activity.Notes);
     if (activity.Milestone is not null)
     {
-        activity.Milestone.CurrentValue = Math.Min(activity.Milestone.TargetValue, activity.Milestone.CurrentValue + 1);
+        activity.Milestone.CurrentValue = Math.Min(activity.Milestone.TargetValue, activity.Milestone.CurrentValue + progressAmount);
         if (activity.Milestone.CurrentValue >= activity.Milestone.TargetValue)
         {
             activity.Milestone.Status = MilestoneStatus.Completed;
@@ -2777,9 +2844,11 @@ static void ApplyActivityProgress(Activity activity)
         return;
     }
 
-    if (activity.Milestone is null && activity.Goal.ProgressType == ProgressType.CountBased)
+    if (activity.Milestone is null && (activity.Goal.ProgressType == ProgressType.CountBased || (activity.Goal.ProgressType == ProgressType.MilestoneBased && activity.Goal.Milestones.Count == 0)))
     {
-        activity.Goal.CurrentValue = Math.Min(activity.Goal.TargetValue, activity.Goal.CurrentValue + 1);
+        activity.Goal.CurrentValue = activity.Goal.CurrentValue >= activity.Goal.TargetValue
+            ? activity.Goal.CurrentValue
+            : Math.Min(activity.Goal.TargetValue, activity.Goal.CurrentValue + progressAmount);
     }
     else if (ShouldPersistCalculatedProgress(activity.Goal))
     {
@@ -2789,9 +2858,10 @@ static void ApplyActivityProgress(Activity activity)
 
 static void RevertActivityProgress(Activity activity)
 {
+    var progressAmount = ParseActivityProgressAmount(activity.Notes);
     if (activity.Milestone is not null)
     {
-        activity.Milestone.CurrentValue = Math.Max(0, activity.Milestone.CurrentValue - 1);
+        activity.Milestone.CurrentValue = Math.Max(0, activity.Milestone.CurrentValue - progressAmount);
         if (activity.Milestone.Status == MilestoneStatus.Completed && activity.Milestone.CurrentValue < activity.Milestone.TargetValue)
         {
             activity.Milestone.Status = MilestoneStatus.Active;
@@ -2803,14 +2873,27 @@ static void RevertActivityProgress(Activity activity)
         return;
     }
 
-    if (activity.Milestone is null && activity.Goal.ProgressType == ProgressType.CountBased)
+    if (activity.Milestone is null && (activity.Goal.ProgressType == ProgressType.CountBased || (activity.Goal.ProgressType == ProgressType.MilestoneBased && activity.Goal.Milestones.Count == 0)))
     {
-        activity.Goal.CurrentValue = Math.Max(0, activity.Goal.CurrentValue - 1);
+        activity.Goal.CurrentValue = Math.Max(0, activity.Goal.CurrentValue - progressAmount);
     }
     else if (ShouldPersistCalculatedProgress(activity.Goal))
     {
         activity.Goal.CurrentValue = ProgressCalculator.CalculateGoalProgress(activity.Goal);
     }
+}
+
+static decimal ParseActivityProgressAmount(string notes)
+{
+    const string marker = "[progress:";
+    var markerIndex = notes.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+    if (markerIndex < 0) return 1m;
+    var valueStart = markerIndex + marker.Length;
+    var valueEnd = notes.IndexOf(']', valueStart);
+    if (valueEnd < 0) return 1m;
+    return decimal.TryParse(notes[valueStart..valueEnd], System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value)
+        ? Math.Max(0.01m, value)
+        : 1m;
 }
 
 static DateTimeOffset ActivityDisplayDate(Activity activity)
@@ -2843,13 +2926,31 @@ static decimal? ClampPercentOrNull(decimal? value)
     return value is null ? null : Math.Clamp(value.Value, 0, 100);
 }
 
+static async Task<int> RunHealthCheckAsync(string healthUrl)
+{
+    try
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        using var response = await client.GetAsync(healthUrl);
+        return response.IsSuccessStatusCode ? 0 : 1;
+    }
+    catch (HttpRequestException)
+    {
+        return 1;
+    }
+    catch (TaskCanceledException)
+    {
+        return 1;
+    }
+}
+
 public sealed record LifeAreaRequest(string Name, string? Description, string? Color, string? Icon, int PriorityWeight, int CurrentScore, int TargetScore, bool IsActive);
 
 public sealed record GoalRequest(Guid LifeAreaId, string Title, string? Description, GoalStatus Status, GoalPriority Priority, ProgressType ProgressType, decimal CurrentValue, decimal TargetValue, string? Unit, DateOnly? TargetDate, decimal MaintenanceThreshold, int? MaintenanceTargetPerWeek, decimal DecayRatePercentPerWeek);
 
 public sealed record MilestoneRequest(string Title, string? Description, MilestoneType Type, decimal CurrentValue, decimal TargetValue, string? Unit, int SortOrder, MilestoneStatus Status, DateOnly? DueDate);
 
-public sealed record ActivityTemplateRequest(Guid LifeAreaId, string Title, string? Description, int DefaultDurationMinutes, LoadLevel EnergyCost, LoadLevel MentalLoad, LoadLevel PhysicalLoad, int DefaultPoints, bool IsActive);
+public sealed record ActivityTemplateRequest(Guid LifeAreaId, Guid? GoalId, string Title, string? Description, int DefaultDurationMinutes, LoadLevel EnergyCost, LoadLevel MentalLoad, LoadLevel PhysicalLoad, int DefaultPoints, bool IsActive);
 
 public sealed record RecurrenceRuleRequest(Guid TemplateId, RecurrenceFrequency Frequency, int Interval, string? DaysOfWeek, DateOnly StartDate, DateOnly? EndDate);
 

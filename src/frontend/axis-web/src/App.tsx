@@ -5,6 +5,7 @@ import { buildDashboardTracks, getDayStatus } from './signals';
 import type { DashboardTrack } from './signals';
 import type {
   Activity,
+  AppInfo,
   ActivityTemplate,
   ActivityStatus,
   BackupImportResult,
@@ -48,7 +49,7 @@ import type {
   WikiPage
 } from './types';
 
-type Page = 'today' | 'focus' | 'jobs' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'lessons' | 'money' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
+type Page = 'today' | 'log' | 'focus' | 'jobs' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'lessons' | 'money' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
 type Theme = 'light' | 'dark';
 type CalendarView = 'day' | 'week' | 'month';
 type WorkoutSet = {
@@ -77,9 +78,21 @@ type QuickLogDraft = {
     fiber: number;
   };
 };
+type CustomLogDraft = {
+  recordedAt: string;
+  durationMinutes: number;
+  title: string;
+  notes: string;
+  lifeAreaId: string;
+  goalId?: string | null;
+  milestoneId?: string | null;
+  progressAmount: number;
+};
+type LogContext = { templateId?: string; goalId?: string; lifeAreaId?: string };
 
 const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = [
   { id: 'today', label: 'Today', kicker: 'Operate', icon: '//' },
+  { id: 'log', label: 'Log', kicker: 'Capture', icon: '++' },
   { id: 'focus', label: 'Focus', kicker: 'Direction', icon: '::' },
   { id: 'jobs', label: 'Career Pipeline', kicker: 'Job search', icon: '//>' },
   { id: 'dashboard', label: 'Insights', kicker: 'Signals', icon: '==' },
@@ -99,7 +112,7 @@ const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = 
   { id: 'backup', label: 'Backup', kicker: 'Safety', icon: '!!' }
 ];
 
-const primaryPageIds: Page[] = ['today', 'focus', 'jobs', 'calendar', 'dashboard', 'goals', 'journal'];
+const primaryPageIds: Page[] = ['today', 'log', 'focus', 'jobs', 'calendar', 'dashboard', 'goals', 'journal'];
 
 const loadLevels: LoadLevel[] = ['Low', 'Medium', 'High'];
 const activityStatuses: ActivityStatus[] = ['Planned', 'Completed', 'Skipped', 'Moved', 'Cancelled'];
@@ -149,10 +162,13 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [overview, setOverview] = useState<OverviewDashboard | null>(null);
   const [balance, setBalance] = useState<BalanceRow[]>([]);
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [connectionState, setConnectionState] = useState<'connecting' | 'loading' | 'ready' | 'error'>('connecting');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [feedbackId, setFeedbackId] = useState(0);
   const [actionPulse, setActionPulse] = useState<{ id: number; x: number; y: number; tone: 'confirm' | 'utility' | 'danger' | 'navigate' } | null>(null);
+  const [logContext, setLogContext] = useState<LogContext>({});
 
   useEffect(() => {
     document.documentElement.scrollTop = 0;
@@ -164,8 +180,12 @@ export default function App() {
 
   async function load() {
     setIsLoading(true);
+    setConnectionState('connecting');
     try {
       setError('');
+      const health = await api.waitUntilReady<AppInfo>();
+      setAppInfo(health);
+      setConnectionState('loading');
       const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, lessonRows, focusRows, jobRows, savingsRows, wishlistRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
         api.get<LifeArea[]>('/api/life-areas'),
         api.get<Goal[]>('/api/goals'),
@@ -213,7 +233,9 @@ export default function App() {
       setSuggestions(suggestionRows);
       setOverview(overviewData);
       setBalance(balanceRows);
+      setConnectionState('ready');
     } catch (requestError) {
+      setConnectionState('error');
       setError(readError(requestError, 'Could not load Axis data.'));
     } finally {
       setIsLoading(false);
@@ -291,7 +313,7 @@ export default function App() {
     );
     const body = {
       lifeAreaId: template.lifeAreaId,
-      goalId: findGoalIdForTemplate(template.title, goals),
+      goalId: findGoalIdForTemplate(template, goals),
       milestoneId: null,
       templateId: template.id,
       title: template.title,
@@ -320,6 +342,37 @@ export default function App() {
     await api.delete(`/api/activities/${activity.id}`);
   }
 
+  async function quickLogCustom(draft: CustomLogDraft) {
+    const end = new Date(draft.recordedAt);
+    if (end > new Date()) throw new Error('Completed work cannot be logged in the future.');
+    const durationMinutes = Math.max(1, Math.round(draft.durationMinutes));
+    const start = new Date(end.getTime() - durationMinutes * 60000);
+    await api.post('/api/activities', {
+      lifeAreaId: draft.lifeAreaId,
+      goalId: draft.goalId || null,
+      milestoneId: draft.milestoneId || null,
+      templateId: null,
+      title: draft.title.trim(),
+      description: '',
+      plannedStartAt: start.toISOString(),
+      plannedEndAt: end.toISOString(),
+      actualStartAt: start.toISOString(),
+      actualEndAt: end.toISOString(),
+      durationMinutes,
+      status: 'Completed',
+      energyCost: 'Medium',
+      mentalLoad: 'Medium',
+      physicalLoad: 'Low',
+      points: Math.max(1, Math.round(durationMinutes / 15)),
+      notes: ['[axis-log]', `[progress:${Math.max(0.01, draft.progressAmount)}]`, draft.notes.trim()].filter(Boolean).join(' ')
+    });
+  }
+
+  function openLog(context: LogContext = {}) {
+    setLogContext(context);
+    setPage('log');
+  }
+
   const activePage = pages.find((item) => item.id === page) ?? pages[0];
 
   return (
@@ -329,15 +382,19 @@ export default function App() {
       <aside className="app-sidebar">
         <div className="brand-block">
           <span className="brand-mark">AX</span>
-          <div>
+          <div className="brand-copy">
             <p className="eyebrow">Neon local-first</p>
             <h1>Axis</h1>
+            <span className="app-version"><i aria-hidden="true" />{appInfo ? `v${appInfo.version} · ${appInfo.runtime}` : 'Connecting...'}</span>
           </div>
         </div>
 
         <nav className="main-nav" aria-label="Axis sections">
           {pages.filter((item) => primaryPageIds.includes(item.id)).map((item) => (
-            <VaporNavButton key={item.id} item={item} isActive={page === item.id} onSelect={() => setPage(item.id)} />
+            <VaporNavButton key={item.id} item={item} isActive={page === item.id} onSelect={() => {
+              if (item.id === 'log') setLogContext({});
+              setPage(item.id);
+            }} />
           ))}
         </nav>
 
@@ -345,7 +402,10 @@ export default function App() {
           <summary>More tools</summary>
           <div className="tool-nav">
             {pages.filter((item) => !primaryPageIds.includes(item.id)).map((item) => (
-              <VaporNavButton key={item.id} item={item} isActive={page === item.id} onSelect={() => setPage(item.id)} />
+              <VaporNavButton key={item.id} item={item} isActive={page === item.id} onSelect={() => {
+                if (item.id === 'log') setLogContext({});
+                setPage(item.id);
+              }} />
             ))}
           </div>
         </details>
@@ -369,13 +429,18 @@ export default function App() {
           </div>
         </header>
 
-        {isLoading && <div className="loading-strip"><span /> Syncing local data</div>}
+        {isLoading && <div className="loading-strip"><span /> {connectionState === 'connecting' ? 'Waiting for the local API' : 'Syncing local data'}</div>}
+        {!isLoading && connectionState === 'error' && (
+          <div className="connection-recovery" role="status">
+            <div><strong>Axis data is still safely stored.</strong><span>The local API did not become ready. Nothing was deleted or replaced.</span></div>
+            <button type="button" className="secondary-button" onClick={() => void load()}>Try again</button>
+          </div>
+        )}
 
         {page === 'today' && (
           <TodayPage
             today={today}
             suggestions={suggestions}
-            overview={overview}
             balance={balance}
             goals={goals}
             areas={areas}
@@ -385,6 +450,7 @@ export default function App() {
             busy={isBusy}
             onOpenFocus={() => setPage('focus')}
             onQuickLog={(template, draft) => runAction(() => quickLogTemplate(template, draft), `${template.title} logged.`)}
+            onCustomLog={(draft) => runAction(() => quickLogCustom(draft), `${draft.title} logged.`)}
             onDeleteLog={(activity) => runAction(() => deleteQuickLog(activity), `${activity.title} log deleted.`)}
             onComplete={(id) => runAction(() => api.post(`/api/activities/${id}/complete`), 'Activity completed.')}
             onSkip={(id) => runAction(() => api.post(`/api/activities/${id}/skip`), 'Activity skipped.')}
@@ -393,6 +459,19 @@ export default function App() {
               id ? 'Main focus updated.' : 'Main focus planned.'
             )}
             onDeleteActivity={(id) => runAction(() => api.delete(`/api/activities/${id}`), 'Activity deleted.')}
+          />
+        )}
+        {page === 'log' && (
+          <LogPage
+            areas={areas}
+            goals={goals}
+            templates={getQuickTemplates(templates)}
+            activities={activities}
+            initialContext={logContext}
+            busy={isBusy}
+            onQuickLog={(template, draft) => runAction(() => quickLogTemplate(template, draft), `${template.title} logged.`)}
+            onCustomLog={(draft) => runAction(() => quickLogCustom(draft), `${draft.title} logged.`)}
+            onDeleteLog={(activity) => runAction(() => deleteQuickLog(activity), `${activity.title} log deleted.`)}
           />
         )}
         {page === 'focus' && (
@@ -435,6 +514,7 @@ export default function App() {
             goals={goals}
             metrics={metrics}
             busy={isBusy}
+            onOpenLog={(templateId) => openLog({ templateId })}
             onComplete={(id) => runAction(() => api.post(`/api/activities/${id}/complete`), 'Activity completed.')}
             onSkip={(id) => runAction(() => api.post(`/api/activities/${id}/skip`), 'Activity skipped.')}
           />
@@ -512,6 +592,7 @@ export default function App() {
             )}
             onMilestoneDelete={(id) => runAction(() => api.delete(`/api/milestones/${id}`), 'Milestone deleted.')}
             onDelete={(id) => runAction(() => api.delete(`/api/goals/${id}`), 'Goal deleted.')}
+            onLog={(goal) => openLog({ goalId: goal.id, lifeAreaId: goal.lifeAreaId })}
           />
         )}
         {page === 'areas' && (
@@ -528,6 +609,7 @@ export default function App() {
         {page === 'templates' && (
           <TemplatesPage
             areas={areas}
+            goals={goals}
             templates={templates}
             rules={recurrenceRules}
             busy={isBusy}
@@ -756,7 +838,6 @@ function HistoryPage() {
 function TodayPage(props: {
   today: TodayDashboard | null;
   suggestions: Suggestion[];
-  overview: OverviewDashboard | null;
   balance: BalanceRow[];
   goals: Goal[];
   areas: LifeArea[];
@@ -766,6 +847,7 @@ function TodayPage(props: {
   busy: boolean;
   onOpenFocus: () => void;
   onQuickLog: (template: ActivityTemplate, draft: QuickLogDraft) => void;
+  onCustomLog: (draft: CustomLogDraft) => void;
   onDeleteLog: (activity: Activity) => void;
   onComplete: (id: string) => void;
   onSkip: (id: string) => void;
@@ -778,7 +860,7 @@ function TodayPage(props: {
   const plannedToday = (props.today?.timeline ?? []).filter((activity) => !isDailyMetricActivity(activity.title));
   const quickTemplates = getQuickTemplates(props.templates);
   const recentQuickLogs = props.activities
-    .filter((activity) => activity.status === 'Completed' && quickTemplates.some((template) => template.id === activity.templateId))
+    .filter((activity) => activity.status === 'Completed')
     .sort((first, second) => new Date(getActivityDate(second) ?? 0).getTime() - new Date(getActivityDate(first) ?? 0).getTime())
     .slice(0, 8);
   const todayDone = plannedToday.filter((activity) => activity.status === 'Completed').length;
@@ -817,17 +899,6 @@ function TodayPage(props: {
   return (
     <section className="page-grid today-page">
       <TodayFocusNotes notes={props.focusNotes} onOpen={props.onOpenFocus} />
-      <div className="hero-panel">
-        <div>
-          <p className="eyebrow">Suggested next move</p>
-          <h3>{props.today?.suggestion ?? 'Choose one useful next action.'}</h3>
-          <p>{primary ? `Primary goal: ${primary.title}` : 'No primary goal selected yet.'}</p>
-        </div>
-        <div className="hero-metrics">
-          <SummaryPill label="Active goals" value={props.overview?.activeGoals ?? 0} />
-          <SummaryPill label="Planned today" value={plannedToday.length} />
-        </div>
-      </div>
 
       <section className="work-grid two">
         <FocusPanel title="Main focus" activity={props.today?.mainFocus} busy={props.busy} onComplete={props.onComplete} onSkip={props.onSkip} onEdit={setFocusDraft} onCreate={createFocus} />
@@ -860,10 +931,13 @@ function TodayPage(props: {
 
       <TodayQuickLogPanel
         templates={quickTemplates}
+        areas={props.areas}
+        goals={props.goals}
         activities={props.activities}
         recentQuickLogs={recentQuickLogs}
         busy={props.busy}
         onQuickLog={props.onQuickLog}
+        onCustomLog={props.onCustomLog}
         onDeleteLog={props.onDeleteLog}
       />
 
@@ -993,16 +1067,47 @@ function formatRecentDay(value: string) {
   return new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(`${value}T12:00:00`));
 }
 
-function TodayQuickLogPanel(props: {
+function LogPage(props: {
+  areas: LifeArea[];
+  goals: Goal[];
   templates: ActivityTemplate[];
   activities: Activity[];
-  recentQuickLogs: Activity[];
+  initialContext: LogContext;
   busy: boolean;
   onQuickLog: (template: ActivityTemplate, draft: QuickLogDraft) => void;
+  onCustomLog: (draft: CustomLogDraft) => void;
   onDeleteLog: (activity: Activity) => void;
 }) {
-  const [templateId, setTemplateId] = useState(props.templates[0]?.id ?? '');
+  const recent = props.activities
+    .filter((activity) => activity.status === 'Completed')
+    .sort((first, second) => new Date(getActivityDate(second) ?? 0).getTime() - new Date(getActivityDate(first) ?? 0).getTime())
+    .slice(0, 20);
+
+  return <section className="page-grid log-page">
+    <section className="hero-panel compact-hero">
+      <div><p className="eyebrow">One capture point</p><h3>Log anything you actually did.</h3><p>Every entry flows into its life area, goal, Momentum, History and charts from the same activity record.</p></div>
+      <div className="hero-metrics"><SummaryPill label="Templates" value={props.templates.length} /><SummaryPill label="Recent" value={recent.length} /></div>
+    </section>
+    <TodayQuickLogPanel {...props} recentQuickLogs={recent} />
+  </section>;
+}
+
+function TodayQuickLogPanel(props: {
+  templates: ActivityTemplate[];
+  areas: LifeArea[];
+  goals: Goal[];
+  activities: Activity[];
+  recentQuickLogs: Activity[];
+  initialContext?: LogContext;
+  busy: boolean;
+  onQuickLog: (template: ActivityTemplate, draft: QuickLogDraft) => void;
+  onCustomLog: (draft: CustomLogDraft) => void;
+  onDeleteLog: (activity: Activity) => void;
+}) {
+  const [mode, setMode] = useState<'template' | 'custom'>(props.initialContext?.goalId || props.initialContext?.lifeAreaId ? 'custom' : 'template');
+  const [templateId, setTemplateId] = useState(props.initialContext?.templateId ?? props.templates[0]?.id ?? '');
   const template = props.templates.find((item) => item.id === templateId) ?? props.templates[0];
+  const [templateQuery, setTemplateQuery] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [duration, setDuration] = useState(template?.defaultDurationMinutes ?? 30);
   const [recordedAt, setRecordedAt] = useState(toLocalInput(new Date()));
@@ -1011,6 +1116,15 @@ function TodayQuickLogPanel(props: {
   const [exercises, setExercises] = useState<WorkoutExercise[]>([createExercise()]);
   const [waterUnit, setWaterUnit] = useState<'ml' | 'l'>('ml');
   const [nutrition, setNutrition] = useState({ calories: 2200, protein: 120, carbohydrates: 250, fat: 70, fiber: 30 });
+  const [custom, setCustom] = useState({
+    title: '',
+    lifeAreaId: props.initialContext?.lifeAreaId ?? props.areas[0]?.id ?? '',
+    goalId: props.initialContext?.goalId ?? '',
+    milestoneId: '',
+    progressAmount: 1,
+    durationMinutes: 45,
+    notes: ''
+  });
   const muscleOptions = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core'];
   const recentMuscles = props.activities.filter((item) => item.status === 'Completed' && /Muscles:/i.test(item.notes) && new Date(getActivityDate(item) ?? 0) >= addDays(new Date(), -3));
   const recoveryHits = muscles.filter((muscle) => recentMuscles.some((item) => item.notes.includes(muscle)));
@@ -1021,12 +1135,35 @@ function TodayQuickLogPanel(props: {
   const isCheckIn = template ? isBinaryCheckIn(template.title) : false;
   const sleepScore = assessSleepDuration(quantity);
   const sleepParts = splitSleepDuration(quantity);
+  const visibleTemplates = props.templates.filter((item) => !templateQuery || `${item.title} ${item.lifeAreaName} ${item.goalTitle ?? ''}`.toLowerCase().includes(templateQuery.toLowerCase()));
+  const customGoals = props.goals.filter((goal) => goal.status === 'Active' && (!custom.lifeAreaId || goal.lifeAreaId === custom.lifeAreaId));
+  const customGoal = props.goals.find((goal) => goal.id === custom.goalId);
+  const customMilestones = customGoal?.milestones.filter((milestone) => milestone.status === 'Active') ?? [];
 
   useEffect(() => {
     if (!template && props.templates[0]) {
       setTemplateId(props.templates[0].id);
     }
   }, [props.templates, template]);
+
+  useEffect(() => {
+    if (props.initialContext?.templateId) {
+      setMode('template');
+      chooseTemplate(props.initialContext.templateId);
+      return;
+    }
+    if (props.initialContext?.goalId || props.initialContext?.lifeAreaId) {
+      setMode('custom');
+      const linkedGoal = props.goals.find((goal) => goal.id === props.initialContext?.goalId);
+      setCustom((current) => ({
+        ...current,
+        lifeAreaId: props.initialContext?.lifeAreaId ?? linkedGoal?.lifeAreaId ?? current.lifeAreaId,
+        goalId: props.initialContext?.goalId ?? '',
+        milestoneId: '',
+        title: linkedGoal ? `${linkedGoal.title} work` : current.title
+      }));
+    }
+  }, [props.initialContext?.templateId, props.initialContext?.goalId, props.initialContext?.lifeAreaId]);
 
   function chooseTemplate(id: string) {
     const next = props.templates.find((item) => item.id === id);
@@ -1036,6 +1173,7 @@ function TodayQuickLogPanel(props: {
     setWaterUnit('ml');
     setMuscles([]);
     setExercises([createExercise()]);
+    setMode('template');
   }
 
   return (
@@ -1044,8 +1182,12 @@ function TodayQuickLogPanel(props: {
         <SectionTitle kicker="Operate" title="Log completed work" />
         <label className="field compact-field"><span>When</span><input type="datetime-local" value={recordedAt} min={toLocalInput(startOfDay(addDays(new Date(), -2)))} max={toLocalInput(new Date())} onChange={(event) => setRecordedAt(event.target.value)} /></label>
       </div>
-      <div className="template-picker">{props.templates.map((item) => <button key={item.id} className={template?.id === item.id ? 'active' : ''} onClick={() => chooseTemplate(item.id)}>{item.title}<small>{item.lifeAreaName}</small></button>)}</div>
-      {template && (
+      <div className="log-source-toolbar">
+        <input value={templateQuery} onChange={(event) => setTemplateQuery(event.target.value)} placeholder="Search templates, areas or goals" />
+        <button className={mode === 'custom' ? 'active' : 'secondary-button'} onClick={() => setMode('custom')}>+ Custom work</button>
+      </div>
+      <div className="template-picker">{visibleTemplates.map((item) => <button key={item.id} className={mode === 'template' && template?.id === item.id ? 'active' : ''} onClick={() => chooseTemplate(item.id)}>{item.title}<small>{item.lifeAreaName}{item.goalTitle ? ` · ${item.goalTitle}` : ''}</small></button>)}</div>
+      {mode === 'template' && template && (
         <>
           <div className="form-grid three">
             {isSleep && <>
@@ -1074,6 +1216,22 @@ function TodayQuickLogPanel(props: {
           </button>
         </>
       )}
+      {mode === 'custom' && <div className="custom-log-editor">
+        <div className="form-grid two">
+          <TextField label="What did you do?" value={custom.title} onChange={(title) => setCustom({ ...custom, title })} required />
+          <NumberField label="Minutes" value={custom.durationMinutes} min={1} onChange={(durationMinutes) => setCustom({ ...custom, durationMinutes: Math.max(1, durationMinutes) })} />
+        </div>
+        <div className="form-grid two">
+          <SelectField label="Life area" value={custom.lifeAreaId} onChange={(lifeAreaId) => setCustom({ ...custom, lifeAreaId, goalId: props.goals.some((goal) => goal.id === custom.goalId && goal.lifeAreaId === lifeAreaId) ? custom.goalId : '', milestoneId: '' })} options={props.areas.filter((area) => area.isActive).map((area) => ({ value: area.id, label: area.name }))} />
+          <SelectField label="Goal (optional)" value={custom.goalId} onChange={(goalId) => setCustom({ ...custom, goalId, milestoneId: '' })} options={[{ value: '', label: 'Area only' }, ...customGoals.map((goal) => ({ value: goal.id, label: goal.title }))]} />
+        </div>
+        {custom.goalId && <div className="form-grid two">
+          <SelectField label="Milestone (optional)" value={custom.milestoneId} onChange={(milestoneId) => setCustom({ ...custom, milestoneId })} options={[{ value: '', label: customMilestones.length ? 'Goal only' : 'No active milestones' }, ...customMilestones.map((milestone) => ({ value: milestone.id, label: `${milestone.title} · ${milestone.currentValue}/${milestone.targetValue} ${milestone.unit}` }))]} />
+          <NumberField label={`Progress units${custom.milestoneId ? ` (${customMilestones.find((item) => item.id === custom.milestoneId)?.unit || 'units'})` : ''}`} value={custom.progressAmount} min={0.01} step="any" onChange={(progressAmount) => setCustom({ ...custom, progressAmount: Math.max(0.01, progressAmount) })} />
+        </div>}
+        <TextArea label="Notes" value={custom.notes} onChange={(notes) => setCustom({ ...custom, notes })} />
+        <button disabled={props.busy || !custom.title.trim() || !custom.lifeAreaId} onClick={() => props.onCustomLog({ ...custom, recordedAt, goalId: custom.goalId || null, milestoneId: custom.milestoneId || null })}>Log completed work</button>
+      </div>}
       <div className="recent-log-list compact-recent-log">
         {props.recentQuickLogs.map((activity) => (
           <div className="recent-log-row" key={activity.id}>
@@ -1279,6 +1437,7 @@ function DashboardPage(props: {
   goals: Goal[];
   metrics: Metric[];
   busy: boolean;
+  onOpenLog: (templateId?: string) => void;
   onComplete: (id: string) => void;
   onSkip: (id: string) => void;
 }) {
@@ -1293,7 +1452,7 @@ function DashboardPage(props: {
   });
   const tracks = buildDashboardTracks(days, rangeActivities, quickTemplates, props.rules).map((track) => {
     if (!track.template || !['DSA problem rep', 'System design case study'].includes(track.template.title)) return track;
-    const goalId = findGoalIdForTemplate(track.template.title, props.goals);
+    const goalId = findGoalIdForTemplate(track.template, props.goals);
     const goal = props.goals.find((item) => item.id === goalId);
     const milestone = goal?.milestones.filter((item) => item.status === 'Active').sort((a, b) => a.sortOrder - b.sortOrder)[0];
     return milestone ? { ...track, title: milestone.title, cadence: `Current milestone · ${goal?.title}` } : track;
@@ -1358,6 +1517,7 @@ function DashboardPage(props: {
                 {track.kind === 'checkin' && <div><dt>Check-ins</dt><dd>{track.completedCount}</dd></div>}
                 {track.kind === 'quantity' && <div><dt>Logged</dt><dd>{track.quantityUnit === 'h' ? formatSleepDuration(track.quantityTotal) : track.quantityUnit === 'steps' ? `${Math.round(track.quantityTotal).toLocaleString()} steps` : `${Math.round(track.quantityTotal).toLocaleString()} ml`}</dd></div>}
               </dl>
+              <button className="secondary-button track-log-button" onClick={() => props.onOpenLog(track.template?.id)}>Log {track.title}</button>
             </article>
           ))}
         </div>
@@ -2854,6 +3014,7 @@ function GoalsPage(props: {
   onMilestoneSave: (goalId: string, milestone: unknown, id?: string) => void;
   onMilestoneDelete: (id: string) => void;
   onDelete: (id: string) => void;
+  onLog: (goal: Goal) => void;
 }) {
   const [selected, setSelected] = useState<Goal | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -2945,8 +3106,8 @@ function GoalsPage(props: {
                 </div>
               </div>
               <div className="goal-health-row">
-                <span className={`status-badge ${getGoalHealth(goal).toLowerCase()}`}>{getGoalHealth(goal)}</span>
-                <small>{goal.progressType} · decay {goal.decayRatePercentPerWeek}%/day</small>
+                <span className={`status-badge ${getGoalHealth(goal, progress?.decayedProgress).toLowerCase()}`}>{getGoalHealth(goal, progress?.decayedProgress)}</span>
+                <small>{goal.progressType} · decay {goal.decayRatePercentPerWeek}%/week</small>
               </div>
               <dl className="compact-dl">
                 <div><dt>Maintenance</dt><dd>{goal.maintenanceThreshold}%</dd></div>
@@ -2972,6 +3133,10 @@ function GoalsPage(props: {
                 {goal.milestones.length === 0 && <p className="muted-copy">No milestones yet.</p>}
               </div>
               <div className="card-actions">
+                <button onClick={(event) => {
+                  event.stopPropagation();
+                  props.onLog(goal);
+                }}>Log work</button>
                 <button className="secondary-button" onClick={(event) => {
                   event.stopPropagation();
                   setInspectedGoal(null);
@@ -2988,7 +3153,7 @@ function GoalsPage(props: {
                 }}>Milestone</button>
                 <button className="danger-button" onClick={(event) => {
                   event.stopPropagation();
-                  if (confirmDelete('Delete this goal?')) {
+                  if (confirmDelete('Delete this goal? Existing activity and metric history will remain safely stored, but will no longer be linked to this goal.')) {
                     props.onDelete(goal.id);
                   }
                 }}>Delete</button>
@@ -3008,6 +3173,7 @@ function GoalsPage(props: {
             activities={props.activities}
             metrics={props.metrics}
             progress={props.progress.find((item) => item.goal.id === inspectedGoal.id)}
+            onLog={() => props.onLog(inspectedGoal)}
             onClose={() => setInspectedGoal(null)}
           />
         )}
@@ -3053,7 +3219,7 @@ function GoalsPage(props: {
   );
 }
 
-function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: Metric[]; progress?: GoalProgress; onClose: () => void }) {
+function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: Metric[]; progress?: GoalProgress; onLog: () => void; onClose: () => void }) {
   const goalActivities = props.activities.filter((activity) => activity.goalId === props.goal.id);
   const completed = goalActivities.filter((activity) => activity.status === 'Completed');
   const skipped = goalActivities.filter((activity) => activity.status === 'Skipped' || activity.status === 'Cancelled');
@@ -3078,7 +3244,10 @@ function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: 
     <section className="goal-detail-panel">
       <div className="goal-detail-top">
         <SectionTitle kicker={props.goal.lifeAreaName} title={props.goal.title} />
-        <button className="secondary-button icon-button" onClick={props.onClose} aria-label="Close goal details">x</button>
+        <div className="button-row compact-actions">
+          <button onClick={props.onLog}>Log work</button>
+          <button className="secondary-button icon-button" onClick={props.onClose} aria-label="Close goal details">x</button>
+        </div>
       </div>
       <div className="goal-orbit-grid">
         <GoalProgressRing value={props.progress?.decayedProgress ?? props.goal.currentValue} color={props.goal.lifeAreaColor} label="maintenance" />
@@ -3086,7 +3255,7 @@ function GoalInsightPanel(props: { goal: Goal; activities: Activity[]; metrics: 
         <div className="goal-progress-copy">
           <span className={props.progress?.maintenanceSatisfied ? 'status-badge strong' : 'status-badge attention'}>{props.progress?.maintenanceSatisfied ? 'Maintenance reached' : 'Building baseline'}</span>
           <h4>{props.progress?.completedDays ?? completed.length}{props.progress?.trackingTargetDays ? ` of ${props.progress.trackingTargetDays} days` : ' completed days'}</h4>
-          <p>{props.progress?.completedThisWeek ?? 0} of {props.goal.maintenanceTargetPerWeek ?? 'flexible'} expected this week. Decay is {props.goal.decayRatePercentPerWeek}% per inactive day{props.progress?.decayGraceDays ? ` after a ${props.progress.decayGraceDays}-day grace period` : ''}.</p>
+          <p>{props.progress?.completedThisWeek ?? 0} of {props.goal.maintenanceTargetPerWeek ?? 'flexible'} expected this week. Decay is {props.goal.decayRatePercentPerWeek}% per inactive week{props.progress?.decayGraceDays ? ` after a ${props.progress.decayGraceDays}-day grace period` : ''}.</p>
         </div>
       </div>
       <dl className="compact-dl">
@@ -3239,6 +3408,7 @@ function AreasPage(props: {
 
 function TemplatesPage(props: {
   areas: LifeArea[];
+  goals: Goal[];
   templates: ActivityTemplate[];
   rules: RecurrenceRule[];
   busy: boolean;
@@ -3304,6 +3474,7 @@ function TemplatesPage(props: {
                   <div><dt>Minutes</dt><dd>{template.defaultDurationMinutes}</dd></div>
                   <div><dt>Energy</dt><dd>{template.energyCost}</dd></div>
                   <div><dt>Points</dt><dd>{template.defaultPoints}</dd></div>
+                  <div><dt>Goal</dt><dd>{template.goalTitle || 'Not linked'}</dd></div>
                 </dl>
                 <div className="recurrence-list">
                   {templateRules.map((rule) => (
@@ -3351,6 +3522,7 @@ function TemplatesPage(props: {
           key={selected?.id ?? 'new-template'}
           template={selected}
           areas={props.areas}
+          goals={props.goals}
           busy={props.busy}
           onSave={(body) => {
             props.onSave(body, selected?.id);
@@ -3974,15 +4146,16 @@ function BackupPage({ onReload }: { onReload: () => Promise<void> }) {
     setBusy(true);
     try {
       setError('');
-      const backup = await api.exportBackup();
-      const url = URL.createObjectURL(backup.blob);
+      await api.get<AppInfo>('/api/health');
       const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = backup.fileName;
+      anchor.href = api.backupDownloadUrl();
+      anchor.download = '';
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
       anchor.click();
-      URL.revokeObjectURL(url);
-      setMessage(`Backup downloaded: ${backup.fileName}`);
-      await loadStatus();
+      anchor.remove();
+      setMessage('Backup download started. Axis creates the ZIP directly on disk without loading the whole database into browser memory.');
+      window.setTimeout(() => void loadStatus(), 1000);
     } catch (requestError) {
       setError(readError(requestError, 'Unable to export backup.'));
     } finally {
@@ -4292,9 +4465,10 @@ function ActivityForm(props: { activity: Activity | null; areas: LifeArea[]; goa
   );
 }
 
-function TemplateForm(props: { template: ActivityTemplate | null; areas: LifeArea[]; busy: boolean; onSave: (body: unknown) => void; onCancel: () => void }) {
+function TemplateForm(props: { template: ActivityTemplate | null; areas: LifeArea[]; goals: Goal[]; busy: boolean; onSave: (body: unknown) => void; onCancel: () => void }) {
   const [draft, setDraft] = useState({
     lifeAreaId: props.template?.lifeAreaId ?? props.areas[0]?.id ?? '',
+    goalId: props.template?.goalId ?? '',
     title: props.template?.title ?? '',
     description: props.template?.description ?? '',
     defaultDurationMinutes: props.template?.defaultDurationMinutes ?? 45,
@@ -4309,11 +4483,12 @@ function TemplateForm(props: { template: ActivityTemplate | null; areas: LifeAre
     <EditorShell title={props.template ? 'Edit template' : 'Create template'} onCancel={props.onCancel}>
       <form className="editor-form" onSubmit={(event) => {
         event.preventDefault();
-        props.onSave(draft);
+        props.onSave({ ...draft, goalId: draft.goalId || null });
       }}>
         <TextField label="Title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} required />
         <TextArea label="Description" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} />
-        <SelectField label="Life area" value={draft.lifeAreaId} onChange={(lifeAreaId) => setDraft({ ...draft, lifeAreaId })} options={props.areas.map((area) => ({ value: area.id, label: area.name }))} />
+        <SelectField label="Life area" value={draft.lifeAreaId} onChange={(lifeAreaId) => setDraft({ ...draft, lifeAreaId, goalId: props.goals.some((goal) => goal.id === draft.goalId && goal.lifeAreaId === lifeAreaId) ? draft.goalId : '' })} options={props.areas.map((area) => ({ value: area.id, label: area.name }))} />
+        <SelectField label="Linked goal" value={draft.goalId} onChange={(goalId) => setDraft({ ...draft, goalId })} options={[{ value: '', label: 'No goal — activity history only' }, ...props.goals.filter((goal) => goal.lifeAreaId === draft.lifeAreaId).map((goal) => ({ value: goal.id, label: goal.title }))]} />
         <div className="form-grid two">
           <NumberField label="Default minutes" value={draft.defaultDurationMinutes} onChange={(defaultDurationMinutes) => setDraft({ ...draft, defaultDurationMinutes })} />
           <NumberField label="Default points" value={draft.defaultPoints} onChange={(defaultPoints) => setDraft({ ...draft, defaultPoints })} />
@@ -4988,25 +5163,16 @@ function isDailyMetricActivity(title: string) {
 }
 
 function getQuickTemplates(templates: ActivityTemplate[]) {
-  const templateByTitle = new Map(templates.map((template) => [template.title, template]));
-  return [
-    'Creatine dose',
-    'Desk mobility reset',
-    'Hypertrophy workout',
-    'DSA problem rep',
-    'System design case study',
-    'No alcohol check-in',
-    'No vape check-in',
-    'Diet check-in',
-    'Sleep log',
-    'SPF 30+',
-    'Night retinoid',
-    'Floss teeth',
-    'Grooming reset'
-  ].map((title) => templateByTitle.get(title)).filter(Boolean) as ActivityTemplate[];
+  return templates
+    .filter((template) => template.isActive)
+    .sort((first, second) => first.lifeAreaName.localeCompare(second.lifeAreaName) || first.title.localeCompare(second.title));
 }
 
-function findGoalIdForTemplate(templateTitle: string, goals: Goal[]) {
+function findGoalIdForTemplate(template: ActivityTemplate, goals: Goal[]) {
+  if (template.goalId && goals.some((goal) => goal.id === template.goalId)) {
+    return template.goalId;
+  }
+
   const exactMap: Record<string, string> = {
     'Creatine dose': 'Creatine saturation and maintenance',
     'Desk mobility reset': 'Desk mobility and pain-control streak',
@@ -5017,13 +5183,13 @@ function findGoalIdForTemplate(templateTitle: string, goals: Goal[]) {
     'Grooming reset': 'Weekly grooming maintenance',
     'System design case study': 'System design interview track'
   };
-  const targetTitle = exactMap[templateTitle];
+  const targetTitle = exactMap[template.title];
   const byExact = targetTitle ? goals.find((goal) => goal.title === targetTitle) : null;
   if (byExact) {
     return byExact.id;
   }
 
-  const lowerTemplate = templateTitle.toLowerCase();
+  const lowerTemplate = template.title.toLowerCase();
   return goals.find((goal) => lowerTemplate.includes(goal.title.toLowerCase()) || goal.title.toLowerCase().includes(lowerTemplate))?.id ?? null;
 }
 
@@ -5237,8 +5403,8 @@ function formatRecurrence(rule: RecurrenceRule) {
   return `${interval}${rule.frequency.toLowerCase()}${rule.interval > 1 ? 's' : ''}`;
 }
 
-function getGoalHealth(goal: Goal) {
-  if (goal.currentValue >= goal.maintenanceThreshold) {
+function getGoalHealth(goal: Goal, effectiveProgress = goal.currentValue) {
+  if (effectiveProgress >= goal.maintenanceThreshold) {
     return 'Maintained';
   }
 

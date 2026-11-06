@@ -100,6 +100,8 @@ public sealed class ActivityTemplate : Entity
 
     public LifeArea? LifeArea { get; set; }
 
+    public Guid? GoalId { get; set; }
+
     public string Title { get; set; } = string.Empty;
 
     public string Description { get; set; } = string.Empty;

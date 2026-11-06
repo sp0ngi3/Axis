@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.IO.Compression;
 using System.Text.Json;
+using Axis.Application.Backup;
 using Axis.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -14,6 +16,82 @@ namespace Axis.UnitTests;
 
 public sealed class ActivityApiIntegrationTests
 {
+    [Fact]
+    public async Task Health_reports_the_running_version_and_ready_database()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+
+        using var health = JsonDocument.Parse(await client.GetStringAsync("/api/health"));
+        Assert.Equal("healthy", health.RootElement.GetProperty("status").GetString());
+        Assert.Equal("ready", health.RootElement.GetProperty("database").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(health.RootElement.GetProperty("version").GetString()));
+    }
+
+    [Fact]
+    public async Task Pre_upgrade_backup_is_valid_and_created_only_once_per_version()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+        await AssertStatusAsync(await client.GetAsync("/api/health"), HttpStatusCode.OK);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var backups = scope.ServiceProvider.GetRequiredService<IAxisBackupService>();
+        var first = await backups.CreatePreUpgradeBackupAsync("9.8.7");
+        var second = await backups.CreatePreUpgradeBackupAsync("9.8.7");
+
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.Equal(first.FullPath, second.FullPath);
+        Assert.True(File.Exists(first.FullPath));
+        await using var stream = File.OpenRead(first.FullPath);
+        var validation = await backups.ValidateAsync(stream);
+        Assert.True(validation.IsValid, validation.Message);
+        Assert.Equal("9.8.7", validation.Manifest?.AppVersion);
+    }
+
+    [Fact]
+    public async Task Corrupt_database_inside_backup_is_rejected_without_changing_current_data()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+        var created = await client.PostAsJsonAsync("/api/focus-notes", new
+        {
+            title = "Must survive invalid import",
+            content = "Sentinel",
+            label = "Safety",
+            color = "#39d9e6",
+            isPinned = true,
+            isArchived = false
+        });
+        await AssertStatusAsync(created, HttpStatusCode.Created);
+
+        await using var invalidBackup = new MemoryStream();
+        using (var archive = new ZipArchive(invalidBackup, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var manifestEntry = archive.CreateEntry("manifest.json");
+            await using (var manifestStream = manifestEntry.Open())
+            {
+                await JsonSerializer.SerializeAsync(manifestStream, new BackupManifest("Axis", "0.1.0", 1, DateTimeOffset.UtcNow, "axis.db"));
+            }
+
+            var databaseEntry = archive.CreateEntry("axis.db");
+            await using var databaseStream = databaseEntry.Open();
+            await databaseStream.WriteAsync("not-a-sqlite-database"u8.ToArray());
+        }
+        invalidBackup.Position = 0;
+
+        using var form = new MultipartFormDataContent();
+        using var content = new StreamContent(invalidBackup);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        form.Add(content, "file", "invalid-axis-backup.zip");
+        await AssertStatusAsync(await client.PostAsync("/api/backup/import", form), HttpStatusCode.BadRequest);
+
+        using var notes = JsonDocument.Parse(await client.GetStringAsync("/api/focus-notes?includeArchived=true"));
+        Assert.Contains(notes.RootElement.EnumerateArray(), item => item.GetProperty("title").GetString() == "Must survive invalid import");
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
     [Fact]
     public async Task Existing_backup_format_round_trips_without_losing_data()
     {
@@ -267,6 +345,147 @@ public sealed class ActivityApiIntegrationTests
     }
 
     [Fact]
+    public async Task Manually_unlinked_template_stays_unlinked_on_normal_restart()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+        using var before = JsonDocument.Parse(await client.GetStringAsync("/api/activity-templates"));
+        var creatine = before.RootElement.EnumerateArray().Single(item => item.GetProperty("title").GetString() == "Creatine dose");
+        var templateId = creatine.GetProperty("id").GetGuid();
+
+        await AssertStatusAsync(await client.PutAsJsonAsync($"/api/activity-templates/{templateId}", new
+        {
+            lifeAreaId = creatine.GetProperty("lifeAreaId").GetGuid(),
+            goalId = (Guid?)null,
+            title = "Creatine dose",
+            description = creatine.GetProperty("description").GetString(),
+            defaultDurationMinutes = creatine.GetProperty("defaultDurationMinutes").GetInt32(),
+            energyCost = creatine.GetProperty("energyCost").GetString(),
+            mentalLoad = creatine.GetProperty("mentalLoad").GetString(),
+            physicalLoad = creatine.GetProperty("physicalLoad").GetString(),
+            defaultPoints = creatine.GetProperty("defaultPoints").GetInt32(),
+            isActive = true
+        }), HttpStatusCode.OK);
+
+        await factory.Services.InitializeAxisDatabaseAsync(seedData: false);
+
+        using var after = JsonDocument.Parse(await client.GetStringAsync("/api/activity-templates"));
+        var unchanged = after.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == templateId);
+        Assert.Equal(JsonValueKind.Null, unchanged.GetProperty("goalId").ValueKind);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task Linked_template_generated_activity_and_goal_use_one_shared_progress_path()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+        var areaId = await GetFirstIdAsync(client, "/api/life-areas");
+        var goalId = await CreateCountGoalAsync(client, areaId);
+
+        var templateResponse = await client.PostAsJsonAsync("/api/activity-templates", new
+        {
+            lifeAreaId = areaId,
+            goalId,
+            title = "Interconnected system design practice",
+            description = "One source for logging, goals, and momentum.",
+            defaultDurationMinutes = 45,
+            energyCost = "Medium",
+            mentalLoad = "High",
+            physicalLoad = "Low",
+            defaultPoints = 10,
+            isActive = true
+        });
+        await AssertStatusAsync(templateResponse, HttpStatusCode.Created);
+        using var templateJson = JsonDocument.Parse(await templateResponse.Content.ReadAsStringAsync());
+        var templateId = templateJson.RootElement.GetProperty("id").GetGuid();
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var ruleResponse = await client.PostAsJsonAsync("/api/recurrence-rules", new
+        {
+            templateId,
+            frequency = "Daily",
+            interval = 1,
+            daysOfWeek = "",
+            startDate = today,
+            endDate = today
+        });
+        await AssertStatusAsync(ruleResponse, HttpStatusCode.Created);
+        using var ruleJson = JsonDocument.Parse(await ruleResponse.Content.ReadAsStringAsync());
+        var ruleId = ruleJson.RootElement.GetProperty("id").GetGuid();
+
+        var generatedResponse = await client.PostAsJsonAsync($"/api/recurrence-rules/{ruleId}/generate", new { from = today, to = today });
+        await AssertStatusAsync(generatedResponse, HttpStatusCode.OK);
+        using var generated = JsonDocument.Parse(await generatedResponse.Content.ReadAsStringAsync());
+        var activity = Assert.Single(generated.RootElement.GetProperty("activities").EnumerateArray());
+        Assert.Equal(goalId, activity.GetProperty("goalId").GetGuid());
+        var activityId = activity.GetProperty("id").GetGuid();
+
+        await AssertStatusAsync(await client.PostAsync($"/api/activities/{activityId}/complete", null), HttpStatusCode.OK);
+        Assert.Equal(10m, await GetGoalCurrentValueAsync(client, goalId));
+
+        using var templates = JsonDocument.Parse(await client.GetStringAsync("/api/activity-templates"));
+        var linkedTemplate = templates.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == templateId);
+        Assert.Equal(goalId, linkedTemplate.GetProperty("goalId").GetGuid());
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task Deleting_goal_preserves_activity_metric_and_template_history_by_unlinking_them()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+        var areaId = await GetFirstIdAsync(client, "/api/life-areas");
+        var goalId = await CreateCountGoalAsync(client, areaId);
+        var activityId = await CreateActivityAsync(client, areaId, DateTimeOffset.UtcNow.AddHours(-1), "Completed", goalId, "Connected history test");
+
+        var metricResponse = await client.PostAsJsonAsync("/api/metrics", new
+        {
+            lifeAreaId = areaId,
+            goalId,
+            name = "Connected metric test",
+            unit = "points",
+            valueType = "Number",
+            targetValue = 100,
+            sortOrder = 999,
+            isActive = true
+        });
+        await AssertStatusAsync(metricResponse, HttpStatusCode.Created);
+        using var metricJson = JsonDocument.Parse(await metricResponse.Content.ReadAsStringAsync());
+        var metricId = metricJson.RootElement.GetProperty("id").GetGuid();
+
+        var templateResponse = await client.PostAsJsonAsync("/api/activity-templates", new
+        {
+            lifeAreaId = areaId,
+            goalId,
+            title = "Connected template test",
+            description = "Must survive goal deletion.",
+            defaultDurationMinutes = 30,
+            energyCost = "Medium",
+            mentalLoad = "Medium",
+            physicalLoad = "Low",
+            defaultPoints = 5,
+            isActive = true
+        });
+        await AssertStatusAsync(templateResponse, HttpStatusCode.Created);
+        using var templateJson = JsonDocument.Parse(await templateResponse.Content.ReadAsStringAsync());
+        var templateId = templateJson.RootElement.GetProperty("id").GetGuid();
+
+        await AssertStatusAsync(await client.DeleteAsync($"/api/goals/{goalId}"), HttpStatusCode.NoContent);
+
+        using var activities = JsonDocument.Parse(await client.GetStringAsync("/api/activities"));
+        var preservedActivity = activities.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == activityId);
+        Assert.Equal(JsonValueKind.Null, preservedActivity.GetProperty("goalId").ValueKind);
+        using var metrics = JsonDocument.Parse(await client.GetStringAsync("/api/metrics"));
+        var preservedMetric = metrics.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == metricId);
+        Assert.Equal(JsonValueKind.Null, preservedMetric.GetProperty("goalId").ValueKind);
+        using var templates = JsonDocument.Parse(await client.GetStringAsync("/api/activity-templates"));
+        var preservedTemplate = templates.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == templateId);
+        Assert.Equal(JsonValueKind.Null, preservedTemplate.GetProperty("goalId").ValueKind);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
     public async Task Corrupt_database_stops_startup_before_any_application_writes()
     {
         await using var factory = new AxisApiFactory();
@@ -348,6 +567,23 @@ public sealed class ActivityApiIntegrationTests
         await AssertStatusAsync(await client.DeleteAsync($"/api/activities/{activityId}"), HttpStatusCode.NoContent);
         Assert.Equal(0m, await GetGoalCurrentValueAsync(client, goalId));
 
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task One_completed_log_can_advance_and_reverse_multiple_goal_units()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+        var areaId = await GetFirstIdAsync(client, "/api/life-areas");
+        var goalId = await CreateCountGoalAsync(client, areaId);
+        var activityId = await CreateActivityAsync(client, areaId, DateTimeOffset.UtcNow.AddHours(-1), "Completed", goalId, "Four DSA problems", "[axis-log] [progress:4]");
+
+        Assert.Equal(40m, await GetGoalCurrentValueAsync(client, goalId));
+        await AssertStatusAsync(await client.PostAsync($"/api/activities/{activityId}/skip", null), HttpStatusCode.OK);
+        Assert.Equal(0m, await GetGoalCurrentValueAsync(client, goalId));
+        await AssertStatusAsync(await client.PostAsync($"/api/activities/{activityId}/complete", null), HttpStatusCode.OK);
+        Assert.Equal(40m, await GetGoalCurrentValueAsync(client, goalId));
         await factory.AssertDatabaseIntegrityAsync();
     }
 
@@ -622,7 +858,7 @@ public sealed class ActivityApiIntegrationTests
         return document.RootElement.GetProperty("currentValue").GetDecimal();
     }
 
-    private static async Task<Guid> CreateActivityAsync(HttpClient client, Guid lifeAreaId, DateTimeOffset plannedStart, string status = "Planned", Guid? goalId = null, string title = "Hypertrophy workout integration test")
+    private static async Task<Guid> CreateActivityAsync(HttpClient client, Guid lifeAreaId, DateTimeOffset plannedStart, string status = "Planned", Guid? goalId = null, string title = "Hypertrophy workout integration test", string notes = "")
     {
         var response = await client.PostAsJsonAsync("/api/activities", new
         {
@@ -642,7 +878,7 @@ public sealed class ActivityApiIntegrationTests
             mentalLoad = "Medium",
             physicalLoad = "High",
             points = 10,
-            notes = ""
+            notes
         });
         await AssertStatusAsync(response, HttpStatusCode.Created);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());

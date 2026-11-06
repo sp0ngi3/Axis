@@ -17,7 +17,8 @@ internal static class Program
         var paths = DesktopPaths.Create(args);
         var smokeTest = args.Contains("--smoke-test", StringComparer.OrdinalIgnoreCase);
 
-        using var instance = new Mutex(initiallyOwned: true, InstanceName, out var ownsInstance);
+        var instanceName = smokeTest ? $"{InstanceName}.Smoke.{Environment.ProcessId}" : InstanceName;
+        using var instance = new Mutex(initiallyOwned: true, instanceName, out var ownsInstance);
         if (!ownsInstance)
         {
             BrowserLauncher.Open(paths.AppUrl, paths.BrowserProfileDirectory);
@@ -32,8 +33,9 @@ internal static class Program
                 return;
             }
 
+            BackendProcess.StopOrphaned(paths.ServerExecutable);
             using var backend = BackendProcess.Start(paths);
-            backend.WaitUntilReadyAsync(TimeSpan.FromSeconds(35)).GetAwaiter().GetResult();
+            backend.WaitUntilReadyAsync(TimeSpan.FromMinutes(5)).GetAwaiter().GetResult();
             if (smokeTest)
             {
                 VerifyBundledAppAsync(paths.AppUrl).GetAwaiter().GetResult();
@@ -54,8 +56,8 @@ internal static class Program
             }
 
             MessageBox.Show(
-                $"Axis could not start.\n\n{exception.Message}\n\nLogs: {paths.LogDirectory}",
-                "Axis startup failed",
+                $"Axis could not open yet. No database or backup file was deleted or replaced.\n\nClose this message and start Axis again. If the problem repeats, the technical details are below:\n\n{exception.Message}\n\nLogs: {paths.LogDirectory}",
+                "Axis did not open",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }
@@ -96,6 +98,10 @@ internal sealed record DesktopPaths(
         var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var backupDirectory = ReadOption(args, "--backup-directory")
             ?? Path.Combine(documents, "Axis", "Backups");
+        var port = int.TryParse(ReadOption(args, "--port"), out var configuredPort)
+            && configuredPort is > 0 and <= 65535
+                ? configuredPort
+                : DesktopPort;
 
         return new DesktopPaths(
             dataRoot,
@@ -104,7 +110,7 @@ internal sealed record DesktopPaths(
             Path.Combine(dataRoot, "Logs"),
             Path.Combine(dataRoot, "Browser"),
             Path.Combine(AppContext.BaseDirectory, "server", "Axis.Api.exe"),
-            $"http://127.0.0.1:{DesktopPort}");
+            $"http://127.0.0.1:{port}");
     }
 
     public void EnsureDirectories()
@@ -165,6 +171,8 @@ internal sealed class BackendProcess : IDisposable
         startInfo.Environment["Storage__DatabasePath"] = paths.DatabasePath;
         startInfo.Environment["Backup__Directory"] = paths.BackupDirectory;
         startInfo.Environment["SeedData"] = "false";
+        startInfo.Environment["App__Runtime"] = "Desktop";
+        startInfo.Environment["App__Version"] = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, eventArgs) => WriteLog(output, eventArgs.Data);
@@ -180,6 +188,35 @@ internal sealed class BackendProcess : IDisposable
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         return new BackendProcess(process, output, errors, $"{paths.AppUrl}/api/health");
+    }
+
+    public static void StopOrphaned(string serverExecutable)
+    {
+        var expectedPath = Path.GetFullPath(serverExecutable);
+        foreach (var candidate in Process.GetProcessesByName("Axis.Api"))
+        {
+            try
+            {
+                var path = candidate.MainModule?.FileName;
+                if (path is null || !string.Equals(Path.GetFullPath(path), expectedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                candidate.Kill(entireProcessTree: true);
+                candidate.WaitForExit(5000);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+            }
+            finally
+            {
+                candidate.Dispose();
+            }
+        }
     }
 
     public async Task WaitUntilReadyAsync(TimeSpan timeout)

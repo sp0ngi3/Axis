@@ -145,6 +145,7 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
             entity.Property(template => template.MentalLoad).HasConversion<string>().HasMaxLength(40);
             entity.Property(template => template.PhysicalLoad).HasConversion<string>().HasMaxLength(40);
             entity.HasIndex(template => template.LifeAreaId);
+            entity.HasIndex(template => template.GoalId);
         });
     }
 

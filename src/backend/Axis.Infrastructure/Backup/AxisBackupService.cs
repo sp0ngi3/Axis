@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using Axis.Application.Backup;
 using Microsoft.Data.Sqlite;
@@ -30,6 +31,42 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
 
     public async Task<BackupExportResult> ExportAsync(CancellationToken cancellationToken = default)
     {
+        var exportedAt = DateTimeOffset.UtcNow;
+        var fileName = $"axis-backup-{exportedAt:yyyyMMdd-HHmmss}.zip";
+        return await CreateBackupArchiveAsync(fileName, GetAppVersion(), exportedAt, cancellationToken);
+    }
+
+    public async Task<BackupExportResult?> CreatePreUpgradeBackupAsync(string appVersion, CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(GetDatabasePath()))
+        {
+            return null;
+        }
+
+        var safeVersion = Regex.Replace(appVersion, "[^A-Za-z0-9._-]", "-");
+        var fileName = $"axis-safety-before-{safeVersion}.zip";
+        var fullPath = Path.Combine(GetBackupDirectory(), fileName);
+        if (File.Exists(fullPath))
+        {
+            await using var existingBackup = File.OpenRead(fullPath);
+            var validation = await ValidateAsync(existingBackup, cancellationToken);
+            if (validation.IsValid)
+            {
+                return new BackupExportResult(fileName, fullPath, File.GetLastWriteTimeUtc(fullPath));
+            }
+        }
+
+        var result = await CreateBackupArchiveAsync(fileName, appVersion, DateTimeOffset.UtcNow, cancellationToken);
+        PrunePreUpgradeBackups(keepCount: 5);
+        return result;
+    }
+
+    private async Task<BackupExportResult> CreateBackupArchiveAsync(
+        string fileName,
+        string appVersion,
+        DateTimeOffset exportedAt,
+        CancellationToken cancellationToken)
+    {
         var databasePath = GetDatabasePath();
         var backupDirectory = GetBackupDirectory();
         Directory.CreateDirectory(backupDirectory);
@@ -39,24 +76,38 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
             throw new FileNotFoundException("Axis database does not exist yet.", databasePath);
         }
 
-        var exportedAt = DateTimeOffset.UtcNow;
-        var fileName = $"axis-backup-{exportedAt:yyyyMMdd-HHmmss}.zip";
         var fullPath = Path.Combine(backupDirectory, fileName);
-        var manifest = new BackupManifest("Axis", "0.1.0", 1, exportedAt, DatabaseEntryName);
+        var temporaryArchivePath = $"{fullPath}.{Guid.NewGuid():N}.tmp";
+        var manifest = new BackupManifest("Axis", appVersion, 1, exportedAt, DatabaseEntryName);
 
         var tempDatabasePath = Path.Combine(Path.GetTempPath(), $"axis-export-{Guid.NewGuid():N}.db");
+        var archiveMoved = false;
 
         try
         {
             BackupDatabaseToFile(tempDatabasePath);
 
-            await using var fileStream = File.Create(fullPath);
-            using var archive = new ZipArchive(fileStream, ZipArchiveMode.Create);
+            await using (var fileStream = File.Create(temporaryArchivePath))
+            using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create))
+            {
+                archive.CreateEntryFromFile(tempDatabasePath, DatabaseEntryName, CompressionLevel.Optimal);
+                var manifestEntry = archive.CreateEntry(ManifestEntryName, CompressionLevel.Optimal);
+                await using var manifestStream = manifestEntry.Open();
+                await JsonSerializer.SerializeAsync(manifestStream, manifest, cancellationToken: cancellationToken);
+            }
 
-            archive.CreateEntryFromFile(tempDatabasePath, DatabaseEntryName, CompressionLevel.Optimal);
-            var manifestEntry = archive.CreateEntry(ManifestEntryName, CompressionLevel.Optimal);
-            await using var manifestStream = manifestEntry.Open();
-            await JsonSerializer.SerializeAsync(manifestStream, manifest, cancellationToken: cancellationToken);
+            await using (var archiveStream = File.OpenRead(temporaryArchivePath))
+            {
+                var validation = await ValidateAsync(archiveStream, cancellationToken);
+                if (!validation.IsValid)
+                {
+                    throw new InvalidDataException($"Axis did not replace or modify the database because the new safety backup could not be validated: {validation.Message}");
+                }
+            }
+
+            File.Move(temporaryArchivePath, fullPath, overwrite: true);
+            archiveMoved = true;
+            return new BackupExportResult(fileName, fullPath, exportedAt);
         }
         finally
         {
@@ -64,9 +115,12 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
             {
                 File.Delete(tempDatabasePath);
             }
-        }
 
-        return new BackupExportResult(fileName, fullPath, exportedAt);
+            if (!archiveMoved && File.Exists(temporaryArchivePath))
+            {
+                File.Delete(temporaryArchivePath);
+            }
+        }
     }
 
     public async Task<BackupValidationResult> ValidateAsync(Stream backupStream, CancellationToken cancellationToken = default)
@@ -99,9 +153,16 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
                 return new BackupValidationResult(false, "Backup schema version is not compatible.", manifest);
             }
 
-            if (archive.GetEntry(DatabaseEntryName) is null)
+            var databaseEntry = archive.GetEntry(DatabaseEntryName);
+            if (databaseEntry is null)
             {
                 return new BackupValidationResult(false, "Backup database file is missing.", manifest);
+            }
+
+            var databaseValidation = await ValidateDatabaseEntryAsync(databaseEntry, cancellationToken);
+            if (databaseValidation is not null)
+            {
+                return new BackupValidationResult(false, databaseValidation, manifest);
             }
 
             return new BackupValidationResult(true, "Backup is valid.", manifest);
@@ -113,6 +174,10 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
         catch (JsonException)
         {
             return new BackupValidationResult(false, "Backup manifest is not valid JSON.");
+        }
+        catch (SqliteException)
+        {
+            return new BackupValidationResult(false, "The SQLite database inside this backup is damaged or unreadable.");
         }
         finally
         {
@@ -179,7 +244,7 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
 
         if (File.Exists(databasePath) && !replaceExisting)
         {
-            throw new InvalidOperationException("Database already exists. Set replaceExisting to true to restore over it.");
+            throw new InvalidOperationException("Restore was not started because Axis is already using a database. Your existing data was left unchanged. Use Safety > Backup to validate and import the backup safely.");
         }
 
         using var archive = new ZipArchive(backupStream, ZipArchiveMode.Read, leaveOpen: true);
@@ -195,19 +260,64 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
             throw new InvalidOperationException("Backup is not compatible with this Axis version.");
         }
 
-        var restoreTempPath = $"{databasePath}.restore";
-        await using (var entryStream = databaseEntry.Open())
-        await using (var restoreStream = File.Create(restoreTempPath))
+        var restoreTempPath = $"{databasePath}.{Guid.NewGuid():N}.restore";
+        try
         {
-            await entryStream.CopyToAsync(restoreStream, cancellationToken);
+            await using (var entryStream = databaseEntry.Open())
+            await using (var restoreStream = File.Create(restoreTempPath))
+            {
+                await entryStream.CopyToAsync(restoreStream, cancellationToken);
+            }
+
+            var validationMessage = await ValidateDatabaseFileAsync(restoreTempPath, cancellationToken);
+            if (validationMessage is not null)
+            {
+                throw new InvalidDataException(validationMessage);
+            }
+
+            RestoreDatabaseFromFile(restoreTempPath);
         }
-
-        RestoreDatabaseFromFile(restoreTempPath);
-
-        if (File.Exists(restoreTempPath))
+        finally
         {
-            File.Delete(restoreTempPath);
+            if (File.Exists(restoreTempPath))
+            {
+                File.Delete(restoreTempPath);
+            }
         }
+    }
+
+    private static async Task<string?> ValidateDatabaseEntryAsync(ZipArchiveEntry databaseEntry, CancellationToken cancellationToken)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"axis-backup-database-{Guid.NewGuid():N}.db");
+        try
+        {
+            await using (var source = databaseEntry.Open())
+            await using (var destination = File.Create(path))
+            {
+                await source.CopyToAsync(destination, cancellationToken);
+            }
+
+            return await ValidateDatabaseFileAsync(path, cancellationToken);
+        }
+        finally
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+    }
+
+    private static async Task<string?> ValidateDatabaseFileAsync(string path, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqliteConnection(CreateSqliteConnectionString(path));
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA quick_check;";
+        var result = (await command.ExecuteScalarAsync(cancellationToken))?.ToString();
+        return string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : $"The SQLite database inside this backup failed its integrity check: {result ?? "unknown error"}.";
     }
 
     private static async Task<BackupManifest?> ReadManifestAsync(ZipArchive archive, CancellationToken cancellationToken)
@@ -246,6 +356,23 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
     private string GetBackupDirectory()
     {
         return Path.GetFullPath(configuration["Backup:Directory"] ?? "backups");
+    }
+
+    private string GetAppVersion()
+    {
+        return configuration["App:Version"]
+            ?? typeof(AxisBackupService).Assembly.GetName().Version?.ToString(3)
+            ?? "unknown";
+    }
+
+    private void PrunePreUpgradeBackups(int keepCount)
+    {
+        foreach (var path in Directory.EnumerateFiles(GetBackupDirectory(), "axis-safety-before-*.zip")
+                     .OrderByDescending(File.GetLastWriteTimeUtc)
+                     .Skip(keepCount))
+        {
+            File.Delete(path);
+        }
     }
 
     private void BackupDatabaseToFile(string destinationPath)

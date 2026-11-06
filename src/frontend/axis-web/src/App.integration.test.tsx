@@ -222,6 +222,8 @@ function installFetchMock() {
     }
 
     switch (url.pathname) {
+      case '/api/health':
+        return jsonResponse({ status: 'healthy', app: 'Axis', version: '0.4.2', runtime: 'Test', database: 'ready', time: '2026-10-20T08:00:00Z' });
       case '/api/life-areas':
         return jsonResponse([area]);
       case '/api/goals':
@@ -248,6 +250,8 @@ function installFetchMock() {
         return jsonResponse([review]);
       case '/api/focus-notes':
         return jsonResponse([focusNote]);
+      case '/api/job-applications':
+        return jsonResponse([]);
       case '/api/mood':
       case '/api/diary':
       case '/api/countdowns':
@@ -294,6 +298,11 @@ async function openPage(name: RegExp) {
 }
 
 describe('Axis app integration workflows', () => {
+  it('shows the running version and runtime in the sidebar', async () => {
+    render(<App />);
+    expect(await screen.findByText('v0.4.2 · Test')).toBeInTheDocument();
+  });
+
   it('shows current focus on Today and supports creating notes on the Focus page', async () => {
     render(<App />);
     expect(await screen.findByText('Learning wins this week')).toBeInTheDocument();
@@ -308,6 +317,26 @@ describe('Axis app integration workflows', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save focus note' }));
 
     await waitFor(() => expect(calls.some((item) => item.method === 'POST' && item.path === '/api/focus-notes' && item.body?.includes('Ship the important work'))).toBe(true));
+  });
+
+  it('logs custom work into one area, goal, milestone, and progress record', async () => {
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Today' });
+
+    fireEvent.click(screen.getAllByRole('button', { name: /log/i })[0]);
+    fireEvent.click(screen.getByRole('button', { name: '+ Custom work' }));
+    fireEvent.change(screen.getByLabelText('What did you do?'), { target: { value: 'Solved four interview problems' } });
+    fireEvent.change(screen.getByLabelText('Goal (optional)'), { target: { value: goal.id } });
+    fireEvent.change(screen.getByLabelText('Milestone (optional)'), { target: { value: goal.milestones[0].id } });
+    fireEvent.change(screen.getByLabelText(/Progress units/), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log completed work' }));
+
+    await waitFor(() => {
+      const call = calls.find((item) => item.method === 'POST' && item.path === '/api/activities' && item.body?.includes('Solved four interview problems'));
+      expect(call?.body).toContain(`"goalId":"${goal.id}"`);
+      expect(call?.body).toContain(`"milestoneId":"${goal.milestones[0].id}"`);
+      expect(call?.body).toContain('[progress:4]');
+    });
   });
 
   it('moves the countdown and its mirrored past date together as time advances', () => {
@@ -351,7 +380,7 @@ describe('Axis app integration workflows', () => {
   it('supports add, edit, delete, generate, search, and nullable metric rendering without crashing', async () => {
     render(<App />);
 
-    await screen.findByText('Start with the focus block.');
+    await screen.findByRole('heading', { name: 'Today' });
 
     await openPage(/life areas/i);
     expect(screen.getByPlaceholderText('Search life areas')).toBeInTheDocument();
@@ -397,7 +426,7 @@ describe('Axis app integration workflows', () => {
 
   it('opens calendar and metric editors in dismissible drawers', async () => {
     render(<App />);
-    await screen.findByText('Start with the focus block.');
+    await screen.findByRole('heading', { name: 'Today' });
 
     await openPage(/calendar/i);
     expect(screen.queryByLabelText('Create activity')).not.toBeInTheDocument();
@@ -431,7 +460,7 @@ describe('Axis app integration workflows', () => {
 
   it('creates searchable life lessons and money records while hiding repeatables from calendar', async () => {
     render(<App />);
-    await screen.findByText('Start with the focus block.');
+    await screen.findByRole('heading', { name: 'Today' });
 
     await openPage(/life lessons/i);
     fireEvent.click(screen.getByRole('button', { name: 'Add lesson' }));
@@ -453,7 +482,7 @@ describe('Axis app integration workflows', () => {
 
   it('combines mood and diary backdating and stores structured workout exercises', async () => {
     render(<App />);
-    await screen.findByText('Start with the focus block.');
+    await screen.findByRole('heading', { name: 'Today' });
 
     await openPage(/journal/i);
     fireEvent.click(screen.getByRole('button', { name: 'New check-in' }));
@@ -491,7 +520,7 @@ describe('Axis app integration workflows', () => {
 
   it('keeps decimal body weight and minute-accurate sleep values in API payloads', async () => {
     render(<App />);
-    await screen.findByText('Start with the focus block.');
+    await screen.findByRole('heading', { name: 'Today' });
 
     await openPage(/physique/i);
     fireEvent.click(screen.getByRole('button', { name: 'Log physique' }));
@@ -521,7 +550,7 @@ describe('Axis app integration workflows', () => {
 
   it('logs steps, water, calories, and macros directly from Metrics without creating activities', async () => {
     render(<App />);
-    await screen.findByText('Start with the focus block.');
+    await screen.findByRole('heading', { name: 'Today' });
     await openPage(/metrics/i);
 
     const day = screen.getByLabelText('Measurement day');
@@ -544,21 +573,25 @@ describe('Axis app integration workflows', () => {
   });
 
   it('loads a selectable normalized metric comparison with exact daily values', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 8, 19, 12, 0, 0));
     render(<App />);
-    await screen.findByText('Start with the focus block.');
+    await screen.findByRole('heading', { name: 'Today' });
     await openPage(/metrics/i);
 
     expect(await screen.findByText('Metric comparison')).toBeInTheDocument();
     await waitFor(() => expect(calls.some((item) => item.path.startsWith('/api/metrics/metric-steps/entries?from='))).toBe(true));
-    expect(screen.getByRole('img', { name: 'Normalized comparison of selected metrics over time' })).toBeInTheDocument();
-    expect(screen.getByText('Each line uses its own low-to-high scale')).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: 'Normalized comparison of selected metrics over time' })).toBeInTheDocument();
+    expect(
+      screen.getByText(/line height is normalized because kg, steps, kcal and ml cannot share a raw axis/i),
+    ).toBeInTheDocument();
     expect((await screen.findAllByText(/9[,. ]?000 steps/)).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(/2[,. ]?600 ml/)).length).toBeGreaterThan(0);
   });
 
   it('shows concise error toasts and reveals technical details on demand', async () => {
     render(<App />);
-    await screen.findByText('Start with the focus block.');
+    await screen.findByRole('heading', { name: 'Today' });
     const fullError = 'Microsoft.AspNetCore.Http.BadHttpRequestException: Failed to read parameter "ActivityRequest request" from the request body as JSON. at Server.Stack.Trace';
     vi.mocked(fetch).mockImplementationOnce(() => Promise.resolve(new Response(fullError, { status: 400 })));
 
@@ -573,7 +606,7 @@ describe('Axis app integration workflows', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 8, 19, 12, 0, 0));
     render(<App />);
-    await screen.findByText('Start with the focus block.');
+    await screen.findByRole('heading', { name: 'Today' });
 
     await openPage(/journal/i);
     expect(screen.getByLabelText('71.64% of 2026 complete')).toBeInTheDocument();

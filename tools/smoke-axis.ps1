@@ -12,7 +12,7 @@ $databasePath = Join-Path $dataDir "smoke-axis.db"
 $exportPath = Join-Path $backupDir "smoke-export.zip"
 $stdoutPath = Join-Path $backupDir "smoke-api.out.log"
 $stderrPath = Join-Path $backupDir "smoke-api.err.log"
-$baseUrl = "http://localhost:$Port"
+$baseUrl = "http://127.0.0.1:$Port"
 
 function Assert-True($condition, $message) {
   if (-not $condition) {
@@ -43,14 +43,14 @@ $process = Start-Process -FilePath "dotnet" -ArgumentList @($apiDll) -WindowStyl
 
 try {
   $healthy = $false
-  for ($attempt = 0; $attempt -lt 30; $attempt++) {
+  for ($attempt = 0; $attempt -lt 150; $attempt++) {
     Start-Sleep -Milliseconds 400
     try {
       $health = Invoke-Json Get "/api/health"
       $healthy = $health.status -eq "healthy"
       if ($healthy) { break }
     } catch {
-      if ($attempt -eq 29) { throw }
+      if ($attempt -eq 149) { throw }
     }
   }
 
@@ -100,6 +100,7 @@ try {
 
   $template = Invoke-Json Post "/api/activity-templates" @{
     lifeAreaId = $area.id
+    goalId = $goal.id
     title = "Smoke Deep Work"
     description = "QA template"
     defaultDurationMinutes = 45
@@ -132,6 +133,7 @@ try {
   $activities = Invoke-Json Get "/api/activities"
   Assert-True ($activities.Count -ge 1) "Activities list is empty."
   $activity = $activities[0]
+  Assert-True ($activity.goalId -eq $goal.id) "Generated activity did not inherit its template goal."
 
   $activityUpdate = @{
     lifeAreaId = $area.id

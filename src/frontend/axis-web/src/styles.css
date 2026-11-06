@@ -145,6 +145,34 @@ textarea:focus {
   gap: 12px;
 }
 
+.brand-copy {
+  min-width: 0;
+}
+
+.app-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  color: var(--muted);
+  font: 800 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-transform: uppercase;
+}
+
+.app-version i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 9px color-mix(in srgb, var(--success) 65%, transparent);
+  animation: version-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes version-pulse {
+  0%, 100% { opacity: .55; transform: scale(.82); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
 .brand-mark {
   display: grid;
   place-items: center;
@@ -460,6 +488,41 @@ textarea:focus {
   border-radius: 999px;
   background: var(--primary);
   animation: pulse 1s ease-in-out infinite alternate;
+}
+
+.connection-recovery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1440px;
+  margin: 0 auto 16px;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in srgb, var(--sun) 52%, var(--line));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--sun) 9%, var(--surface));
+}
+
+.connection-recovery div {
+  display: grid;
+  gap: 3px;
+}
+
+.connection-recovery strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.connection-recovery span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .connection-recovery {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 @keyframes pulse {
@@ -5167,6 +5230,14 @@ button,
     transition-duration: 1ms !important;
   }
 }
+
+/* Connected logging surfaces */
+.log-source-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.log-source-toolbar .segmented-control { width: auto; }
+.custom-log-editor { display: grid; gap: 14px; padding: 18px; border: 1px solid var(--line-strong); border-left: 3px solid var(--cyan); background: linear-gradient(135deg, color-mix(in srgb, var(--cyan) 5%, var(--surface-raised)), var(--surface)); box-shadow: var(--shadow); }
+.track-log-button { width: 100%; margin-top: 12px; }
+.compact-actions { align-items: center; margin: 0; }
+.compact-actions .icon-button { flex: 0 0 auto; }
 
 @media (max-width: 1180px) {
   .workspace-grid {

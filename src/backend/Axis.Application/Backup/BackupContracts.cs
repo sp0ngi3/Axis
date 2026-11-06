@@ -21,6 +21,8 @@ public interface IAxisBackupService
 
     Task<BackupExportResult> ExportAsync(CancellationToken cancellationToken = default);
 
+    Task<BackupExportResult?> CreatePreUpgradeBackupAsync(string appVersion, CancellationToken cancellationToken = default);
+
     Task<BackupValidationResult> ValidateAsync(Stream backupStream, CancellationToken cancellationToken = default);
 
     Task<BackupImportResult> ImportAsync(Stream backupStream, CancellationToken cancellationToken = default);

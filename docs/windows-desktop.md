@@ -45,6 +45,10 @@ Extract `artifacts\desktop\Axis-0.4.2-win-x64-portable.zip` and run `Axis.exe`. 
 
 ## Updates
 
+The quickest update from the current source tree is to double-click `AKTUALIZUJ-AXIS.cmd` in the Axis folder. Close Axis from its tray icon when prompted. The script tests the app, creates and verifies the installer, and opens the final Install screen. It reads the release number from `Directory.Build.props`, so there is no version duplicated inside the updater.
+
+The default update is offline and uses dependencies already restored on the computer. If the project intentionally added a new package, run `AKTUALIZUJ-AXIS.cmd -Online` from a terminal once.
+
 1. Change the version passed to `publish-desktop.ps1`.
 2. Build and test the new release.
 3. Run the new setup executable over the existing installation.

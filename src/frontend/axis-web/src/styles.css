@@ -3660,8 +3660,6 @@ button {
 .money-orbit strong { font-size: 24px; }
 .money-orbit span { color: var(--muted); font-size: 10px; text-transform: uppercase; }
 .money-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.money-trend svg { width: 100%; height: 160px; overflow: visible; border-bottom: 1px solid var(--line); background: repeating-linear-gradient(0deg, transparent 0 31px, color-mix(in srgb, var(--line) 40%, transparent) 31px 32px); }
-.money-trend polyline { fill: none; stroke: var(--success); stroke-width: 1.4; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--success) 45%, transparent)); }
 .money-item .meter i { background: var(--vapor-gradient); }
 .money-item.purchased { opacity: .74; }
 
@@ -5724,8 +5722,7 @@ button,
 }
 
 .journal-chart polyline,
-.sparkline path,
-.money-trend polyline {
+.sparkline path {
   stroke-dasharray: 900;
   stroke-dashoffset: 900;
   animation: chart-draw 950ms ease forwards;
@@ -5759,8 +5756,6 @@ button,
 .sparkline circle:hover { fill: var(--cyan); }
 
 .money-axis svg { height: 210px; overflow: visible; }
-.money-trend rect { fill: color-mix(in srgb, var(--success) 72%, var(--cyan)); opacity: .76; animation: chart-rise 550ms ease both; transform-box: fill-box; transform-origin: bottom; }
-.money-trend circle { fill: var(--surface); stroke: var(--success); stroke-width: 1; vector-effect: non-scaling-stroke; }
 
 .countdown-clock strong {
   display: block;
@@ -6798,7 +6793,8 @@ button,
   min-width: 0;
   margin-top: 12px;
 }
-.readable-chart > svg { display: block; width: 100%; height: auto; min-height: 240px; overflow: visible; }
+.readable-chart-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; scrollbar-color: var(--line-strong) transparent; }
+.readable-chart-scroll > svg { display: block; width: 100%; height: auto; min-height: 240px; overflow: visible; }
 .readable-chart-surface { fill: url(#axis-chart-surface); stroke: var(--line); stroke-width: 1; }
 .readable-chart-grid line { stroke: color-mix(in srgb, var(--line) 72%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .readable-chart-grid text,
@@ -6824,12 +6820,39 @@ button,
 .readable-chart-tooltip b { color: var(--text); text-align: right; }
 .readable-chart-tooltip small { overflow-wrap: anywhere; color: var(--muted); }
 .readable-chart.empty { display: grid; min-height: 240px; place-items: center; border: 1px dashed var(--line); color: var(--muted); }
-.metric-chart .readable-chart > svg,
-.physique-mini-chart .readable-chart > svg { min-height: 170px; }
+.metric-chart .readable-chart-scroll > svg,
+.physique-mini-chart .readable-chart-scroll > svg { min-height: 170px; }
 .metric-chart .readable-chart-legend,
 .physique-mini-chart .readable-chart-legend { padding-left: 54px; }
 .physique-mini-chart { min-width: 0; width: 100%; }
 .physique-mini-chart .readable-chart-tooltip { display: none; }
+
+/* Money uses the shared analytical chart. Keep legacy SVG decoration away from
+   chart hit-zones and surfaces so every geometry keeps its own fill. */
+.money-trend { overflow: hidden; }
+.money-trend .readable-chart-scroll {
+  border: 1px solid color-mix(in srgb, var(--success) 24%, var(--line));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--success) 4%, transparent), transparent 72%),
+    color-mix(in srgb, var(--bg-alt) 72%, transparent);
+}
+.money-trend .readable-chart-scroll > svg { min-height: 270px; }
+.money-trend .readable-chart-line { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--success) 24%, transparent)); }
+.money-target-progress {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-left: 3px solid var(--accent);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 6%, var(--surface-raised)), color-mix(in srgb, var(--cyan) 3%, var(--surface-raised)));
+}
+.money-target-progress > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.money-target-progress span { color: var(--muted); font-size: 10px; font-weight: 850; text-transform: uppercase; }
+.money-target-progress strong { color: var(--accent); font-variant-numeric: tabular-nums; }
+.money-target-progress small { color: var(--muted); line-height: 1.45; }
+.money-target-progress .meter { height: 5px; }
+.money-target-progress .meter i { background: linear-gradient(90deg, var(--accent), var(--cyan)); }
 
 /* Career pipeline */
 .page-jobs .page-ambient { clip-path: polygon(5% 20%, 70% 20%, 70% 5%, 98% 50%, 70% 95%, 70% 80%, 5% 80%); background: color-mix(in srgb, var(--cyan) 12%, var(--surface)); animation: job-route 5.4s ease-in-out infinite; }
@@ -6930,4 +6953,207 @@ button,
   .page-focus .page-ambient,
   .page-focus .page-ambient i,
   .focus-board-header::after { animation: none; }
+}
+
+/* Tablet workspace: the desktop rail becomes a compact command deck instead
+   of stealing a quarter of the available canvas. */
+@media (max-width: 1100px) {
+  .app-shell { grid-template-columns: minmax(0, 1fr); }
+
+  .app-sidebar {
+    position: sticky;
+    z-index: 35;
+    top: 0;
+    height: auto;
+    max-height: min(44vh, 360px);
+    gap: 10px;
+    padding: 12px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-strong);
+    box-shadow: 0 12px 32px color-mix(in srgb, #000 24%, transparent);
+    overflow-y: auto;
+  }
+
+  .brand-mark { width: 38px; height: 38px; }
+  .brand-block { padding-right: 118px; }
+  .brand-block h1 { font-size: 24px; }
+  .brand-block .eyebrow { margin-bottom: 2px; font-size: 9px; }
+  .app-version { margin-top: 3px; font-size: 9px; }
+
+  .main-nav,
+  .tool-nav {
+    display: flex;
+    grid-template-columns: none;
+    gap: 8px;
+    margin-top: 0;
+    padding-bottom: 3px;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+  }
+
+  .main-nav .vapor-nav-button,
+  .tool-nav .vapor-nav-button {
+    flex: 0 0 132px;
+    min-width: 132px;
+    min-height: 48px;
+    scroll-snap-align: start;
+  }
+
+  .main-nav .nav-copy small,
+  .tool-nav .nav-copy small { display: none; }
+  .tool-drawer { padding-top: 8px; }
+  .tool-drawer summary { padding: 8px 10px; }
+  .app-sidebar > .ghost-button {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    width: 108px;
+    min-height: 36px;
+    margin-top: 0;
+    padding: 8px;
+    font-size: 10px;
+  }
+  .app-main { padding: 20px; }
+  .topbar { max-width: none; }
+
+  .money-trend .readable-chart-scroll > svg { min-height: 245px; }
+}
+
+/* Phone workspace: touch targets stay large, editors use the whole screen and
+   dense analytical graphics scroll horizontally at a readable scale. */
+@media (max-width: 600px) {
+  .app-sidebar {
+    max-height: min(46vh, 330px);
+    padding: 9px 10px;
+    gap: 8px;
+  }
+
+  .brand-block { gap: 9px; padding-right: 108px; }
+  .brand-mark { width: 34px; height: 34px; font-size: 13px; }
+  .brand-block h1 { font-size: 21px; }
+  .brand-block .eyebrow { display: none; }
+  .app-version { font-size: 8px; }
+  .app-sidebar > .ghost-button {
+    position: absolute;
+    top: 9px;
+    right: 10px;
+    width: 100px;
+    min-height: 34px;
+    padding: 7px 8px;
+    font-size: 9px;
+  }
+
+  .main-nav .vapor-nav-button,
+  .tool-nav .vapor-nav-button {
+    flex-basis: 108px;
+    min-width: 108px;
+    min-height: 44px;
+    padding: 7px;
+  }
+  .main-nav .vapor-nav-button { grid-template-columns: 27px minmax(0, 1fr); }
+  .main-nav .nav-glyph,
+  .tool-nav .nav-glyph { width: 27px; height: 27px; font-size: 10px; }
+  .main-nav .nav-copy strong,
+  .tool-nav .nav-copy strong { font-size: 10px; }
+  .tool-drawer summary { min-height: 34px; padding: 7px 9px; }
+
+  .app-main { padding: 12px 10px 28px; }
+  .topbar { gap: 12px; margin-bottom: 12px; }
+  .topbar h2 { font-size: clamp(26px, 9vw, 34px); }
+  .topbar-summary {
+    flex-wrap: nowrap;
+    max-width: 100%;
+    padding-bottom: 4px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .topbar-summary .summary-pill { flex: 0 0 102px; min-width: 102px; }
+  .summary-pill { min-width: 0; padding: 9px 10px; }
+  .summary-pill strong { font-size: 20px; }
+
+  .page-grid,
+  .workspace-grid,
+  .workspace-main { gap: 12px; }
+  .surface,
+  .hero-panel,
+  .collection-header,
+  .entity-card { padding: 14px; }
+  .hero-panel h3 { font-size: clamp(25px, 8vw, 33px); }
+  .section-title h3,
+  .collection-header h3 { font-size: 20px; }
+  .collection-header.flush-header { gap: 10px; padding: 0; }
+  .collection-header.flush-header .segmented-control { width: 100%; }
+
+  .entity-grid,
+  .lesson-grid,
+  .countdown-grid,
+  .suggestion-grid,
+  .goal-orbit-grid,
+  .physique-guidance-grid { grid-template-columns: minmax(0, 1fr); }
+  .entity-card { min-height: 0; }
+  .entity-card-top { align-items: flex-start; }
+  .card-actions,
+  .row-actions,
+  .button-row { gap: 8px; }
+  .card-actions button,
+  .row-actions button { flex: 1 1 120px; }
+
+  .filter-bar { grid-template-columns: minmax(0, 1fr); padding: 10px; }
+  .pagination-bar { gap: 10px; padding: 10px; text-align: center; }
+  .pagination-bar .row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .pagination-bar button { width: 100%; }
+
+  .money-hero { align-items: center; padding: 16px; }
+  .money-hero h3 { font-size: 27px; }
+  .money-orbit { width: 88px; }
+  .money-metrics,
+  .chart-insight-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .money-target-progress { padding: 10px; }
+
+  .readable-chart-scroll > svg { width: 680px; min-width: 680px; min-height: 218px; }
+  .money-trend .readable-chart-scroll > svg { min-height: 218px; }
+  .metric-chart .readable-chart-scroll > svg,
+  .physique-mini-chart .readable-chart-scroll > svg { min-height: 190px; }
+  .readable-chart-legend { padding-left: 8px; }
+  .readable-chart-tooltip { margin-left: 0; }
+
+  .calendar-toolbar,
+  .calendar-controls,
+  .export-strip { align-items: stretch; }
+  .calendar-controls > *,
+  .export-strip > * { width: 100%; }
+
+  .goals-editor-panel,
+  .app-editor-drawer,
+  .page-jobs .app-editor-drawer {
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .editor-shell { padding: 14px; }
+  .app-editor-drawer .exercise-card-heading { grid-template-columns: minmax(0, 1fr) 36px; }
+  .app-editor-drawer .exercise-name { grid-column: 1; }
+  .exercise-card-heading { grid-template-columns: minmax(0, 1fr) 36px; }
+  .exercise-name { grid-column: 1; }
+  .exercise-set-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .exercise-set-row > strong,
+  .exercise-set-row > button { grid-column: span 1; }
+
+  .execution-activity { grid-template-columns: 4px minmax(0, 1fr); }
+  .execution-activity .status-badge { grid-column: 2; justify-self: start; }
+  .execution-activity-actions { grid-column: 2; }
+  .job-stats { grid-template-columns: minmax(0, 1fr); }
+  .job-checklist-add { grid-template-columns: minmax(0, 1fr); }
+  .job-stage-main { padding: 12px; }
+}
+
+@media (max-width: 380px) {
+  .money-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+  .money-orbit { width: 76px; }
+  .money-metrics,
+  .chart-insight-strip { grid-template-columns: minmax(0, 1fr); }
+  .focus-note-actions { grid-template-columns: minmax(0, 1fr); }
 }

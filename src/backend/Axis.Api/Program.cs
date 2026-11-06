@@ -1,11 +1,12 @@
 using System.IO.Compression;
 using System.Reflection;
-using System.Security;
-using System.Text;
 using System.Text.Json.Serialization;
 using Axis.Application.Backup;
+using Axis.Application.Diary;
 using Axis.Application.Progress;
 using Axis.Application.Reviews;
+using Axis.Api.Contracts;
+using Axis.Api.Endpoints;
 using Axis.Domain;
 using Axis.Infrastructure;
 using Axis.Infrastructure.Persistence;
@@ -110,15 +111,13 @@ MapActivityTemplates(app);
 MapRecurrenceRules(app);
 MapActivities(app);
 MapMetrics(app);
-MapCountdowns(app);
+app.MapCountdownEndpoints();
 MapPhysique(app);
 MapMood(app);
 MapDiary(app);
 MapHistory(app);
-MapFocusNotes(app);
 MapJobApplications(app);
-MapLifeLessons(app);
-MapMoney(app);
+app.MapPersonalEndpoints();
 MapWiki(app);
 MapReviews(app);
 MapDashboard(app);
@@ -1056,79 +1055,6 @@ static void MapMetrics(WebApplication app)
     }
 }
 
-static void MapCountdowns(WebApplication app)
-{
-    var group = app.MapGroup("/api/countdowns");
-
-    group.MapGet("/", async (bool? includeArchived, AxisDbContext db, CancellationToken ct) =>
-    {
-        var query = db.Countdowns.AsQueryable();
-        if (includeArchived != true)
-        {
-            query = query.Where(countdown => !countdown.IsArchived);
-        }
-
-        var countdowns = (await query.ToListAsync(ct))
-            .OrderByDescending(countdown => countdown.IsPinned)
-            .ThenBy(countdown => countdown.TargetAt)
-            .ToList();
-
-        return Results.Ok(countdowns.Select(ToCountdownResponse));
-    });
-
-    group.MapPost("/", async (CountdownRequest request, AxisDbContext db, CancellationToken ct) =>
-    {
-        if (string.IsNullOrWhiteSpace(request.Title))
-        {
-            return Results.BadRequest("Title is required.");
-        }
-
-        var countdown = new Countdown();
-        Apply(countdown, request);
-        db.Countdowns.Add(countdown);
-        await db.SaveChangesAsync(ct);
-
-        return Results.Created($"/api/countdowns/{countdown.Id}", ToCountdownResponse(countdown));
-    });
-
-    group.MapPut("/{id:guid}", async (Guid id, CountdownRequest request, AxisDbContext db, CancellationToken ct) =>
-    {
-        var countdown = await db.Countdowns.FindAsync([id], ct);
-        if (countdown is null)
-        {
-            return Results.NotFound();
-        }
-
-        Apply(countdown, request);
-        await db.SaveChangesAsync(ct);
-        return Results.Ok(ToCountdownResponse(countdown));
-    });
-
-    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
-    {
-        var countdown = await db.Countdowns.FindAsync([id], ct);
-        if (countdown is null)
-        {
-            return Results.NotFound();
-        }
-
-        db.Countdowns.Remove(countdown);
-        await db.SaveChangesAsync(ct);
-        return Results.NoContent();
-    });
-
-    static void Apply(Countdown countdown, CountdownRequest request)
-    {
-        countdown.Title = request.Title.Trim();
-        countdown.Description = request.Description?.Trim() ?? string.Empty;
-        countdown.TargetAt = request.TargetAt;
-        countdown.Category = request.Category?.Trim() ?? string.Empty;
-        countdown.Color = string.IsNullOrWhiteSpace(request.Color) ? "#d060e8" : request.Color.Trim();
-        countdown.IsPinned = request.IsPinned;
-        countdown.IsArchived = request.IsArchived;
-    }
-}
-
 static void MapPhysique(WebApplication app)
 {
     var group = app.MapGroup("/api/physique");
@@ -1251,96 +1177,6 @@ static void MapPhysique(WebApplication app)
             }
         }
     }
-}
-
-static void MapLifeLessons(WebApplication app)
-{
-    var group = app.MapGroup("/api/life-lessons");
-    group.MapGet("/", async (AxisDbContext db, CancellationToken ct) => Results.Ok((await db.LifeLessons.AsNoTracking().ToListAsync(ct)).OrderByDescending(item => item.IsPinned).ThenByDescending(item => item.CreatedAt)));
-    group.MapPost("/", async (LifeLessonRequest request, AxisDbContext db, CancellationToken ct) =>
-    {
-        if (string.IsNullOrWhiteSpace(request.Title) || string.IsNullOrWhiteSpace(request.Content)) return Results.BadRequest("Title and lesson are required.");
-        var item = new LifeLesson(); ApplyLesson(item, request); db.LifeLessons.Add(item); await db.SaveChangesAsync(ct);
-        return Results.Created($"/api/life-lessons/{item.Id}", item);
-    });
-    group.MapPut("/{id:guid}", async (Guid id, LifeLessonRequest request, AxisDbContext db, CancellationToken ct) =>
-    {
-        if (string.IsNullOrWhiteSpace(request.Title) || string.IsNullOrWhiteSpace(request.Content)) return Results.BadRequest("Title and lesson are required.");
-        var item = await db.LifeLessons.FindAsync([id], ct); if (item is null) return Results.NotFound();
-        ApplyLesson(item, request); await db.SaveChangesAsync(ct); return Results.Ok(item);
-    });
-    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
-    {
-        var item = await db.LifeLessons.FindAsync([id], ct); if (item is null) return Results.NotFound();
-        db.LifeLessons.Remove(item); await db.SaveChangesAsync(ct); return Results.NoContent();
-    });
-}
-
-static void MapFocusNotes(WebApplication app)
-{
-    var group = app.MapGroup("/api/focus-notes");
-
-    group.MapGet("/", async (bool? includeArchived, AxisDbContext db, CancellationToken ct) =>
-    {
-        var query = db.FocusNotes.AsNoTracking().AsQueryable();
-        if (includeArchived != true)
-        {
-            query = query.Where(item => !item.IsArchived);
-        }
-
-        var notes = (await query.ToListAsync(ct))
-            .OrderByDescending(item => item.IsPinned)
-            .ThenByDescending(item => item.UpdatedAt)
-            .ToList();
-        return Results.Ok(notes);
-    });
-
-    group.MapPost("/", async (FocusNoteRequest request, AxisDbContext db, CancellationToken ct) =>
-    {
-        if (string.IsNullOrWhiteSpace(request.Title) && string.IsNullOrWhiteSpace(request.Content))
-        {
-            return Results.BadRequest("A focus note needs a title or content.");
-        }
-
-        var item = new FocusNote();
-        ApplyFocusNote(item, request);
-        db.FocusNotes.Add(item);
-        await db.SaveChangesAsync(ct);
-        return Results.Created($"/api/focus-notes/{item.Id}", item);
-    });
-
-    group.MapPut("/{id:guid}", async (Guid id, FocusNoteRequest request, AxisDbContext db, CancellationToken ct) =>
-    {
-        if (string.IsNullOrWhiteSpace(request.Title) && string.IsNullOrWhiteSpace(request.Content))
-        {
-            return Results.BadRequest("A focus note needs a title or content.");
-        }
-
-        var item = await db.FocusNotes.FindAsync([id], ct);
-        if (item is null) return Results.NotFound();
-        ApplyFocusNote(item, request);
-        await db.SaveChangesAsync(ct);
-        return Results.Ok(item);
-    });
-
-    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
-    {
-        var item = await db.FocusNotes.FindAsync([id], ct);
-        if (item is null) return Results.NotFound();
-        db.FocusNotes.Remove(item);
-        await db.SaveChangesAsync(ct);
-        return Results.NoContent();
-    });
-}
-
-static void ApplyFocusNote(FocusNote item, FocusNoteRequest request)
-{
-    item.Title = request.Title?.Trim() ?? string.Empty;
-    item.Content = request.Content?.Trim() ?? string.Empty;
-    item.Label = request.Label?.Trim() ?? string.Empty;
-    item.Color = string.IsNullOrWhiteSpace(request.Color) ? "#7f6cff" : request.Color.Trim();
-    item.IsPinned = request.IsPinned;
-    item.IsArchived = request.IsArchived;
 }
 
 static void MapJobApplications(WebApplication app)
@@ -1572,61 +1408,6 @@ static object ToJobApplicationResponse(JobApplication item) => new
         })
     })
 };
-
-static void ApplyLesson(LifeLesson item, LifeLessonRequest request)
-{
-    item.Title = request.Title.Trim(); item.Content = request.Content.Trim(); item.Category = request.Category?.Trim() ?? string.Empty;
-    item.Source = request.Source?.Trim() ?? string.Empty; item.IsPinned = request.IsPinned;
-}
-
-static void MapMoney(WebApplication app)
-{
-    var savings = app.MapGroup("/api/money/savings");
-    savings.MapGet("/", async (AxisDbContext db, CancellationToken ct) => Results.Ok((await db.SavingsEntries.AsNoTracking().ToListAsync(ct)).OrderByDescending(item => item.RecordedAt)));
-    savings.MapPost("/", async (SavingsEntryRequest request, AxisDbContext db, CancellationToken ct) =>
-    {
-        var item = new SavingsEntry { RecordedAt = DateTimeOffset.Now, Amount = Math.Max(0, request.Amount), Note = request.Note?.Trim() ?? string.Empty };
-        db.SavingsEntries.Add(item); await db.SaveChangesAsync(ct); return Results.Created($"/api/money/savings/{item.Id}", item);
-    });
-    savings.MapPut("/{id:guid}", async (Guid id, SavingsEntryRequest request, AxisDbContext db, CancellationToken ct) =>
-    {
-        var item = await db.SavingsEntries.FindAsync([id], ct); if (item is null) return Results.NotFound();
-        item.Amount = Math.Max(0, request.Amount); item.Note = request.Note?.Trim() ?? string.Empty; await db.SaveChangesAsync(ct); return Results.Ok(item);
-    });
-    savings.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
-    {
-        var item = await db.SavingsEntries.FindAsync([id], ct); if (item is null) return Results.NotFound();
-        db.SavingsEntries.Remove(item); await db.SaveChangesAsync(ct); return Results.NoContent();
-    });
-
-    var wishlist = app.MapGroup("/api/money/wishlist");
-    wishlist.MapGet("/", async (AxisDbContext db, CancellationToken ct) => Results.Ok((await db.WishlistItems.AsNoTracking().ToListAsync(ct)).OrderBy(item => item.IsPurchased).ThenBy(item => item.Priority).ThenByDescending(item => item.CreatedAt)));
-    wishlist.MapPost("/", async (WishlistItemRequest request, AxisDbContext db, CancellationToken ct) =>
-    {
-        if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest("Name is required.");
-        var item = new WishlistItem(); ApplyWishlist(item, request); db.WishlistItems.Add(item); await db.SaveChangesAsync(ct);
-        return Results.Created($"/api/money/wishlist/{item.Id}", item);
-    });
-    wishlist.MapPut("/{id:guid}", async (Guid id, WishlistItemRequest request, AxisDbContext db, CancellationToken ct) =>
-    {
-        if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest("Name is required.");
-        var item = await db.WishlistItems.FindAsync([id], ct); if (item is null) return Results.NotFound();
-        ApplyWishlist(item, request); await db.SaveChangesAsync(ct); return Results.Ok(item);
-    });
-    wishlist.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
-    {
-        var item = await db.WishlistItems.FindAsync([id], ct); if (item is null) return Results.NotFound();
-        db.WishlistItems.Remove(item); await db.SaveChangesAsync(ct); return Results.NoContent();
-    });
-}
-
-static void ApplyWishlist(WishlistItem item, WishlistItemRequest request)
-{
-    var wasPurchased = item.IsPurchased;
-    item.Name = request.Name.Trim(); item.Description = request.Description?.Trim() ?? string.Empty; item.Price = Math.Max(0, request.Price);
-    item.Priority = Math.Clamp(request.Priority, 1, 5); item.IsPurchased = request.IsPurchased;
-    item.PurchasedAt = request.IsPurchased ? item.PurchasedAt ?? DateTimeOffset.Now : wasPurchased ? null : item.PurchasedAt;
-}
 
 static void MapWiki(WebApplication app)
 {
@@ -2095,7 +1876,7 @@ static void MapDiary(WebApplication app)
         if (days.Count == 1)
         {
             var day = days[0];
-            return Results.File(CreateDiaryDocx(day.Key, day), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", $"axis-diary-{day.Key:yyyy-MM-dd}.docx");
+            return Results.File(DiaryDocumentWriter.Create(day.Key, day), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", $"axis-diary-{day.Key:yyyy-MM-dd}.docx");
         }
         using var output = new MemoryStream();
         using (var zip = new ZipArchive(output, ZipArchiveMode.Create, true))
@@ -2104,7 +1885,7 @@ static void MapDiary(WebApplication app)
             {
                 var file = zip.CreateEntry($"{day.Key:yyyy}/{day.Key:MM}/{day.Key:yyyy-MM-dd}-axis-diary.docx", CompressionLevel.Optimal);
                 await using var stream = file.Open();
-                await stream.WriteAsync(CreateDiaryDocx(day.Key, day), ct);
+                await stream.WriteAsync(DiaryDocumentWriter.Create(day.Key, day), ct);
             }
         }
         return Results.File(output.ToArray(), "application/zip", $"axis-diary-{days.First().Key:yyyy-MM-dd}-to-{days.Last().Key:yyyy-MM-dd}.zip");
@@ -2117,28 +1898,6 @@ static void ApplyDiary(DiaryEntry entry, DiaryEntryRequest request)
     entry.Title = request.Title.Trim();
     entry.Body = request.Body?.Trim() ?? string.Empty;
     entry.Tags = request.Tags?.Trim() ?? string.Empty;
-}
-
-static byte[] CreateDiaryDocx(DateOnly day, IEnumerable<DiaryEntry> entries)
-{
-    static string P(string value, string style = "Normal") => $"<w:p><w:pPr><w:pStyle w:val=\"{style}\"/></w:pPr><w:r><w:t xml:space=\"preserve\">{SecurityElement.Escape(value)}</w:t></w:r></w:p>";
-    var body = new StringBuilder(P($"Axis Diary - {day:dddd, dd MMMM yyyy}", "Title"));
-    foreach (var entry in entries.OrderBy(item => item.OccurredAt))
-    {
-        body.Append(P($"{entry.OccurredAt.LocalDateTime:HH:mm}  {entry.Title}", "Heading1"));
-        if (!string.IsNullOrWhiteSpace(entry.Body)) body.Append(P(entry.Body));
-        if (!string.IsNullOrWhiteSpace(entry.Tags)) body.Append(P($"Tags: {entry.Tags}", "Subtitle"));
-    }
-    var document = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>{body}<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\"/></w:sectPr></w:body></w:document>";
-    const string types = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>";
-    const string rels = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>";
-    using var output = new MemoryStream();
-    using (var zip = new ZipArchive(output, ZipArchiveMode.Create, true))
-    {
-        void Add(string name, string content) { using var writer = new StreamWriter(zip.CreateEntry(name).Open(), new UTF8Encoding(false)); writer.Write(content); }
-        Add("[Content_Types].xml", types); Add("_rels/.rels", rels); Add("word/document.xml", document);
-    }
-    return output.ToArray();
 }
 
 static void MapHistory(WebApplication app)
@@ -2398,41 +2157,6 @@ static object ToActivityResponse(Activity activity)
         activity.PhysicalLoad,
         activity.Points,
         activity.Notes
-    };
-}
-
-static object ToCountdownResponse(Countdown countdown)
-{
-    var now = DateTimeOffset.UtcNow;
-    var remaining = countdown.TargetAt - now;
-    var totalSeconds = Math.Max(0, remaining.TotalSeconds);
-    var createdDate = DateOnly.FromDateTime(countdown.CreatedAt.LocalDateTime);
-    var targetDate = DateOnly.FromDateTime(countdown.TargetAt.LocalDateTime);
-    var today = DateOnly.FromDateTime(DateTime.Now);
-    var totalDurationDays = Math.Max(0, targetDate.DayNumber - createdDate.DayNumber);
-    var elapsedDays = Math.Clamp(today.DayNumber - createdDate.DayNumber, 0, totalDurationDays);
-    var (calendarMonths, calendarDays) = CalendarMonthDayDifference(createdDate, targetDate);
-
-    return new
-    {
-        countdown.Id,
-        countdown.Title,
-        countdown.Description,
-        countdown.TargetAt,
-        countdown.Category,
-        countdown.Color,
-        countdown.IsPinned,
-        countdown.IsArchived,
-        DaysRemaining = (int)Math.Floor(totalSeconds / 86400),
-        HoursRemaining = (int)Math.Floor(totalSeconds % 86400 / 3600),
-        MinutesRemaining = (int)Math.Floor(totalSeconds % 3600 / 60),
-        TotalDurationDays = totalDurationDays,
-        ElapsedDays = elapsedDays,
-        CalendarMonths = calendarMonths,
-        CalendarDays = calendarDays,
-        IsPast = remaining.TotalSeconds < 0,
-        countdown.CreatedAt,
-        countdown.UpdatedAt
     };
 }
 
@@ -2785,22 +2509,6 @@ static decimal? ParseActivityNamedValue(string notes, string marker)
         : null;
 }
 
-static (int Months, int Days) CalendarMonthDayDifference(DateOnly start, DateOnly end)
-{
-    if (end <= start)
-    {
-        return (0, 0);
-    }
-
-    var months = Math.Max(0, MonthsBetween(start, end));
-    while (months > 0 && start.AddMonths(months) > end)
-    {
-        months--;
-    }
-
-    return (months, end.DayNumber - start.AddMonths(months).DayNumber);
-}
-
 static void ApplyActivityStatusTransition(Activity activity, ActivityStatus previousStatus, ActivityStatus nextStatus, DateTimeOffset now)
 {
     if (previousStatus == nextStatus)
@@ -2943,91 +2651,5 @@ static async Task<int> RunHealthCheckAsync(string healthUrl)
         return 1;
     }
 }
-
-public sealed record LifeAreaRequest(string Name, string? Description, string? Color, string? Icon, int PriorityWeight, int CurrentScore, int TargetScore, bool IsActive);
-
-public sealed record GoalRequest(Guid LifeAreaId, string Title, string? Description, GoalStatus Status, GoalPriority Priority, ProgressType ProgressType, decimal CurrentValue, decimal TargetValue, string? Unit, DateOnly? TargetDate, decimal MaintenanceThreshold, int? MaintenanceTargetPerWeek, decimal DecayRatePercentPerWeek);
-
-public sealed record MilestoneRequest(string Title, string? Description, MilestoneType Type, decimal CurrentValue, decimal TargetValue, string? Unit, int SortOrder, MilestoneStatus Status, DateOnly? DueDate);
-
-public sealed record ActivityTemplateRequest(Guid LifeAreaId, Guid? GoalId, string Title, string? Description, int DefaultDurationMinutes, LoadLevel EnergyCost, LoadLevel MentalLoad, LoadLevel PhysicalLoad, int DefaultPoints, bool IsActive);
-
-public sealed record RecurrenceRuleRequest(Guid TemplateId, RecurrenceFrequency Frequency, int Interval, string? DaysOfWeek, DateOnly StartDate, DateOnly? EndDate);
-
-public sealed record GenerateRecurrenceRequest(DateOnly? From, DateOnly? To);
-
-public sealed record ActivityRequest(Guid LifeAreaId, Guid? GoalId, Guid? MilestoneId, Guid? TemplateId, string Title, string? Description, DateTimeOffset? PlannedStartAt, DateTimeOffset? PlannedEndAt, DateTimeOffset? ActualStartAt, DateTimeOffset? ActualEndAt, int DurationMinutes, ActivityStatus Status, LoadLevel EnergyCost, LoadLevel MentalLoad, LoadLevel PhysicalLoad, int Points, string? Notes);
-
-public sealed record MoveActivityRequest(DateTimeOffset PlannedStartAt, DateTimeOffset PlannedEndAt);
-
-public sealed record MetricRequest(Guid? LifeAreaId, Guid? GoalId, string Name, string? Unit, MetricValueType ValueType, decimal? TargetValue, int SortOrder, bool IsActive);
-
-public sealed record MetricEntryRequest(decimal Value, DateTimeOffset? RecordedAt, string? Notes);
-
-public sealed record DailyMeasurementsRequest(DateOnly RecordedOn, decimal? Steps, decimal? WaterMl, decimal? Calories, decimal? Protein, decimal? Carbohydrates, decimal? Fat, decimal? Fiber, string? Notes);
-
-public sealed record CountdownRequest(string Title, string? Description, DateTimeOffset TargetAt, string? Category, string? Color, bool IsPinned, bool IsArchived);
-
-public sealed record PhysiqueEntryRequest(DateTimeOffset? RecordedAt, int Age, string? Sex, decimal HeightCm, decimal WeightKg, decimal? WaistCm, decimal? NeckCm, decimal? HipCm, decimal? BodyFatPercentOverride, decimal? MuscleMassKg, int MoodScore, string? Status, string? Notes);
-
-public sealed record MoodEntryRequest(DateTimeOffset? RecordedAt, int Score, int Energy, int Stress, string? Context, string? Notes);
-
-public sealed record DiaryEntryRequest(DateTimeOffset? OccurredAt, string Title, string? Body, string? Tags);
-
-public sealed record LifeLessonRequest(string Title, string Content, string? Category, string? Source, bool IsPinned);
-
-public sealed record FocusNoteRequest(string? Title, string? Content, string? Label, string? Color, bool IsPinned, bool IsArchived);
-
-public sealed record JobApplicationRequest(
-    string CompanyName,
-    string PositionTitle,
-    JobApplicationStatus Status,
-    JobWorkMode WorkMode,
-    string? EmploymentType,
-    string? Location,
-    string? Country,
-    decimal? SalaryMin,
-    decimal? SalaryMax,
-    string? Currency,
-    int DesireRating,
-    int FitRating,
-    int Priority,
-    string? CompanyUrl,
-    string? PostingUrl,
-    string? ApplicationUrl,
-    string? Source,
-    string? ContactName,
-    string? ContactEmail,
-    string? JobDescription,
-    string? Notes,
-    DateTimeOffset DiscoveredAt,
-    DateTimeOffset? AppliedAt,
-    DateTimeOffset? LastContactAt,
-    DateTimeOffset? FollowUpAt,
-    DateTimeOffset? DeadlineAt,
-    DateTimeOffset? DecisionAt,
-    bool IsArchived);
-
-public sealed record JobStageRequest(
-    string Title,
-    JobStageStatus Status,
-    string? Focus,
-    string? Notes,
-    DateTimeOffset? ScheduledAt,
-    DateTimeOffset? CompletedAt,
-    int? SortOrder);
-
-public sealed record JobPreparationItemRequest(
-    string Title,
-    string? Notes,
-    bool IsCompleted,
-    DateTimeOffset? CompletedAt,
-    int? SortOrder);
-
-public sealed record SavingsEntryRequest(decimal Amount, string? Note);
-
-public sealed record WishlistItemRequest(string Name, string? Description, decimal Price, int Priority, bool IsPurchased);
-
-public sealed record ReviewRequest(string? Summary, string? WhatWorked, string? WhatDidNotWork, string? NextFocus);
 
 public partial class Program;

@@ -35,6 +35,14 @@ Double-clicking `00-AXIS.exe` opens the same local menu style as Repetitio: Run,
 
 ## Windows Desktop
 
+To rebuild the current source and update the installed Windows application, double-click:
+
+```text
+AKTUALIZUJ-AXIS.cmd
+```
+
+The updater runs the tests, builds and verifies the installer, and then opens its Install screen. It updates application files only; the database and backups remain outside the installation directory. By default it uses restored local dependencies. Run `AKTUALIZUJ-AXIS.cmd -Online` only when a new dependency must be downloaded.
+
 Build the versioned installer and portable release:
 
 ```powershell
@@ -56,3 +64,5 @@ The installed application uses the same React UI and API without Docker. It runs
 Starter data is opt-in. Current Docker and desktop configurations keep `SeedData` disabled.
 
 The running version and runtime are always visible next to the Axis logo. Before a desktop release initializes an existing database for the first time, it creates a validated safety backup in `%USERPROFILE%\Documents\Axis\Backups`. Docker waits for the API health check before starting the frontend.
+
+For the code layout and compatibility rules, see [Architecture](docs/ARCHITECTURE.md).

@@ -1,6 +1,67 @@
-import { ChangeEvent, FormEvent, Fragment, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, Fragment, type CSSProperties, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
+import {
+  activityStatuses,
+  dashboardRanges,
+  defaultPageSize,
+  goalPriorities,
+  goalStatuses,
+  jobStageStatuses,
+  jobStatuses,
+  jobWorkModes,
+  loadLevels,
+  metricTypes,
+  milestoneStatuses,
+  milestoneTypes,
+  pages,
+  primaryPageIds,
+  progressTypes,
+  recurrenceFrequencies,
+  weekDays,
+  workoutMuscles,
+  type CalendarView,
+  type Page
+} from './config';
 import { ReadableChart } from './ReadableChart';
+import {
+  EditorDrawer,
+  EditorShell,
+  EmptyState,
+  GoalProgressRing,
+  NumberField,
+  NumberOrBlankField,
+  PaginationControls,
+  SectionTitle,
+  SelectField,
+  StatCard,
+  SummaryPill,
+  TextArea,
+  TextField,
+  VaporNavButton
+} from './components/common';
+import { formatDateTime, formatMoney, formatShortDate, paginate, roundNumber } from './lib/format';
+import {
+  assessSleepDuration,
+  formatSleepDuration,
+  normalizeSleepHours,
+  sleepHoursFromParts,
+  splitSleepDuration
+} from './lib/sleep';
+import {
+  createExercise,
+  createWorkoutSet,
+  formatWorkoutSets,
+  parseWorkoutExercises,
+  serializeWorkoutNotes,
+  stripWorkoutNotes,
+  workoutExerciseVolume,
+  type WorkoutExercise,
+  type WorkoutSet
+} from './lib/workouts';
+export { parseWorkoutExercises } from './lib/workouts';
+import { LifeLessonsPage } from './pages/LifeLessonsPage';
+import { FocusNotesPage } from './pages/FocusNotesPage';
+import { MoneyPage } from './pages/MoneyPage';
 import { buildDashboardTracks, getDayStatus } from './signals';
 import type { DashboardTrack } from './signals';
 import type {
@@ -49,20 +110,7 @@ import type {
   WikiPage
 } from './types';
 
-type Page = 'today' | 'log' | 'focus' | 'jobs' | 'dashboard' | 'calendar' | 'countdowns' | 'physique' | 'journal' | 'history' | 'lessons' | 'money' | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
 type Theme = 'light' | 'dark';
-type CalendarView = 'day' | 'week' | 'month';
-type WorkoutSet = {
-  id: string;
-  reps: number;
-  weightKg: number;
-};
-type WorkoutExercise = {
-  id: string;
-  name: string;
-  muscle: string;
-  sets: WorkoutSet[];
-};
 type QuickLogDraft = {
   recordedAt: string;
   durationMinutes: number;
@@ -89,54 +137,6 @@ type CustomLogDraft = {
   progressAmount: number;
 };
 type LogContext = { templateId?: string; goalId?: string; lifeAreaId?: string };
-
-const pages: Array<{ id: Page; label: string; kicker: string; icon: string }> = [
-  { id: 'today', label: 'Today', kicker: 'Operate', icon: '//' },
-  { id: 'log', label: 'Log', kicker: 'Capture', icon: '++' },
-  { id: 'focus', label: 'Focus', kicker: 'Direction', icon: '::' },
-  { id: 'jobs', label: 'Career Pipeline', kicker: 'Job search', icon: '//>' },
-  { id: 'dashboard', label: 'Insights', kicker: 'Signals', icon: '==' },
-  { id: 'calendar', label: 'Calendar', kicker: 'Plan', icon: '[]' },
-  { id: 'countdowns', label: 'Countdowns', kicker: 'Anticipate', icon: '>>' },
-  { id: 'physique', label: 'Physique', kicker: 'Body lab', icon: '^^' },
-  { id: 'journal', label: 'Journal', kicker: 'Mind + diary', icon: '|>' },
-  { id: 'history', label: 'History', kicker: 'Recall', icon: '<<' },
-  { id: 'lessons', label: 'Life Lessons', kicker: 'Wisdom', icon: '**' },
-  { id: 'money', label: 'Money', kicker: 'Capital', icon: '$$' },
-  { id: 'goals', label: 'Goals', kicker: 'Outcomes', icon: '<>' },
-  { id: 'areas', label: 'Life Areas', kicker: 'Balance', icon: '##' },
-  { id: 'templates', label: 'Templates', kicker: 'Repeat', icon: '~~' },
-  { id: 'metrics', label: 'Metrics', kicker: 'Signals', icon: '%%' },
-  { id: 'wiki', label: 'Wiki', kicker: 'How-to', icon: '??' },
-  { id: 'reviews', label: 'Reviews', kicker: 'Reflect', icon: '??' },
-  { id: 'backup', label: 'Backup', kicker: 'Safety', icon: '!!' }
-];
-
-const primaryPageIds: Page[] = ['today', 'log', 'focus', 'jobs', 'calendar', 'dashboard', 'goals', 'journal'];
-
-const loadLevels: LoadLevel[] = ['Low', 'Medium', 'High'];
-const activityStatuses: ActivityStatus[] = ['Planned', 'Completed', 'Skipped', 'Moved', 'Cancelled'];
-const goalStatuses: GoalStatus[] = ['Active', 'Paused', 'Completed', 'Archived'];
-const goalPriorities: GoalPriority[] = ['Primary', 'Secondary', 'Maintenance'];
-const progressTypes: ProgressType[] = ['Manual', 'MilestoneBased', 'CountBased', 'MetricBased', 'Decay', 'Streak', 'Maintenance'];
-const milestoneTypes: MilestoneType[] = ['Count', 'Repetition', 'Binary', 'Metric', 'Checklist'];
-const milestoneStatuses: MilestoneStatus[] = ['Active', 'Completed', 'Paused', 'Archived'];
-const metricTypes: MetricValueType[] = ['Number', 'Percentage', 'Duration', 'Currency', 'Rating', 'Boolean'];
-const recurrenceFrequencies: RecurrenceFrequency[] = ['Daily', 'Weekly', 'Monthly'];
-const jobStatuses: JobApplicationStatus[] = ['Scouted', 'Shortlisted', 'Preparing', 'Applied', 'Interviewing', 'Offer', 'Accepted', 'Rejected', 'Withdrawn', 'Archived'];
-const jobWorkModes: JobWorkMode[] = ['OnSite', 'Hybrid', 'Remote'];
-const jobStageStatuses: JobStageStatus[] = ['Planned', 'Preparing', 'Scheduled', 'Completed', 'Cancelled'];
-const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const workoutMuscles = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core'];
-const workoutMarker = '[axis-workout-v1]';
-const defaultPageSize = 12;
-const dashboardRanges = [
-  { value: 1, label: '1D' },
-  { value: 7, label: 'Week' },
-  { value: 30, label: 'Month' },
-  { value: 60, label: '2M' },
-  { value: 180, label: '6M' }
-];
 
 export default function App() {
   const [page, setPage] = useState<Page>('today');
@@ -2236,98 +2236,6 @@ function TodayFocusNotes(props: { notes: FocusNote[]; onOpen: () => void }) {
   );
 }
 
-function FocusNotesPage(props: { notes: FocusNote[]; busy: boolean; onSave: (body: unknown, id?: string) => void; onDelete: (id: string) => void }) {
-  const [selected, setSelected] = useState<FocusNote | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [query, setQuery] = useState('');
-  const [label, setLabel] = useState('');
-  const [visibility, setVisibility] = useState<'active' | 'archived' | 'all'>('active');
-  const [page, setPage] = useState(1);
-  const labels = Array.from(new Set(props.notes.map((note) => note.label).filter(Boolean))).sort();
-  const filtered = props.notes.filter((note) => {
-    const matchesQuery = !query || `${note.title} ${note.content} ${note.label}`.toLowerCase().includes(query.toLowerCase());
-    const matchesLabel = !label || note.label === label;
-    const matchesVisibility = visibility === 'all' || (visibility === 'archived' ? note.isArchived : !note.isArchived);
-    return matchesQuery && matchesLabel && matchesVisibility;
-  });
-  const paged = paginate(filtered, page, defaultPageSize);
-
-  useEffect(() => setPage(1), [query, label, visibility]);
-
-  function updateNote(note: FocusNote, changes: Partial<FocusNote>) {
-    props.onSave({
-      title: note.title,
-      content: note.content,
-      label: note.label,
-      color: note.color,
-      isPinned: note.isPinned,
-      isArchived: note.isArchived,
-      ...changes
-    }, note.id);
-  }
-
-  return (
-    <section className="workspace-grid drawer-workspace focus-page">
-      <div className="workspace-main">
-        <section className="focus-board-header">
-          <div><p className="eyebrow">Attention board</p><h3>{props.notes.filter((note) => !note.isArchived).length} active focus notes</h3><p>Keep the current week visible. Pin the few notes that should win your attention.</p></div>
-          <button onClick={() => { setSelected(null); setCreating(true); }}>New focus note</button>
-        </section>
-        <div className="filter-bar focus-filter-bar">
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search focus notes" />
-          <select value={label} onChange={(event) => setLabel(event.target.value)}><option value="">All labels</option>{labels.map((item) => <option key={item}>{item}</option>)}</select>
-          <select value={visibility} onChange={(event) => setVisibility(event.target.value as 'active' | 'archived' | 'all')}><option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option></select>
-        </div>
-        <div className="focus-note-grid">
-          {paged.items.map((note) => (
-            <article className={`focus-note ${note.isPinned ? 'pinned' : ''} ${note.isArchived ? 'archived' : ''}`} style={{ '--focus-color': note.color } as CSSProperties} key={note.id}>
-              <i className="focus-note-fold" aria-hidden="true" />
-              <div className="focus-note-meta"><span>{note.label || 'Focus'}</span>{note.isPinned && <strong>PINNED</strong>}</div>
-              <h3>{note.title || 'Untitled focus'}</h3>
-              <p>{note.content || 'No details yet.'}</p>
-              <small>Updated {formatDateTime(note.updatedAt)}</small>
-              <div className="focus-note-actions">
-                <button className="secondary-button" disabled={props.busy} onClick={() => updateNote(note, { isPinned: !note.isPinned })}>{note.isPinned ? 'Unpin' : 'Pin'}</button>
-                <button className="secondary-button" disabled={props.busy} onClick={() => updateNote(note, { isArchived: !note.isArchived })}>{note.isArchived ? 'Restore' : 'Archive'}</button>
-                <button className="secondary-button" onClick={() => { setSelected(note); setCreating(false); }}>Edit</button>
-                <button className="danger-button" onClick={() => confirmDelete('Delete this focus note?') && props.onDelete(note.id)}>Delete</button>
-              </div>
-            </article>
-          ))}
-        </div>
-        {filtered.length === 0 && <EmptyState text="No focus notes match this view." />}
-        <PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} />
-      </div>
-      <EditorDrawer open={creating || selected !== null} label={selected ? 'Edit focus note' : 'New focus note'} onClose={() => { setCreating(false); setSelected(null); }}>
-        <FocusNoteForm note={selected} busy={props.busy} onSave={(body) => { props.onSave(body, selected?.id); setCreating(false); setSelected(null); }} />
-      </EditorDrawer>
-    </section>
-  );
-}
-
-function FocusNoteForm(props: { note: FocusNote | null; busy: boolean; onSave: (body: unknown) => void }) {
-  const [draft, setDraft] = useState({
-    title: props.note?.title ?? '',
-    content: props.note?.content ?? '',
-    label: props.note?.label ?? '',
-    color: props.note?.color ?? '#7f6cff',
-    isPinned: props.note?.isPinned ?? true,
-    isArchived: props.note?.isArchived ?? false
-  });
-
-  return (
-    <form className="editor-form focus-note-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}>
-      <TextField label="Title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} />
-      <TextArea label="What matters right now" value={draft.content} onChange={(content) => setDraft({ ...draft, content })} />
-      <TextField label="Label" value={draft.label} onChange={(label) => setDraft({ ...draft, label })} />
-      <label className="field"><span>Note color</span><div className="focus-color-control"><input aria-label="Focus note color picker" type="color" value={isHexColor(draft.color) ? draft.color : '#7f6cff'} onChange={(event) => setDraft({ ...draft, color: event.target.value })} /><input aria-label="Focus note color hex" value={draft.color} onChange={(event) => setDraft({ ...draft, color: event.target.value })} placeholder="#7f6cff" /></div></label>
-      <label className="toggle-field"><input type="checkbox" checked={draft.isPinned} onChange={(event) => setDraft({ ...draft, isPinned: event.target.checked })} /><span>Pin on Today</span></label>
-      <label className="toggle-field"><input type="checkbox" checked={draft.isArchived} onChange={(event) => setDraft({ ...draft, isArchived: event.target.checked })} /><span>Archived</span></label>
-      <button disabled={props.busy || (!draft.title.trim() && !draft.content.trim())}>Save focus note</button>
-    </form>
-  );
-}
-
 function JobApplicationsPage(props: {
   applications: JobApplication[];
   busy: boolean;
@@ -2542,68 +2450,6 @@ function safeExternalLink(value: string, label: string) {
   if (!/^https?:\/\//i.test(value)) return null;
   return <a href={value} target="_blank" rel="noreferrer">{label} ↗</a>;
 }
-
-function LifeLessonsPage(props: { lessons: LifeLesson[]; busy: boolean; onSave: (body: unknown, id?: string) => void; onDelete: (id: string) => void }) {
-  const [selected, setSelected] = useState<LifeLesson | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [query, setQuery] = useState('');
-  const [category, setCategory] = useState('');
-  const [page, setPage] = useState(1);
-  const categories = Array.from(new Set(props.lessons.map((item) => item.category).filter(Boolean))).sort();
-  const filtered = props.lessons.filter((item) => (!query || `${item.title} ${item.content} ${item.source}`.toLowerCase().includes(query.toLowerCase())) && (!category || item.category === category));
-  const paged = paginate(filtered, page, defaultPageSize);
-  useEffect(() => setPage(1), [query, category]);
-  return <section className="workspace-grid drawer-workspace lessons-page"><div className="workspace-main"><section className="collection-header"><div><p className="eyebrow">Personal operating manual</p><h3>{props.lessons.length} life lessons</h3></div><button onClick={() => { setSelected(null); setCreating(true); }}>Add lesson</button></section>
-    <div className="filter-bar"><input placeholder="Search lessons" value={query} onChange={(event) => setQuery(event.target.value)} /><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></div>
-    <div className="lesson-grid">{paged.items.map((item) => <article className={`entity-card lesson-card ${item.isPinned ? 'pinned' : ''}`} key={item.id}><div className="entity-card-top"><span className="color-chip">{item.category || 'Life'}</span>{item.isPinned && <strong>PINNED</strong>}</div><h3>{item.title}</h3><blockquote>{item.content}</blockquote>{item.source && <p className="muted-copy">Source: {item.source}</p>}<small>{formatShortDate(item.createdAt)}</small><div className="card-actions"><button className="secondary-button" onClick={() => { setSelected(item); setCreating(false); }}>Edit</button><button className="danger-button" onClick={() => confirmDelete('Delete this lesson?') && props.onDelete(item.id)}>Delete</button></div></article>)}</div>
-    {filtered.length === 0 && <EmptyState text="No lessons match this search." />}<PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} /></div>
-    <EditorDrawer open={creating || selected !== null} label={selected ? 'Edit life lesson' : 'Add life lesson'} onClose={() => { setCreating(false); setSelected(null); }}><LifeLessonForm lesson={selected} busy={props.busy} onSave={(body) => { props.onSave(body, selected?.id); setCreating(false); setSelected(null); }} /></EditorDrawer></section>;
-}
-
-function LifeLessonForm(props: { lesson: LifeLesson | null; busy: boolean; onSave: (body: unknown) => void }) {
-  const [draft, setDraft] = useState({ title: props.lesson?.title ?? '', content: props.lesson?.content ?? '', category: props.lesson?.category ?? '', source: props.lesson?.source ?? '', isPinned: props.lesson?.isPinned ?? false });
-  return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}><TextField label="Lesson title" value={draft.title} onChange={(title) => setDraft({ ...draft, title })} required /><TextArea label="Advice to future me" value={draft.content} onChange={(content) => setDraft({ ...draft, content })} /><TextField label="Category" value={draft.category} onChange={(category) => setDraft({ ...draft, category })} /><TextField label="Source or situation" value={draft.source} onChange={(source) => setDraft({ ...draft, source })} /><label className="toggle-field"><input type="checkbox" checked={draft.isPinned} onChange={(event) => setDraft({ ...draft, isPinned: event.target.checked })} /><span>Pin this lesson</span></label><button disabled={props.busy}>Save lesson</button></form>;
-}
-
-function MoneyPage(props: { savings: SavingsEntry[]; wishlist: WishlistItem[]; busy: boolean; onSaveSavings: (body: unknown, id?: string) => void; onDeleteSavings: (id: string) => void; onSaveWish: (body: unknown, id?: string) => void; onDeleteWish: (id: string) => void }) {
-  const [mode, setMode] = useState<'wishlist' | 'savings'>('wishlist');
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('active');
-  const [page, setPage] = useState(1);
-  const [wish, setWish] = useState<WishlistItem | null>(null);
-  const [saving, setSaving] = useState<SavingsEntry | null>(null);
-  const [creating, setCreating] = useState(false);
-  const currentSavings = props.savings[0]?.amount ?? 0;
-  const activeTotal = props.wishlist.filter((item) => !item.isPurchased).reduce((sum, item) => sum + item.price, 0);
-  const purchasedTotal = props.wishlist.filter((item) => item.isPurchased).reduce((sum, item) => sum + item.price, 0);
-  const coverage = activeTotal <= 0 ? 0 : Math.min(100, Math.round(currentSavings / activeTotal * 100));
-  const filteredWish = props.wishlist.filter((item) => (!query || `${item.name} ${item.description}`.toLowerCase().includes(query.toLowerCase())) && (filter === 'all' || (filter === 'done' ? item.isPurchased : !item.isPurchased)));
-  const filteredSavings = props.savings.filter((item) => !query || item.note.toLowerCase().includes(query.toLowerCase()));
-  const pagedWish = paginate(filteredWish, page, defaultPageSize);
-  const pagedSavings = paginate(filteredSavings, page, defaultPageSize);
-  useEffect(() => setPage(1), [query, filter, mode]);
-  return <section className="workspace-grid drawer-workspace money-page"><div className="workspace-main"><section className="money-hero"><div><p className="eyebrow">Capital dashboard</p><h3>{formatMoney(currentSavings)} saved</h3><p>{coverage}% of the active wishlist is covered.</p></div><div className="money-orbit" style={{ '--money-progress': `${coverage * 3.6}deg` } as React.CSSProperties}><strong>{coverage}%</strong><span>coverage</span></div></section>
-    <div className="money-metrics"><SummaryPill label="Saved" value={formatMoney(currentSavings)} /><SummaryPill label="Wishlist" value={formatMoney(activeTotal)} /><SummaryPill label="Purchased" value={formatMoney(purchasedTotal)} /><SummaryPill label="Items" value={props.wishlist.length} /></div>
-    <MoneyTrajectoryChart entries={props.savings} wishlistTotal={activeTotal} />
-    <div className="collection-header"><div className="segmented-control"><button className={mode === 'wishlist' ? 'active' : ''} onClick={() => setMode('wishlist')}>Wishlist</button><button className={mode === 'savings' ? 'active' : ''} onClick={() => setMode('savings')}>Savings log</button></div><button onClick={() => { setWish(null); setSaving(null); setCreating(true); }}>{mode === 'wishlist' ? 'Add wish' : 'Record balance'}</button></div>
-    <div className="filter-bar"><input placeholder={`Search ${mode}`} value={query} onChange={(event) => setQuery(event.target.value)} />{mode === 'wishlist' && <select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="active">Wishlist</option><option value="done">Purchased</option><option value="all">All</option></select>}</div>
-    {mode === 'wishlist' ? <div className="entity-grid">{pagedWish.items.map((item) => <article className={`entity-card money-item ${item.isPurchased ? 'purchased' : ''}`} key={item.id}><div className="entity-card-top"><span>Priority {item.priority}</span><strong>{formatMoney(item.price)}</strong></div><h3>{item.name}</h3><p>{item.description || 'No notes.'}</p><div className="meter"><i style={{ width: `${Math.min(100, currentSavings / Math.max(1, item.price) * 100)}%` }} /></div><small>{item.isPurchased ? `Purchased ${formatShortDate(item.purchasedAt ?? undefined)}` : currentSavings >= item.price ? 'Affordable from current savings' : `${formatMoney(item.price - currentSavings)} still needed`}</small><div className="card-actions"><button onClick={() => props.onSaveWish({ name: item.name, description: item.description, price: item.price, priority: item.priority, isPurchased: !item.isPurchased }, item.id)}>{item.isPurchased ? 'Return to wishlist' : 'Mark purchased'}</button><button className="secondary-button" onClick={() => { setWish(item); setSaving(null); setCreating(false); }}>Edit</button><button className="danger-button" onClick={() => props.onDeleteWish(item.id)}>Delete</button></div></article>)}</div> : <div className="history-timeline">{pagedSavings.items.map((item) => <article className="timeline-entry" key={item.id}><time>{formatShortDate(item.recordedAt)}</time><div><h4>{formatMoney(item.amount)}</h4><p>{item.note || 'Balance update'}</p></div><div className="row-actions"><button className="secondary-button" onClick={() => { setSaving(item); setWish(null); setCreating(false); }}>Edit</button><button className="danger-button" onClick={() => props.onDeleteSavings(item.id)}>Delete</button></div></article>)}</div>}
-    {(mode === 'wishlist' ? pagedWish.items.length : pagedSavings.items.length) === 0 && <EmptyState text="Nothing matches this view." />}<PaginationControls page={page} totalPages={mode === 'wishlist' ? pagedWish.totalPages : pagedSavings.totalPages} totalItems={mode === 'wishlist' ? filteredWish.length : filteredSavings.length} onPage={setPage} /></div>
-    <EditorDrawer open={creating || wish !== null || saving !== null} label={mode === 'wishlist' ? 'Wishlist item' : 'Savings balance'} onClose={() => { setCreating(false); setWish(null); setSaving(null); }}>{mode === 'wishlist' ? <WishlistForm item={wish} busy={props.busy} onSave={(body) => { props.onSaveWish(body, wish?.id); setCreating(false); setWish(null); }} /> : <SavingsForm entry={saving} busy={props.busy} onSave={(body) => { props.onSaveSavings(body, saving?.id); setCreating(false); setSaving(null); }} />}</EditorDrawer>
-  </section>;
-}
-
-function MoneyTrajectoryChart({ entries, wishlistTotal }: { entries: SavingsEntry[]; wishlistTotal: number }) {
-  const [mode, setMode] = useState<'line' | 'bars'>('line');
-  const rows = [...entries].sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
-  const values = rows.map((item) => item.amount);
-  const delta = rows.length > 1 ? rows.at(-1)!.amount - rows[0].amount : 0;
-  const data = rows.map((item) => ({ id: item.id, label: formatShortDate(item.recordedAt), values: { balance: item.amount }, detail: item.note || formatDateTime(item.recordedAt) }));
-  return <section className="surface money-trend professional-chart"><div className="collection-header flush-header"><SectionTitle kicker="Savings history" title="Capital trajectory" /><div className="segmented-control compact"><button className={mode === 'line' ? 'active' : ''} onClick={() => setMode('line')}>Line</button><button className={mode === 'bars' ? 'active' : ''} onClick={() => setMode('bars')}>Bars</button></div></div><div className="chart-insight-strip"><span><small>Current</small><strong>{formatMoney(rows.at(-1)?.amount ?? 0)}</strong></span><span><small>Change</small><strong>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</strong></span><span><small>Highest</small><strong>{formatMoney(values.length ? Math.max(...values) : 0)}</strong></span><span><small>Wishlist target</small><strong>{formatMoney(wishlistTotal)}</strong></span></div><ReadableChart data={data} series={[{ key: 'balance', label: 'Saved balance', color: '#55f0d0' }]} mode={mode} min={0} references={wishlistTotal > 0 ? [{ label: 'Wishlist target', value: wishlistTotal, color: '#d66cf2' }] : []} formatValue={formatMoney} ariaLabel="Savings balance and wishlist target over time" emptyText="Record a savings balance to start the chart." /></section>;
-}
-
-function WishlistForm(props: { item: WishlistItem | null; busy: boolean; onSave: (body: unknown) => void }) { const [draft, setDraft] = useState({ name: props.item?.name ?? '', description: props.item?.description ?? '', price: props.item?.price ?? 0, priority: props.item?.priority ?? 3, isPurchased: props.item?.isPurchased ?? false }); return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}><TextField label="Item" value={draft.name} onChange={(name) => setDraft({ ...draft, name })} required /><TextArea label="Why I want it" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} /><NumberField label="Price" value={draft.price} step={0.01} onChange={(price) => setDraft({ ...draft, price })} /><NumberField label="Priority 1-5" value={draft.priority} min={1} max={5} onChange={(priority) => setDraft({ ...draft, priority })} /><label className="toggle-field"><input type="checkbox" checked={draft.isPurchased} onChange={(event) => setDraft({ ...draft, isPurchased: event.target.checked })} /><span>Purchased</span></label><button disabled={props.busy}>Save item</button></form>; }
-function SavingsForm(props: { entry: SavingsEntry | null; busy: boolean; onSave: (body: unknown) => void }) { const [amount, setAmount] = useState(props.entry?.amount ?? 0); const [note, setNote] = useState(props.entry?.note ?? ''); return <form className="editor-form" onSubmit={(event) => { event.preventDefault(); props.onSave({ amount, note }); }}><NumberField label="Current saved amount" value={amount} step={0.01} onChange={setAmount} /><TextField label="Note" value={note} onChange={setNote} /><small className="helper-copy">A new balance creates a point on the savings chart.</small><button disabled={props.busy}>Record balance</button></form>; }
 
 function CountdownsPage(props: {
   countdowns: Countdown[];
@@ -4663,27 +4509,6 @@ function ActivityRow(props: {
   );
 }
 
-function EditorShell(props: { title: string; children: React.ReactNode; onCancel: () => void }) {
-  return (
-    <section className="surface editor-shell">
-      <div className="editor-heading">
-        <SectionTitle kicker="Editor" title={props.title} />
-        <button className="ghost-button compact" onClick={props.onCancel}>Clear</button>
-      </div>
-      {props.children}
-    </section>
-  );
-}
-
-function SectionTitle({ kicker, title }: { kicker: string; title: string }) {
-  return (
-    <div className="section-title">
-      <p className="eyebrow">{kicker}</p>
-      <h3>{title}</h3>
-    </div>
-  );
-}
-
 function ReviewPlanningPanel(props: { reviews: Review[]; activities: Activity[]; goals: Goal[] }) {
   const periods = [...props.reviews].sort((first, second) => first.periodStart.localeCompare(second.periodStart)).slice(-8).map((review) => {
     const rows = props.activities.filter((activity) => {
@@ -4710,77 +4535,6 @@ function ReviewPlanningPanel(props: { reviews: Review[]; activities: Activity[];
       <article className="review-next-plan"><div><span className="eyebrow">Carry forward</span><h4>{latest?.nextFocus || 'Choose the next concrete focus in your latest review.'}</h4><p>{latest ? `${latest.type} review ending ${latest.periodEnd}` : 'No review generated yet.'}</p></div><div className="planning-goals">{activeGoals.map((goal) => <div key={goal.id}><i style={{ background: goal.lifeAreaColor }} /><span><strong>{goal.title}</strong><small>{goal.lifeAreaName} · {goal.priority}</small></span></div>)}</div></article>
     </div>
   </section>;
-}
-
-function EditorDrawer(props: { open: boolean; label: string; onClose: () => void; children: ReactNode }) {
-  useEffect(() => {
-    if (!props.open) return;
-
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') props.onClose();
-    }
-
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [props.open, props.onClose]);
-
-  if (!props.open) return null;
-
-  return (
-    <>
-      <button className="goal-drawer-backdrop" aria-label={`Close ${props.label}`} onClick={props.onClose} />
-      <aside className="goals-editor-panel app-editor-drawer" aria-label={props.label}>
-        {props.children}
-      </aside>
-    </>
-  );
-}
-
-function VaporNavButton(props: { item: { label: string; kicker: string; icon: string }; isActive: boolean; onSelect: () => void }) {
-  return (
-    <button className={props.isActive ? 'vapor-nav-button active' : 'vapor-nav-button'} onClick={props.onSelect}>
-      <i className="nav-glyph" aria-hidden="true">{props.item.icon}</i>
-      <span className="nav-copy">
-        <small>{props.item.kicker}</small>
-        <strong>{props.item.label}</strong>
-      </span>
-    </button>
-  );
-}
-
-function GoalProgressRing(props: { value: number; color: string; label: string; size?: 'small' | 'large' }) {
-  const value = Math.max(0, Math.min(100, Number(props.value) || 0));
-  return <div className={`goal-progress-ring ${props.size ?? 'large'}`} style={{ '--ring-value': `${value * 3.6}deg`, '--ring-color': props.color } as React.CSSProperties} aria-label={`${props.label}: ${value}%`}>
-    <div><strong>{Math.round(value)}%</strong><span>{props.label}</span></div>
-  </div>;
-}
-
-function SummaryPill({ label, value }: { label: string; value: string | number }) {
-  return <div className="summary-pill"><span>{label}</span><strong>{value}</strong><i aria-hidden="true" /></div>;
-}
-
-function StatCard({ label, value }: { label: string; value: string | number }) {
-  return <div className="summary-card"><span>{label}</span><strong>{value}</strong></div>;
-}
-
-function EmptyState({ text }: { text: string }) {
-  return <p className="empty-state">{text}</p>;
-}
-
-function PaginationControls(props: { page: number; totalPages: number; totalItems: number; onPage: (page: number) => void }) {
-  if (props.totalPages <= 1) {
-    return null;
-  }
-
-  return (
-    <div className="pagination-bar">
-      <span>{props.totalItems} items · page {props.page} of {props.totalPages}</span>
-      <div className="button-row">
-        <button className="secondary-button" disabled={props.page <= 1} onClick={() => props.onPage(props.page - 1)}>Previous</button>
-        <button className="secondary-button" disabled={props.page >= props.totalPages} onClick={() => props.onPage(props.page + 1)}>Next</button>
-      </div>
-    </div>
-  );
 }
 
 function ValidationBox(props: { validation: BackupValidation; title?: string; detail?: string }) {
@@ -4927,22 +4681,6 @@ function PhysiqueDiagram({ entry, entries }: { entry?: PhysiqueEntry; entries: P
   );
 }
 
-function TextField(props: { label: string; value: string; onChange: (value: string) => void; required?: boolean }) {
-  return <label className="field"><span>{props.label}</span><input value={props.value} onChange={(event) => props.onChange(event.target.value)} required={props.required} /></label>;
-}
-
-function TextArea(props: { label: string; value: string; onChange: (value: string) => void }) {
-  return <label className="field full"><span>{props.label}</span><textarea value={props.value} onChange={(event) => props.onChange(event.target.value)} /></label>;
-}
-
-function NumberField(props: { label: string; value: number; onChange: (value: number) => void; step?: number | 'any'; min?: number; max?: number }) {
-  return <label className="field"><span>{props.label}</span><input type="number" inputMode={props.step && props.step !== 1 ? 'decimal' : 'numeric'} step={props.step ?? 1} min={props.min} max={props.max} value={props.value} onChange={(event) => props.onChange(Number(event.target.value))} /></label>;
-}
-
-function NumberOrBlankField(props: { label: string; value: string | number; onChange: (value: string) => void; step?: number | 'any'; min?: number; max?: number }) {
-  return <label className="field"><span>{props.label}</span><input type="number" inputMode={props.step && props.step !== 1 ? 'decimal' : 'numeric'} step={props.step ?? 1} min={props.min} max={props.max} value={props.value} onChange={(event) => props.onChange(event.target.value)} /></label>;
-}
-
 function SleepDurationInput(props: { value: string; onChange: (value: string) => void; className?: string }) {
   const hasValue = props.value.trim() !== '';
   const parts: { hours: number | ''; minutes: number | '' } = hasValue
@@ -4963,17 +4701,6 @@ function SleepDurationInput(props: { value: string; onChange: (value: string) =>
       <label><input aria-label="Sleep duration hours" type="number" inputMode="numeric" min="0" max="24" step="1" value={parts.hours} onChange={(event) => update(event.target.value === '' ? '' : Number(event.target.value), parts.minutes)} /><span>h</span></label>
       <label><input aria-label="Sleep duration minutes" type="number" inputMode="numeric" min="0" max="59" step="5" value={parts.minutes} onChange={(event) => update(parts.hours, event.target.value === '' ? '' : Number(event.target.value))} /><span>m</span></label>
     </div>
-  );
-}
-
-function SelectField(props: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }> }) {
-  return (
-    <label className="field">
-      <span>{props.label}</span>
-      <select value={props.value} onChange={(event) => props.onChange(event.target.value)}>
-        {props.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
-    </label>
   );
 }
 
@@ -5072,67 +4799,6 @@ function canCompleteActivity(activity: Activity) {
   if (activity.status === 'Skipped' || activity.status === 'Cancelled') return true;
   const activityDate = getActivityDate(activity);
   return !activityDate || startOfDay(new Date(activityDate)).getTime() <= startOfDay(new Date()).getTime();
-}
-
-function createWorkoutSet(source?: Pick<WorkoutSet, 'reps' | 'weightKg'>): WorkoutSet {
-  return {
-    id: `set-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    reps: source?.reps ?? 10,
-    weightKg: source?.weightKg ?? 0
-  };
-}
-
-function createExercise(): WorkoutExercise {
-  return {
-    id: `exercise-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    name: '',
-    muscle: 'Chest',
-    sets: [createWorkoutSet(), createWorkoutSet(), createWorkoutSet()]
-  };
-}
-
-function serializeWorkoutNotes(notes: string, exercises: WorkoutExercise[]) {
-  const clean = stripWorkoutNotes(notes).trim();
-  if (exercises.length === 0) return clean;
-  return `${clean}${clean ? '\n\n' : ''}${workoutMarker}${JSON.stringify(exercises)}`;
-}
-
-function stripWorkoutNotes(notes: string) {
-  const markerIndex = notes.indexOf(workoutMarker);
-  return (markerIndex >= 0 ? notes.slice(0, markerIndex) : notes).trim();
-}
-
-export function parseWorkoutExercises(notes: string): WorkoutExercise[] {
-  const markerIndex = notes.indexOf(workoutMarker);
-  if (markerIndex < 0) return [];
-  try {
-    const value = JSON.parse(notes.slice(markerIndex + workoutMarker.length));
-    if (!Array.isArray(value)) return [];
-    return value.flatMap((item): WorkoutExercise[] => {
-      if (!item || typeof item.name !== 'string' || typeof item.muscle !== 'string') return [];
-      const sets = Array.isArray(item.sets)
-        ? item.sets.filter((set: unknown) => set && typeof set === 'object').map((set: { id?: string; reps?: unknown; weightKg?: unknown }) => ({
-          id: set.id || createWorkoutSet().id,
-          reps: Math.max(1, Number(set.reps) || 1),
-          weightKg: Math.max(0, Number(set.weightKg) || 0)
-        }))
-        : Array.from({ length: Math.max(1, Number(item.sets) || 1) }, () => createWorkoutSet({
-          reps: Math.max(1, Number(item.reps) || 1),
-          weightKg: Math.max(0, Number(item.weightKg) || 0)
-        }));
-      return [{ id: item.id || createExercise().id, name: item.name, muscle: item.muscle, sets: sets.length ? sets : [createWorkoutSet()] }];
-    });
-  } catch {
-    return [];
-  }
-}
-
-function workoutExerciseVolume(exercise: WorkoutExercise) {
-  return exercise.sets.reduce((sum, set) => sum + set.reps * set.weightKg, 0);
-}
-
-function formatWorkoutSets(exercise: WorkoutExercise) {
-  return `${exercise.sets.length} ${exercise.sets.length === 1 ? 'set' : 'sets'} · ${exercise.sets.map((set) => `${set.reps} x ${roundNumber(set.weightKg)} kg`).join(' · ')}`;
 }
 
 function isDurationActivity(title: string) {
@@ -5236,10 +4902,6 @@ function getSparklineY(entries: MetricEntry[], value: number) {
   return 60 - ((value - min) / (max - min)) * 48;
 }
 
-function roundNumber(value: number) {
-  return Math.round(value * 10) / 10;
-}
-
 function getYearProgress(date: Date) {
   const year = date.getFullYear();
   const dayOfYear = Math.floor((Date.UTC(year, date.getMonth(), date.getDate()) - Date.UTC(year, 0, 1)) / 86400000) + 1;
@@ -5255,58 +4917,12 @@ function getYearProgress(date: Date) {
   };
 }
 
-function normalizeSleepHours(value: number) {
-  return Math.round(Math.max(0, Math.min(24, value)) * 60) / 60;
-}
-
-function splitSleepDuration(value: number) {
-  const totalMinutes = Math.round(normalizeSleepHours(value) * 60);
-  return { hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 };
-}
-
-function sleepHoursFromParts(hours: number, minutes: number) {
-  const safeHours = Math.max(0, Math.min(24, Math.trunc(hours || 0)));
-  const safeMinutes = Math.max(0, Math.min(59, Math.trunc(minutes || 0)));
-  return normalizeSleepHours(safeHours + safeMinutes / 60);
-}
-
-function formatSleepDuration(value: number) {
-  const sign = value < 0 ? '-' : '';
-  const totalMinutes = Math.round(Math.abs(value) * 60);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (minutes === 0) return `${sign}${hours}h`;
-  if (hours === 0) return `${sign}${minutes}m`;
-  return `${sign}${hours}h ${minutes}m`;
-}
-
-function assessSleepDuration(value: number) {
-  const minutes = Math.round(value * 60);
-  if (minutes >= 540) return { label: 'Long recovery night', tone: 'good', copy: 'This can be useful during recovery or after accumulated sleep debt; watch the weekly pattern.' };
-  if (minutes >= 480) return { label: 'Optimal target zone', tone: 'good', copy: 'You reached the 8-hour recovery target.' };
-  if (minutes >= 450) return { label: 'Close to target', tone: 'okay', copy: 'A solid night, slightly below the 8-hour target.' };
-  if (minutes >= 420) return { label: 'Minimum healthy range', tone: 'okay', copy: 'Seven or more hours meets the adult baseline, but leaves less recovery buffer than your 8-hour target.' };
-  if (minutes >= 360) return { label: 'Short night', tone: 'warning', copy: 'Below seven hours. Training quality, attention, appetite control, and mood may be less resilient.' };
-  return { label: 'Severe shortfall', tone: 'danger', copy: 'Prioritize recovery today and avoid turning this into a repeated pattern.' };
-}
-
 function isSleepMetric(metric: Metric) {
   return metric.name.toLowerCase().includes('sleep') && metric.unit.trim().toLowerCase() === 'h';
 }
 
 function formatMetricAxisValue(metric: Metric, value: number) {
   return isSleepMetric(metric) ? formatSleepDuration(value) : String(roundNumber(value));
-}
-
-function paginate<T>(items: T[], page: number, pageSize: number) {
-  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
-  const safePage = Math.min(Math.max(1, page), totalPages);
-  const start = (safePage - 1) * pageSize;
-
-  return {
-    items: items.slice(start, start + pageSize),
-    totalPages
-  };
 }
 
 function minutesToHours(minutes: number) {
@@ -5336,18 +4952,6 @@ function formatHour(hour: number) {
 
 function formatTime(value: string | undefined) {
   return value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Anytime';
-}
-
-function formatShortDate(value: string | undefined) {
-  return value ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Unscheduled';
-}
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(value);
 }
 
 function countdownProgress(countdown: Countdown, now = new Date()) {

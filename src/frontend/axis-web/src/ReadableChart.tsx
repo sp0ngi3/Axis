@@ -75,6 +75,7 @@ export function ReadableChart({
 
   return (
     <div className="readable-chart">
+      <div className="readable-chart-scroll">
       <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label={ariaLabel}>
         <defs>
           <linearGradient id="axis-chart-surface" x1="0" y1="0" x2="0" y2="1">
@@ -130,6 +131,7 @@ export function ReadableChart({
         ))}
         {hovered !== null && <line className="readable-chart-crosshair" x1={chart.x(hovered)} x2={chart.x(hovered)} y1={plot.top} y2={plot.bottom} />}
       </svg>
+      </div>
       <div className="readable-chart-legend" aria-label="Chart legend">
         {series.map((item) => <span key={item.key}><i style={{ background: item.color }} />{item.label}</span>)}
         {references.map((item) => <span key={item.label}><i className="reference" style={{ background: item.color ?? '#f5c451' }} />{item.label}</span>)}

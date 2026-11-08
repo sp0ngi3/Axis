@@ -43,7 +43,37 @@ export const pages: Array<{ id: Page; label: string; kicker: string; icon: strin
 ];
 
 export const primaryPageIds: Page[] = [
-  'today', 'log', 'focus', 'jobs', 'calendar', 'dashboard', 'goals', 'roadmaps', 'journal'
+  'today', 'log', 'dashboard', 'calendar', 'goals', 'journal'
+];
+
+export const mobilePageIds: Page[] = ['today', 'log', 'dashboard', 'calendar'];
+
+export const pageGroups: Array<{ label: string; description: string; pageIds: Page[] }> = [
+  {
+    label: 'Operate',
+    description: 'Act, capture and plan',
+    pageIds: ['today', 'log', 'focus', 'calendar', 'countdowns']
+  },
+  {
+    label: 'Understand',
+    description: 'See patterns and history',
+    pageIds: ['dashboard', 'metrics', 'physique', 'journal', 'history', 'reviews']
+  },
+  {
+    label: 'Build',
+    description: 'Shape outcomes and systems',
+    pageIds: ['goals', 'roadmaps', 'areas', 'templates']
+  },
+  {
+    label: 'Life',
+    description: 'Career, money and wisdom',
+    pageIds: ['jobs', 'money', 'lessons', 'wiki']
+  },
+  {
+    label: 'System',
+    description: 'Protect and maintain Axis',
+    pageIds: ['backup']
+  }
 ];
 
 export const loadLevels: LoadLevel[] = ['Low', 'Medium', 'High'];

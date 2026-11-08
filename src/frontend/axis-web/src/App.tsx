@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, Fragment, type CSSProperties, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, Fragment, type CSSProperties, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from './api';
 import {
@@ -15,7 +15,6 @@ import {
   milestoneStatuses,
   milestoneTypes,
   pages,
-  primaryPageIds,
   progressTypes,
   recurrenceFrequencies,
   weekDays,
@@ -37,9 +36,9 @@ import {
   StatCard,
   SummaryPill,
   TextArea,
-  TextField,
-  VaporNavButton
+  TextField
 } from './components/common';
+import { AppNavigation } from './components/AppNavigation';
 import { formatDateTime, formatMoney, formatShortDate, paginate, roundNumber } from './lib/format';
 import {
   assessSleepDuration,
@@ -174,6 +173,7 @@ export default function App() {
   const [feedbackId, setFeedbackId] = useState(0);
   const [actionPulse, setActionPulse] = useState<{ id: number; x: number; y: number; tone: 'confirm' | 'utility' | 'danger' | 'navigate' } | null>(null);
   const [logContext, setLogContext] = useState<LogContext>({});
+  const [navigationOpen, setNavigationOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.scrollTop = 0;
@@ -258,6 +258,17 @@ export default function App() {
     localStorage.setItem('axis-theme', theme);
   }, [theme]);
 
+  useEffect(() => {
+    function announceUpdate() {
+      setError('');
+      setNotice('A new Axis version is ready. Updating the app now…');
+      setFeedbackId((current) => current + 1);
+    }
+
+    window.addEventListener('axis:update-ready', announceUpdate);
+    return () => window.removeEventListener('axis:update-ready', announceUpdate);
+  }, []);
+
   async function runAction(action: () => Promise<unknown>, message: string) {
     setIsBusy(true);
     try {
@@ -280,7 +291,7 @@ export default function App() {
     if (!button || button.disabled) return;
     const tone = button.classList.contains('danger-button')
       ? 'danger'
-      : button.closest('.main-nav, .tool-nav')
+      : button.closest('.main-nav, .navigation-directory, .mobile-bottom-nav')
         ? 'navigate'
         : button.classList.contains('secondary-button') || button.classList.contains('ghost-button')
           ? 'utility'
@@ -380,53 +391,33 @@ export default function App() {
     setPage('log');
   }
 
+  function selectPage(nextPage: Page) {
+    if (nextPage === 'log') setLogContext({});
+    setPage(nextPage);
+    setNavigationOpen(false);
+  }
+
   const activePage = pages.find((item) => item.id === page) ?? pages[0];
 
   return (
     <div className={`app-shell page-${page} ${isBusy ? 'is-busy' : ''}`} onClickCapture={captureActionPulse}>
       {actionPulse && <div key={actionPulse.id} className={`action-burst ${actionPulse.tone}`} style={{ '--burst-x': `${actionPulse.x}px`, '--burst-y': `${actionPulse.y}px` } as CSSProperties} onAnimationEnd={(event) => event.currentTarget === event.target && setActionPulse((current) => current?.id === actionPulse.id ? null : current)} aria-hidden="true"><i /><i /><i /><b /></div>}
       {(notice || error) && <AppNotification key={`${feedbackId}-${error || notice}`} message={error || notice} isError={Boolean(error)} onDismiss={() => error ? setError('') : setNotice('')} />}
-      <aside className="app-sidebar">
-        <div className="brand-block">
-          <span className="brand-mark">AX</span>
-          <div className="brand-copy">
-            <p className="eyebrow">Neon local-first</p>
-            <h1>Axis</h1>
-            <span className="app-version"><i aria-hidden="true" />{appInfo ? `v${appInfo.version} · ${appInfo.runtime}` : 'Connecting...'}</span>
-          </div>
-        </div>
-
-        <nav className="main-nav" aria-label="Axis sections">
-          {pages.filter((item) => primaryPageIds.includes(item.id)).map((item) => (
-            <VaporNavButton key={item.id} item={item} isActive={page === item.id} onSelect={() => {
-              if (item.id === 'log') setLogContext({});
-              setPage(item.id);
-            }} />
-          ))}
-        </nav>
-
-        <details className="tool-drawer" open={!primaryPageIds.includes(page)}>
-          <summary>More tools</summary>
-          <div className="tool-nav">
-            {pages.filter((item) => !primaryPageIds.includes(item.id)).map((item) => (
-              <VaporNavButton key={item.id} item={item} isActive={page === item.id} onSelect={() => {
-                if (item.id === 'log') setLogContext({});
-                setPage(item.id);
-              }} />
-            ))}
-          </div>
-        </details>
-
-        <PwaInstallControl onNotice={(message) => {
+      <AppNavigation
+        activePage={page}
+        versionLabel={appInfo ? `v${appInfo.version} · ${appInfo.runtime}` : 'Connecting...'}
+        open={navigationOpen}
+        theme={theme}
+        onOpen={() => setNavigationOpen(true)}
+        onClose={() => setNavigationOpen(false)}
+        onSelect={selectPage}
+        onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        utilities={<PwaInstallControl onNotice={(message) => {
           setError('');
           setNotice(message);
           setFeedbackId((current) => current + 1);
-        }} />
-
-        <button className="ghost-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-          {theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
-        </button>
-      </aside>
+        }} />}
+      />
 
       <main className="app-main">
         <div className="page-ambient" aria-hidden="true"><span>{activePage.icon}</span><i /><b /></div>
@@ -4040,9 +4031,24 @@ function PwaInstallControl({ onNotice }: { onNotice: (message: string) => void }
   );
 }
 
-function AppNotification(props: { message: string; isError?: boolean; onDismiss?: () => void }) {
+export function AppNotification(props: { message: string; isError?: boolean; onDismiss?: () => void }) {
   const [isVisible, setIsVisible] = useState(true);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const onDismissRef = useRef(props.onDismiss);
+  const dismissAfter = props.isError ? 10000 : 4500;
+
+  useEffect(() => {
+    onDismissRef.current = props.onDismiss;
+  }, [props.onDismiss]);
+
+  useEffect(() => {
+    if (detailsOpen || !isVisible) return;
+    const timer = window.setTimeout(() => {
+      setIsVisible(false);
+      onDismissRef.current?.();
+    }, dismissAfter);
+    return () => window.clearTimeout(timer);
+  }, [detailsOpen, dismissAfter, isVisible]);
 
   if (!isVisible) return null;
 
@@ -4054,7 +4060,11 @@ function AppNotification(props: { message: string; isError?: boolean; onDismiss?
 
   return (
     <>
-      <div className={`app-toast ${props.isError ? 'error feedback-failure' : feedbackTone(props.message)}`} role={props.isError ? 'alert' : 'status'}>
+      <div
+        className={`app-toast ${props.isError ? 'error feedback-failure' : feedbackTone(props.message)}`}
+        role={props.isError ? 'alert' : 'status'}
+        style={{ '--toast-duration': `${dismissAfter}ms` } as CSSProperties}
+      >
         <span className="feedback-glyph" aria-hidden="true" />
         <div className="app-toast-copy">
           <strong>{props.isError ? 'Something went wrong' : 'Done'}</strong>

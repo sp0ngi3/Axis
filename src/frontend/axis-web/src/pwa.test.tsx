@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isStandaloneMode, usePwaInstall } from './pwa';
+import { fetchLatestBuildId, isStandaloneMode, usePwaInstall } from './pwa';
 
 afterEach(() => {
   cleanup();
@@ -9,6 +9,15 @@ afterEach(() => {
 });
 
 describe('Axis PWA installation', () => {
+  it('reads a fresh build identifier without using the browser cache', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ buildId: '2026-11-08T10:00:00.000Z' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchLatestBuildId()).resolves.toBe('2026-11-08T10:00:00.000Z');
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/^\/build\.json\?checked=\d+$/), { cache: 'no-store' });
+    vi.unstubAllGlobals();
+  });
+
   it('detects standalone display mode without assuming matchMedia exists', () => {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: undefined });

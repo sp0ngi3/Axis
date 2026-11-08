@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import App, { liveCountdownTiming, parseWorkoutExercises } from './App';
+import App, { AppNotification, liveCountdownTiming, parseWorkoutExercises } from './App';
 
 const area = {
   id: 'area-1',
@@ -324,7 +324,16 @@ function installFetchMock() {
 }
 
 async function openPage(name: RegExp) {
-  fireEvent.click(await screen.findByRole('button', { name }));
+  const directMatches = screen.queryAllByRole('button', { name });
+  const directNavigation = directMatches.find((button) => button.closest('.main-nav, .mobile-bottom-nav'));
+  if (directNavigation) {
+    fireEvent.click(directNavigation);
+    return;
+  }
+
+  fireEvent.click(screen.getAllByRole('button', { name: /all axis sections|all sections/i })[0]);
+  const directory = await screen.findByRole('dialog', { name: 'All Axis sections' });
+  fireEvent.click(within(directory).getByRole('button', { name }));
 }
 
 describe('Axis app integration workflows', () => {
@@ -338,7 +347,7 @@ describe('Axis app integration workflows', () => {
     expect(await screen.findByText('Learning wins this week')).toBeInTheDocument();
     expect(screen.getByText('Protect the best evening hours for interview preparation. Reduce optional training volume.')).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole('button', { name: /focus/i })[0]);
+    await openPage(/focus/i);
     expect(await screen.findByText('1 active focus notes')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'New focus note' }));
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Ship the important work' } });
@@ -462,7 +471,7 @@ describe('Axis app integration workflows', () => {
     expect(screen.getAllByText('No target comparison yet.').length).toBeGreaterThan(0);
     fireEvent.change(screen.getAllByPlaceholderText('Value')[0], { target: { value: '71.9' } });
     fireEvent.change(screen.getAllByPlaceholderText('Note')[0], { target: { value: 'logged from integration test' } });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Log' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Log' }).find((button) => !button.closest('nav'))!);
     await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/metrics/metric-1/entries' && call.body?.includes('71.9'))).toBe(true));
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[0]);
@@ -658,6 +667,16 @@ describe('Axis app integration workflows', () => {
     expect(screen.queryByText(fullError)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(screen.getByText(fullError)).toBeInTheDocument();
+  });
+
+  it('automatically dismisses success notifications', () => {
+    vi.useFakeTimers();
+    render(<AppNotification message="Saved safely." />);
+    expect(screen.getByText('Saved safely.')).toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(4500));
+
+    expect(screen.queryByText('Saved safely.')).not.toBeInTheDocument();
   });
 
   it('shows calendar-accurate year progress in the journal', async () => {

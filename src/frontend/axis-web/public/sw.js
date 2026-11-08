@@ -1,5 +1,5 @@
-const SHELL_CACHE = 'axis-shell-v2';
-const RUNTIME_CACHE = 'axis-runtime-v2';
+const SHELL_CACHE = 'axis-shell-v3';
+const RUNTIME_CACHE = 'axis-runtime-v3';
 const APP_SHELL = [
   '/offline.html',
   '/manifest.webmanifest',
@@ -46,6 +46,11 @@ self.addEventListener('fetch', (event) => {
 
   // Axis records must always go directly to the API and SQLite. Never cache API reads or writes.
   if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  if (url.pathname === '/build.json') {
+    event.respondWith(fetch(request, { cache: 'no-store' }));
     return;
   }
 

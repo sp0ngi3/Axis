@@ -9,6 +9,10 @@ services:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__Axis: Data Source=/data/axis.db
       Backup__Directory: /backups
+      Backup__Daily__Enabled: "true"
+      Backup__Daily__RetentionCount: "3"
+      Backup__Daily__RunAtLocalTime: "03:00"
+      Backup__Daily__TimeZoneId: Europe/Berlin
       SeedData: "false"
       App__Runtime: Docker
       Cors__AllowedOrigins__0: http://localhost:3001

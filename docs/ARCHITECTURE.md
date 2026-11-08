@@ -6,6 +6,7 @@ Axis is a local-first application. The React interface and the .NET API are two 
 
 - `data/axis.db` is the source of truth.
 - Backup files are owned by `AxisBackupService` and remain compatible across the Docker and Windows runtimes.
+- Docker's hosted daily-backup worker creates one validated `axis-daily-YYYYMMDD.zip` snapshot per Berlin calendar day and retains the newest three without pruning manual exports or pre-upgrade safety backups.
 - Startup compatibility work belongs in `DatabaseStartupExtensions`. It must be additive and safe to run more than once.
 - Starter data is optional. It must never be required to open an existing database.
 - Refactors should not rename JSON fields, API routes, database columns, or backup properties unless a migration and compatibility reader are included.

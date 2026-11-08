@@ -1,0 +1,92 @@
+name: axis-hosted
+
+services:
+  axis-api:
+    build:
+      context: .
+      dockerfile: src/backend/Axis.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Axis: Data Source=/data/axis.db
+      Backup__Directory: /backups
+      Backup__Daily__Enabled: "true"
+      Backup__Daily__RetentionCount: "3"
+      Backup__Daily__RunAtLocalTime: "03:00"
+      Backup__Daily__TimeZoneId: Europe/Berlin
+      SeedData: "false"
+      App__Runtime: Hosted
+      Cors__AllowedOrigins__0: https://life.kamilstudzinski.dev
+    volumes:
+      - type: bind
+        source: /srv/axis/data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/axis/backups
+        target: /backups
+        bind:
+          create_host_path: false
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "dotnet", "Axis.Api.dll", "--healthcheck", "http://127.0.0.1:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 60
+    restart: unless-stopped
+
+  axis-web:
+    build:
+      context: ./src/frontend/axis-web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: same-origin
+    networks: [edge, backend]
+    depends_on:
+      axis-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  axis-tunnel:
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    configs:
+      - source: cloudflared
+        target: /etc/cloudflared/config.yml
+    volumes:
+      - type: bind
+        source: /etc/axis/credentials.json
+        target: /etc/cloudflared/credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [edge, outbound]
+    depends_on: [axis-web]
+    restart: unless-stopped
+
+networks:
+  edge:
+    internal: true
+  backend:
+    internal: true
+  outbound: {}
+
+configs:
+  # Values come from /etc/axis/hosted.env. The credentials JSON and environment
+  # file stay outside Git.
+  cloudflared:
+    content: |
+      tunnel: ${AXIS_TUNNEL_UUID:?Set AXIS_TUNNEL_UUID in /etc/axis/hosted.env}
+      credentials-file: /etc/cloudflared/credentials.json
+      ingress:
+        - hostname: life.kamilstudzinski.dev
+          service: http://axis-web:80
+          originRequest:
+            access:
+              required: true
+              teamName: ${CLOUDFLARE_TEAM_NAME:?Set CLOUDFLARE_TEAM_NAME in /etc/axis/hosted.env}
+              audTag:
+                - ${AXIS_ACCESS_AUD:?Set AXIS_ACCESS_AUD in /etc/axis/hosted.env}
+        - service: http_status:404

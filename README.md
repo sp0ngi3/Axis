@@ -74,6 +74,10 @@ The PWA caches only the application shell. `/api` requests, records, backups, an
 
 Starter data is opt-in. Current Docker and desktop configurations keep `SeedData` disabled.
 
+Docker creates one validated automatic backup every day at 03:00 in the `Europe/Berlin` time zone. If the container starts after 03:00 and today's snapshot is missing, it creates the snapshot immediately. Files use the `axis-daily-YYYYMMDD.zip` name and only the three newest daily snapshots are retained. Manual `axis-backup-*` exports and `axis-safety-before-*` upgrade backups are separate and are never removed by the daily rotation.
+
 The running version and runtime are always visible next to the Axis logo. Before a desktop release initializes an existing database for the first time, it creates a validated safety backup in `%USERPROFILE%\Documents\Axis\Backups`. Docker waits for the API health check before starting the frontend.
 
 For the code layout and compatibility rules, see [Architecture](docs/ARCHITECTURE.md).
+
+For the private VPS deployment behind Cloudflare Access at `life.kamilstudzinski.dev`, see [Hosted deployment](docs/hosted-deployment.md).

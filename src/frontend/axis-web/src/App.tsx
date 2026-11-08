@@ -4175,6 +4175,9 @@ function BackupPage({ onReload }: { onReload: () => Promise<void> }) {
           <div><dt>Database</dt><dd>{status?.databasePath ?? 'Loading...'}</dd></div>
           <div><dt>Backup directory</dt><dd>{status?.backupDirectory ?? 'Loading...'}</dd></div>
           <div><dt>Status</dt><dd>{status?.databaseExists ? 'Ready' : 'Missing'}</dd></div>
+          <div><dt>Automatic daily backup</dt><dd>{status?.dailyBackup ? status.dailyBackup.enabled ? `Enabled · ${status.dailyBackup.runAtLocalTime} ${status.dailyBackup.timeZoneId}` : 'Disabled in this runtime' : 'Loading...'}</dd></div>
+          <div><dt>Daily retention</dt><dd>{status?.dailyBackup ? `${status.dailyBackup.retentionCount} validated snapshots` : 'Loading...'}</dd></div>
+          <div><dt>Latest daily snapshot</dt><dd>{status?.dailyBackup?.latestBackup ?? 'Not created yet'}</dd></div>
         </dl>
       </section>
 

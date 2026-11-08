@@ -406,6 +406,13 @@ export interface BackupStatus {
   databasePath: string;
   backupDirectory: string;
   recentBackups: string[];
+  dailyBackup?: {
+    enabled: boolean;
+    retentionCount: number;
+    runAtLocalTime: string;
+    timeZoneId: string;
+    latestBackup: string | null;
+  };
 }
 
 export interface AppInfo {

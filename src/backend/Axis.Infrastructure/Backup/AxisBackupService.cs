@@ -19,14 +19,27 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
         Directory.CreateDirectory(backupDirectory);
 
         var recentBackups = Directory
-            .EnumerateFiles(backupDirectory, "axis-backup-*.zip")
+            .EnumerateFiles(backupDirectory, "axis-*.zip")
             .OrderByDescending(File.GetLastWriteTimeUtc)
-            .Take(5)
+            .Take(10)
             .Select(Path.GetFileName)
             .OfType<string>()
             .ToList();
 
-        return Task.FromResult(new BackupStatus(File.Exists(databasePath), databasePath, backupDirectory, recentBackups));
+        var latestDailyBackup = Directory
+            .EnumerateFiles(backupDirectory, "axis-daily-*.zip")
+            .OrderByDescending(Path.GetFileName)
+            .Select(Path.GetFileName)
+            .FirstOrDefault();
+
+        var dailyBackup = new DailyBackupStatus(
+            bool.TryParse(configuration["Backup:Daily:Enabled"], out var dailyEnabled) && dailyEnabled,
+            GetDailyRetentionCount(),
+            configuration["Backup:Daily:RunAtLocalTime"] ?? "03:00",
+            configuration["Backup:Daily:TimeZoneId"] ?? "Europe/Berlin",
+            latestDailyBackup);
+
+        return Task.FromResult(new BackupStatus(File.Exists(databasePath), databasePath, backupDirectory, recentBackups, dailyBackup));
     }
 
     public async Task<BackupExportResult> ExportAsync(CancellationToken cancellationToken = default)
@@ -58,6 +71,27 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
 
         var result = await CreateBackupArchiveAsync(fileName, appVersion, DateTimeOffset.UtcNow, cancellationToken);
         PrunePreUpgradeBackups(keepCount: 5);
+        return result;
+    }
+
+    public async Task<BackupExportResult> CreateDailyBackupAsync(DateOnly backupDate, CancellationToken cancellationToken = default)
+    {
+        var fileName = $"axis-daily-{backupDate:yyyyMMdd}.zip";
+        var fullPath = Path.Combine(GetBackupDirectory(), fileName);
+
+        if (File.Exists(fullPath))
+        {
+            await using var existingBackup = File.OpenRead(fullPath);
+            var validation = await ValidateAsync(existingBackup, cancellationToken);
+            if (validation.IsValid)
+            {
+                PruneDailyBackups(GetDailyRetentionCount());
+                return new BackupExportResult(fileName, fullPath, File.GetLastWriteTimeUtc(fullPath));
+            }
+        }
+
+        var result = await CreateBackupArchiveAsync(fileName, GetAppVersion(), DateTimeOffset.UtcNow, cancellationToken);
+        PruneDailyBackups(GetDailyRetentionCount());
         return result;
     }
 
@@ -369,6 +403,22 @@ public sealed class AxisBackupService(IConfiguration configuration) : IAxisBacku
     {
         foreach (var path in Directory.EnumerateFiles(GetBackupDirectory(), "axis-safety-before-*.zip")
                      .OrderByDescending(File.GetLastWriteTimeUtc)
+                     .Skip(keepCount))
+        {
+            File.Delete(path);
+        }
+    }
+
+    private int GetDailyRetentionCount()
+    {
+        var configured = int.TryParse(configuration["Backup:Daily:RetentionCount"], out var value) ? value : 3;
+        return Math.Clamp(configured, 1, 365);
+    }
+
+    private void PruneDailyBackups(int keepCount)
+    {
+        foreach (var path in Directory.EnumerateFiles(GetBackupDirectory(), "axis-daily-*.zip")
+                     .OrderByDescending(Path.GetFileName)
                      .Skip(keepCount))
         {
             File.Delete(path);

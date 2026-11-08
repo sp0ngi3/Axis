@@ -51,6 +51,80 @@ public sealed class ActivityApiIntegrationTests
     }
 
     [Fact]
+    public async Task Daily_backups_are_valid_idempotent_and_keep_only_the_latest_three()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+        await AssertStatusAsync(await client.GetAsync("/api/health"), HttpStatusCode.OK);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var backups = scope.ServiceProvider.GetRequiredService<IAxisBackupService>();
+        var manualBackup = await backups.ExportAsync();
+        var safetyBackup = await backups.CreatePreUpgradeBackupAsync("daily-retention-test");
+
+        var dates = new[]
+        {
+            new DateOnly(2026, 1, 1),
+            new DateOnly(2026, 1, 2),
+            new DateOnly(2026, 1, 3),
+            new DateOnly(2026, 1, 4)
+        };
+
+        foreach (var date in dates)
+        {
+            await backups.CreateDailyBackupAsync(date);
+        }
+
+        var repeated = await backups.CreateDailyBackupAsync(dates[^1]);
+        var dailyFiles = Directory.EnumerateFiles(factory.BackupDirectory, "axis-daily-*.zip")
+            .OrderBy(Path.GetFileName)
+            .ToArray();
+
+        Assert.Equal(3, dailyFiles.Length);
+        Assert.Equal(
+            ["axis-daily-20260102.zip", "axis-daily-20260103.zip", "axis-daily-20260104.zip"],
+            dailyFiles.Select(Path.GetFileName));
+        Assert.Equal("axis-daily-20260104.zip", repeated.FileName);
+        Assert.True(File.Exists(manualBackup.FullPath));
+        Assert.NotNull(safetyBackup);
+        Assert.True(File.Exists(safetyBackup.FullPath));
+
+        foreach (var path in dailyFiles)
+        {
+            await using var stream = File.OpenRead(path);
+            var validation = await backups.ValidateAsync(stream);
+            Assert.True(validation.IsValid, validation.Message);
+        }
+
+        var status = await backups.GetStatusAsync();
+        Assert.Equal("axis-daily-20260104.zip", status.DailyBackup.LatestBackup);
+        Assert.Equal(3, status.DailyBackup.RetentionCount);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task Enabled_daily_backup_worker_creates_the_due_snapshot()
+    {
+        await using var factory = new AxisApiFactory(seedData: false, dailyBackups: true);
+        using var client = factory.CreateClient();
+        await AssertStatusAsync(await client.GetAsync("/api/health"), HttpStatusCode.OK);
+
+        var expectedPath = Path.Combine(factory.BackupDirectory, $"axis-daily-{DateTime.UtcNow:yyyyMMdd}.zip");
+        for (var attempt = 0; attempt < 50 && !File.Exists(expectedPath); attempt++)
+        {
+            await Task.Delay(100);
+        }
+
+        Assert.True(File.Exists(expectedPath), "The enabled daily-backup worker did not create today's due snapshot.");
+        await using var scope = factory.Services.CreateAsyncScope();
+        var backups = scope.ServiceProvider.GetRequiredService<IAxisBackupService>();
+        await using var stream = File.OpenRead(expectedPath);
+        var validation = await backups.ValidateAsync(stream);
+        Assert.True(validation.IsValid, validation.Message);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
     public async Task Corrupt_database_inside_backup_is_rejected_without_changing_current_data()
     {
         await using var factory = new AxisApiFactory(seedData: false);
@@ -1184,10 +1258,12 @@ public sealed class ActivityApiIntegrationTests
     private sealed class AxisApiFactory : WebApplicationFactory<Program>, IAsyncDisposable
     {
         private readonly bool _seedData;
+        private readonly bool _dailyBackups;
 
-        public AxisApiFactory(bool seedData = true)
+        public AxisApiFactory(bool seedData = true, bool dailyBackups = false)
         {
             _seedData = seedData;
+            _dailyBackups = dailyBackups;
         }
 
         public string DatabasePath { get; } = Path.Combine(Path.GetTempPath(), $"axis-integration-{Guid.NewGuid():N}.db");
@@ -1207,6 +1283,10 @@ public sealed class ActivityApiIntegrationTests
             builder.UseSetting("ConnectionStrings:Axis", connectionString);
             builder.UseSetting("SeedData", _seedData.ToString());
             builder.UseSetting("Backup:Directory", BackupDirectory);
+            builder.UseSetting("Backup:Daily:Enabled", _dailyBackups.ToString());
+            builder.UseSetting("Backup:Daily:RetentionCount", "3");
+            builder.UseSetting("Backup:Daily:RunAtLocalTime", "00:00");
+            builder.UseSetting("Backup:Daily:TimeZoneId", "UTC");
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<AxisDbContext>();

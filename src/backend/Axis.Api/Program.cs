@@ -30,6 +30,7 @@ builder.Services.Configure<FormOptions>(options =>
 });
 
 builder.Services.AddHostedService<RecurringActivityRefreshService>();
+builder.Services.AddHostedService<DailyBackupHostedService>();
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();

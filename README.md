@@ -56,6 +56,17 @@ Generated artifacts:
 
 The installed application uses the same React UI and API without Docker. It runs in an Edge application window, keeps the server in the Windows notification area, and requires no package download at runtime. See [Windows desktop documentation](docs/windows-desktop.md) for data locations, first-run import, offline builds, and update instructions.
 
+## Phone and tablet app (PWA)
+
+Axis can be installed from a browser as a Progressive Web App. Use the `Install Axis` control at the bottom of the navigation panel:
+
+- Android, Windows, and supported tablets: open Axis in Chrome or Edge and choose `Install app` or `Add to Home screen`.
+- iPhone and iPad: open Axis in Safari, tap `Share`, then `Add to Home Screen`.
+
+Mobile installation requires an HTTPS address (browsers allow plain HTTP only for `localhost`). When opening Axis from another device, use the secure network address of the computer hosting Axis rather than `localhost`. That computer and the Axis API must remain running while records are read or changed.
+
+The PWA caches only the application shell. `/api` requests, records, backups, and the SQLite database are explicitly excluded from browser caches. Installing or removing the home-screen app therefore cannot replace or delete the existing database.
+
 ## Local Data
 
 - SQLite database: `data/axis.db`

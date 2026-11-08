@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#10071f" />
+    <title>Axis is offline</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #10071f; color: #fff7ff; }
+      * { box-sizing: border-box; }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 20% 10%, #35205e 0, transparent 38%), linear-gradient(145deg, #10071f, #101d3c); }
+      main { width: min(520px, 100%); padding: 28px; border: 1px solid #35bdd2; background: rgba(20, 10, 43, .9); box-shadow: 0 18px 60px rgba(0, 0, 0, .35); }
+      img { width: 68px; height: 68px; border-radius: 14px; }
+      p:first-of-type { color: #35bdd2; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .12em; }
+      h1 { margin: 8px 0 12px; font-size: clamp(28px, 8vw, 46px); }
+      p { color: #c6b9d8; line-height: 1.6; }
+      button { width: 100%; min-height: 46px; margin-top: 12px; border: 1px solid #35bdd2; background: linear-gradient(90deg, #7c3aed, #35bdd2); color: white; font-weight: 850; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/icons/axis-192.png" alt="" />
+      <p>Neon local-first</p>
+      <h1>Axis is waiting for your host.</h1>
+      <p>The interface is available, but the computer running the Axis API cannot be reached. Your database has not been changed or deleted. Reconnect to the same network and make sure Axis is running on the host computer.</p>
+      <button type="button" onclick="location.reload()">Try again</button>
+    </main>
+  </body>
+</html>

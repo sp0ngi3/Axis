@@ -195,6 +195,34 @@ const focusNote = {
   updatedAt: '2026-09-25T08:00:00.000Z'
 };
 
+const roadmap = {
+  id: 'roadmap-1',
+  title: 'Axis release route',
+  description: 'Move from implementation to a stable release.',
+  color: '#7f6cff',
+  layoutDirection: 'Vertical',
+  isArchived: false,
+  completedItems: 0,
+  totalItems: 1,
+  createdAt: '2026-09-25T08:00:00.000Z',
+  updatedAt: '2026-09-25T08:00:00.000Z',
+  items: [{
+    id: 'roadmap-item-1',
+    roadmapId: 'roadmap-1',
+    goalId: goal.id,
+    goalTitle: goal.title,
+    goalStatus: goal.status,
+    title: 'Finish the quality pass',
+    description: 'Use the linked Goal as the source of truth.',
+    status: 'InProgress',
+    targetDate: '2026-10-01',
+    sortOrder: 0,
+    dependencyIds: [],
+    createdAt: '2026-09-25T08:00:00.000Z',
+    updatedAt: '2026-09-25T08:00:00.000Z'
+  }]
+};
+
 type FetchCall = { method: string; path: string; body?: string };
 
 const calls: FetchCall[] = [];
@@ -252,6 +280,8 @@ function installFetchMock() {
         return jsonResponse([focusNote]);
       case '/api/job-applications':
         return jsonResponse([]);
+      case '/api/roadmaps':
+        return jsonResponse([roadmap]);
       case '/api/mood':
       case '/api/diary':
       case '/api/countdowns':
@@ -337,6 +367,34 @@ describe('Axis app integration workflows', () => {
       expect(call?.body).toContain(`"milestoneId":"${goal.milestones[0].id}"`);
       expect(call?.body).toContain('[progress:4]');
     });
+  });
+
+  it('builds roadmaps from independent checkpoints and live goal milestones', async () => {
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Today' });
+
+    await openPage(/roadmaps/i);
+    expect(await screen.findByRole('heading', { name: 'Axis release route' })).toBeInTheDocument();
+    expect(screen.getByText('QA flow')).toBeInTheDocument();
+    expect(screen.getByText('Milestones 0/1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'New roadmap' }));
+    fireEvent.change(screen.getByLabelText('Roadmap title'), { target: { value: 'Career transition' } });
+    fireEvent.change(screen.getByLabelText('Description and destination'), { target: { value: 'Reach the next role.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save roadmap' }));
+
+    await waitFor(() => expect(calls.some((item) => (
+      item.method === 'POST'
+      && item.path === '/api/roadmaps'
+      && item.body?.includes('Career transition')
+    ))).toBe(true));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Complete' }));
+    await waitFor(() => expect(calls.some((item) => (
+      item.method === 'PUT'
+      && item.path === '/api/roadmap-items/roadmap-item-1'
+      && item.body?.includes('Completed')
+    ))).toBe(true));
   });
 
   it('moves the countdown and its mirrored past date together as time advances', () => {

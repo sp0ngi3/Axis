@@ -285,6 +285,39 @@ export interface WishlistItem {
   id: string; name: string; description: string; price: number; priority: number; isPurchased: boolean; purchasedAt?: string | null; createdAt: string;
 }
 
+export type RoadmapItemStatus = 'Planned' | 'InProgress' | 'Completed' | 'Skipped';
+export type RoadmapLayoutDirection = 'Vertical' | 'Horizontal';
+
+export interface RoadmapItem {
+  id: string;
+  roadmapId: string;
+  goalId?: string | null;
+  goalTitle?: string | null;
+  goalStatus?: GoalStatus | null;
+  title: string;
+  description: string;
+  status: RoadmapItemStatus;
+  targetDate?: string | null;
+  sortOrder: number;
+  dependencyIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Roadmap {
+  id: string;
+  title: string;
+  description: string;
+  color: string;
+  layoutDirection: RoadmapLayoutDirection;
+  isArchived: boolean;
+  items: RoadmapItem[];
+  completedItems: number;
+  totalItems: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface HistoryDay {
   date: string;
   timeline: Array<{ at: string; kind: string; title: string; detail: string }>;

@@ -41,6 +41,12 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
 
     public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
 
+    public DbSet<Roadmap> Roadmaps => Set<Roadmap>();
+
+    public DbSet<RoadmapItem> RoadmapItems => Set<RoadmapItem>();
+
+    public DbSet<RoadmapConnection> RoadmapConnections => Set<RoadmapConnection>();
+
     public DbSet<WikiPage> WikiPages => Set<WikiPage>();
 
     public DbSet<Review> Reviews => Set<Review>();
@@ -71,6 +77,7 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
         ConfigureFocusNotes(modelBuilder);
         ConfigureJobApplications(modelBuilder);
         ConfigureMoney(modelBuilder);
+        ConfigureRoadmaps(modelBuilder);
         ConfigureWikiPages(modelBuilder);
         ConfigureReviews(modelBuilder);
         ConfigureRecurrenceRules(modelBuilder);
@@ -270,6 +277,54 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
             entity.Property(item => item.Description).HasMaxLength(2000);
             entity.HasIndex(item => item.IsPurchased);
             entity.HasIndex(item => item.Priority);
+        });
+    }
+
+    private static void ConfigureRoadmaps(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Roadmap>(entity =>
+        {
+            entity.Property(roadmap => roadmap.Title).HasMaxLength(200).IsRequired();
+            entity.Property(roadmap => roadmap.Description).HasMaxLength(4000);
+            entity.Property(roadmap => roadmap.Color).HasMaxLength(24).IsRequired();
+            entity.Property(roadmap => roadmap.LayoutDirection).HasMaxLength(24).IsRequired();
+            entity.HasIndex(roadmap => roadmap.IsArchived);
+            entity.HasIndex(roadmap => roadmap.UpdatedAt);
+        });
+
+        modelBuilder.Entity<RoadmapItem>(entity =>
+        {
+            entity.Property(item => item.Title).HasMaxLength(240).IsRequired();
+            entity.Property(item => item.Description).HasMaxLength(4000);
+            entity.Property(item => item.Status).HasConversion<string>().HasMaxLength(40);
+            entity.HasIndex(item => new { item.RoadmapId, item.SortOrder });
+            entity.HasIndex(item => item.GoalId);
+            entity.HasOne(item => item.Roadmap)
+                .WithMany(roadmap => roadmap.Items)
+                .HasForeignKey(item => item.RoadmapId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.Goal)
+                .WithMany()
+                .HasForeignKey(item => item.GoalId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<RoadmapConnection>(entity =>
+        {
+            entity.HasIndex(connection => new { connection.SourceItemId, connection.TargetItemId }).IsUnique();
+            entity.HasIndex(connection => connection.RoadmapId);
+            entity.HasOne(connection => connection.Roadmap)
+                .WithMany(roadmap => roadmap.Connections)
+                .HasForeignKey(connection => connection.RoadmapId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<RoadmapItem>()
+                .WithMany()
+                .HasForeignKey(connection => connection.SourceItemId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<RoadmapItem>()
+                .WithMany()
+                .HasForeignKey(connection => connection.TargetItemId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 

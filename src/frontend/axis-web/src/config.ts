@@ -15,7 +15,7 @@ import type {
 
 export type Page = 'today' | 'log' | 'focus' | 'jobs' | 'dashboard' | 'calendar'
   | 'countdowns' | 'physique' | 'journal' | 'history' | 'lessons' | 'money'
-  | 'goals' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
+  | 'goals' | 'roadmaps' | 'areas' | 'templates' | 'metrics' | 'wiki' | 'reviews' | 'backup';
 
 export type CalendarView = 'day' | 'week' | 'month';
 
@@ -33,6 +33,7 @@ export const pages: Array<{ id: Page; label: string; kicker: string; icon: strin
   { id: 'lessons', label: 'Life Lessons', kicker: 'Wisdom', icon: '**' },
   { id: 'money', label: 'Money', kicker: 'Capital', icon: '$$' },
   { id: 'goals', label: 'Goals', kicker: 'Outcomes', icon: '<>' },
+  { id: 'roadmaps', label: 'Roadmaps', kicker: 'Navigate', icon: '/~' },
   { id: 'areas', label: 'Life Areas', kicker: 'Balance', icon: '##' },
   { id: 'templates', label: 'Templates', kicker: 'Repeat', icon: '~~' },
   { id: 'metrics', label: 'Metrics', kicker: 'Signals', icon: '%%' },
@@ -42,7 +43,7 @@ export const pages: Array<{ id: Page; label: string; kicker: string; icon: strin
 ];
 
 export const primaryPageIds: Page[] = [
-  'today', 'log', 'focus', 'jobs', 'calendar', 'dashboard', 'goals', 'journal'
+  'today', 'log', 'focus', 'jobs', 'calendar', 'dashboard', 'goals', 'roadmaps', 'journal'
 ];
 
 export const loadLevels: LoadLevel[] = ['Low', 'Medium', 'High'];

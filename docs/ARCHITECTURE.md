@@ -25,6 +25,7 @@ The current extracted modules are:
 
 - `PersonalEndpoints` for focus notes, life lessons, savings, and wishlist routes.
 - `CountdownEndpoints` for countdown queries, commands, and dynamic elapsed/remaining values.
+- `RoadmapEndpoints` for roadmap/node CRUD, optional Goal links, graph dependencies, cycle prevention, and vertical/horizontal layout persistence. `RoadmapConnections` stores directed edges separately so branching and merging do not duplicate node data. Existing linear roadmap rows are upgraded once into an ordered chain.
 - `DiaryDocumentWriter` for DOCX package generation.
 - `SignalMetricBackfill` for startup conversion of historical mood and activity data into metrics.
 
@@ -39,6 +40,7 @@ The current extracted modules are:
 - `lib/sleep.ts` contains sleep duration conversion and guidance.
 - `lib/workouts.ts` contains workout serialization, including support for the older exercise format already stored in databases.
 - `signals.ts` contains dashboard track calculations.
+- `pages/RoadmapsPage.tsx` renders the responsive graph roadmap builder with zoom, curved SVG connections, branch/merge editing, and down/right layout modes. `lib/roadmapLayout.ts` owns deterministic graph layering. Linked Goal milestones are read from the existing Goals state rather than duplicated.
 
 Page components receive data and callbacks through explicit props. They do not call the API directly, which keeps refresh behavior and error handling centralized in `App.tsx`.
 

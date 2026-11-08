@@ -170,6 +170,291 @@ public sealed class ActivityApiIntegrationTests
     }
 
     [Fact]
+    public async Task Roadmaps_track_ordered_steps_linked_goals_and_backup_round_trips()
+    {
+        await using var factory = new AxisApiFactory();
+        using var client = factory.CreateClient();
+
+        using var goals = JsonDocument.Parse(await client.GetStringAsync("/api/goals"));
+        var goal = goals.RootElement.EnumerateArray().First();
+        var goalId = goal.GetProperty("id").GetGuid();
+        var goalTitle = goal.GetProperty("title").GetString();
+
+        var created = await client.PostAsJsonAsync("/api/roadmaps", new
+        {
+            title = "Career transition",
+            description = "From preparation to accepted offer.",
+            color = "#7f6cff",
+            isArchived = false
+        });
+        await AssertStatusAsync(created, HttpStatusCode.Created);
+        using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var roadmapId = createdJson.RootElement.GetProperty("id").GetGuid();
+
+        var independent = await client.PostAsJsonAsync($"/api/roadmaps/{roadmapId}/items", new
+        {
+            goalId = (Guid?)null,
+            title = "Choose target companies",
+            description = "Create a focused shortlist.",
+            status = "Planned",
+            targetDate = (DateOnly?)null,
+            sortOrder = (int?)null
+        });
+        await AssertStatusAsync(independent, HttpStatusCode.Created);
+
+        var linked = await client.PostAsJsonAsync($"/api/roadmaps/{roadmapId}/items", new
+        {
+            goalId,
+            title = "Complete interview preparation",
+            description = "Follow the linked Goal and its milestones.",
+            status = "InProgress",
+            targetDate = new DateOnly(2026, 12, 1),
+            sortOrder = (int?)null
+        });
+        await AssertStatusAsync(linked, HttpStatusCode.Created);
+        using var linkedJson = JsonDocument.Parse(await linked.Content.ReadAsStringAsync());
+        var linkedItemId = linkedJson.RootElement.GetProperty("id").GetGuid();
+        Assert.Equal(goalTitle, linkedJson.RootElement.GetProperty("goalTitle").GetString());
+
+        await AssertStatusAsync(await client.PostAsJsonAsync($"/api/roadmap-items/{linkedItemId}/move", new { direction = -1 }), HttpStatusCode.NoContent);
+        await AssertStatusAsync(await client.PutAsJsonAsync($"/api/roadmap-items/{linkedItemId}", new
+        {
+            goalId,
+            title = "Complete interview preparation",
+            description = "The linked Goal remains the source of truth.",
+            status = "Completed",
+            targetDate = new DateOnly(2026, 12, 1),
+            sortOrder = 0
+        }), HttpStatusCode.OK);
+
+        using (var current = JsonDocument.Parse(await client.GetStringAsync("/api/roadmaps?includeArchived=true")))
+        {
+            var roadmap = current.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == roadmapId);
+            Assert.Equal(2, roadmap.GetProperty("totalItems").GetInt32());
+            Assert.Equal(1, roadmap.GetProperty("completedItems").GetInt32());
+            var firstStep = roadmap.GetProperty("items").EnumerateArray().First();
+            Assert.Equal(linkedItemId, firstStep.GetProperty("id").GetGuid());
+            Assert.Equal(goalTitle, firstStep.GetProperty("goalTitle").GetString());
+        }
+
+        var backupResponse = await client.GetAsync("/api/backup/export");
+        await AssertStatusAsync(backupResponse, HttpStatusCode.OK);
+        var backupBytes = await backupResponse.Content.ReadAsByteArrayAsync();
+        await AssertStatusAsync(await client.DeleteAsync($"/api/roadmaps/{roadmapId}"), HttpStatusCode.NoContent);
+
+        using var form = new MultipartFormDataContent();
+        using var backupContent = new ByteArrayContent(backupBytes);
+        backupContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        form.Add(backupContent, "file", "axis-roadmaps.zip");
+        await AssertStatusAsync(await client.PostAsync("/api/backup/import", form), HttpStatusCode.OK);
+
+        using var restored = JsonDocument.Parse(await client.GetStringAsync("/api/roadmaps?includeArchived=true"));
+        var restoredRoadmap = restored.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == roadmapId);
+        var restoredLinkedItem = restoredRoadmap.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == linkedItemId);
+        Assert.Equal("Completed", restoredLinkedItem.GetProperty("status").GetString());
+        Assert.Equal(goalId, restoredLinkedItem.GetProperty("goalId").GetGuid());
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task Roadmaps_support_branches_merges_layout_direction_and_reject_cycles()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+
+        var created = await client.PostAsJsonAsync("/api/roadmaps", new
+        {
+            title = "Graph route",
+            description = "A route with a branch and merge.",
+            color = "#7f6cff",
+            layoutDirection = "Horizontal",
+            isArchived = false
+        });
+        await AssertStatusAsync(created, HttpStatusCode.Created);
+        using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var roadmapId = createdJson.RootElement.GetProperty("id").GetGuid();
+        Assert.Equal("Horizontal", createdJson.RootElement.GetProperty("layoutDirection").GetString());
+
+        async Task<Guid> AddNodeAsync(string title, params Guid[] dependencyIds)
+        {
+            var response = await client.PostAsJsonAsync($"/api/roadmaps/{roadmapId}/items", new
+            {
+                goalId = (Guid?)null,
+                title,
+                description = string.Empty,
+                status = "Planned",
+                targetDate = (DateOnly?)null,
+                sortOrder = (int?)null,
+                dependencyIds
+            });
+            await AssertStatusAsync(response, HttpStatusCode.Created);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            return json.RootElement.GetProperty("id").GetGuid();
+        }
+
+        var rootId = await AddNodeAsync("Foundation");
+        var leftId = await AddNodeAsync("Backend", rootId);
+        var rightId = await AddNodeAsync("Frontend", rootId);
+        var mergeId = await AddNodeAsync("Release", leftId, rightId);
+
+        using (var current = JsonDocument.Parse(await client.GetStringAsync("/api/roadmaps?includeArchived=true")))
+        {
+            var roadmap = current.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == roadmapId);
+            Assert.Equal("Horizontal", roadmap.GetProperty("layoutDirection").GetString());
+            var merge = roadmap.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == mergeId);
+            var dependencies = merge.GetProperty("dependencyIds").EnumerateArray().Select(item => item.GetGuid()).ToHashSet();
+            Assert.True(dependencies.SetEquals([leftId, rightId]));
+        }
+
+        var preserveConnections = await client.PutAsJsonAsync($"/api/roadmap-items/{mergeId}", new
+        {
+            goalId = (Guid?)null,
+            title = "Release",
+            description = "Ready after both branches.",
+            status = "Completed",
+            targetDate = (DateOnly?)null,
+            sortOrder = 3,
+            dependencyIds = new[] { leftId, rightId }
+        });
+        await AssertStatusAsync(preserveConnections, HttpStatusCode.OK);
+        using (var updated = JsonDocument.Parse(await preserveConnections.Content.ReadAsStringAsync()))
+        {
+            var dependencies = updated.RootElement.GetProperty("dependencyIds").EnumerateArray().Select(item => item.GetGuid()).ToHashSet();
+            Assert.True(dependencies.SetEquals([leftId, rightId]));
+        }
+
+        var cycle = await client.PutAsJsonAsync($"/api/roadmap-items/{rootId}", new
+        {
+            goalId = (Guid?)null,
+            title = "Foundation",
+            description = string.Empty,
+            status = "Planned",
+            targetDate = (DateOnly?)null,
+            sortOrder = 0,
+            dependencyIds = new[] { mergeId }
+        });
+        await AssertStatusAsync(cycle, HttpStatusCode.BadRequest);
+        Assert.Contains("cycle", await cycle.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task Legacy_linear_roadmaps_are_upgraded_to_safe_graph_chains()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+
+        var created = await client.PostAsJsonAsync("/api/roadmaps", new
+        {
+            title = "Legacy route",
+            description = "Created before graph support.",
+            color = "#35bdd2",
+            isArchived = false
+        });
+        await AssertStatusAsync(created, HttpStatusCode.Created);
+        using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var roadmapId = createdJson.RootElement.GetProperty("id").GetGuid();
+
+        var first = await client.PostAsJsonAsync($"/api/roadmaps/{roadmapId}/items", new
+        {
+            goalId = (Guid?)null,
+            title = "First",
+            description = string.Empty,
+            status = "Planned",
+            targetDate = (DateOnly?)null,
+            sortOrder = 0
+        });
+        await AssertStatusAsync(first, HttpStatusCode.Created);
+        using var firstJson = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
+        var firstId = firstJson.RootElement.GetProperty("id").GetGuid();
+        var second = await client.PostAsJsonAsync($"/api/roadmaps/{roadmapId}/items", new
+        {
+            goalId = (Guid?)null,
+            title = "Second",
+            description = string.Empty,
+            status = "Planned",
+            targetDate = (DateOnly?)null,
+            sortOrder = 1
+        });
+        await AssertStatusAsync(second, HttpStatusCode.Created);
+        using var secondJson = JsonDocument.Parse(await second.Content.ReadAsStringAsync());
+        var secondId = secondJson.RootElement.GetProperty("id").GetGuid();
+
+        await using (var connection = new SqliteConnection($"Data Source={factory.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                PRAGMA foreign_keys=OFF;
+                DROP TABLE "RoadmapConnections";
+                ALTER TABLE "Roadmaps" DROP COLUMN "LayoutDirection";
+                ALTER TABLE "Roadmaps" DROP COLUMN "GraphInitialized";
+                PRAGMA foreign_keys=ON;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var oldBackupResponse = await client.GetAsync("/api/backup/export");
+        await AssertStatusAsync(oldBackupResponse, HttpStatusCode.OK);
+        var oldBackupBytes = await oldBackupResponse.Content.ReadAsByteArrayAsync();
+        using var form = new MultipartFormDataContent();
+        using var backupContent = new ByteArrayContent(oldBackupBytes);
+        backupContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        form.Add(backupContent, "file", "axis-linear-roadmap.zip");
+        await AssertStatusAsync(await client.PostAsync("/api/backup/import", form), HttpStatusCode.OK);
+
+        using var restored = JsonDocument.Parse(await client.GetStringAsync("/api/roadmaps?includeArchived=true"));
+        var roadmap = restored.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == roadmapId);
+        Assert.Equal("Vertical", roadmap.GetProperty("layoutDirection").GetString());
+        var restoredSecond = roadmap.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == secondId);
+        Assert.Equal(firstId, restoredSecond.GetProperty("dependencyIds").EnumerateArray().Single().GetGuid());
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task Backup_created_before_roadmap_tables_is_upgraded_after_import()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+        await AssertStatusAsync(await client.GetAsync("/api/health"), HttpStatusCode.OK);
+
+        await using (var connection = new SqliteConnection($"Data Source={factory.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                PRAGMA foreign_keys=OFF;
+                DROP TABLE "RoadmapConnections";
+                DROP TABLE "RoadmapItems";
+                DROP TABLE "Roadmaps";
+                PRAGMA foreign_keys=ON;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var oldBackupResponse = await client.GetAsync("/api/backup/export");
+        await AssertStatusAsync(oldBackupResponse, HttpStatusCode.OK);
+        var oldBackupBytes = await oldBackupResponse.Content.ReadAsByteArrayAsync();
+
+        using var form = new MultipartFormDataContent();
+        using var backupContent = new ByteArrayContent(oldBackupBytes);
+        backupContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        form.Add(backupContent, "file", "axis-before-roadmaps.zip");
+        await AssertStatusAsync(await client.PostAsync("/api/backup/import", form), HttpStatusCode.OK);
+
+        using var roadmaps = JsonDocument.Parse(await client.GetStringAsync("/api/roadmaps?includeArchived=true"));
+        Assert.Empty(roadmaps.RootElement.EnumerateArray());
+        await AssertStatusAsync(await client.PostAsJsonAsync("/api/roadmaps", new
+        {
+            title = "Fresh route",
+            description = "Created after compatibility upgrade.",
+            color = "#35bdd2",
+            isArchived = false
+        }), HttpStatusCode.Created);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
     public async Task Job_pipeline_crud_and_backup_round_trip_preserve_stages_and_checklists()
     {
         await using var factory = new AxisApiFactory(seedData: false);

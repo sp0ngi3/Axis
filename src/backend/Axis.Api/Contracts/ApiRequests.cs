@@ -203,6 +203,24 @@ public sealed record WishlistItemRequest(
     int Priority,
     bool IsPurchased);
 
+public sealed record RoadmapRequest(
+    string Title,
+    string? Description,
+    string? Color,
+    string? LayoutDirection,
+    bool IsArchived);
+
+public sealed record RoadmapItemRequest(
+    Guid? GoalId,
+    string Title,
+    string? Description,
+    RoadmapItemStatus Status,
+    DateOnly? TargetDate,
+    int? SortOrder,
+    IReadOnlyList<Guid>? DependencyIds);
+
+public sealed record RoadmapItemMoveRequest(int Direction);
+
 public sealed record ReviewRequest(
     string? Summary,
     string? WhatWorked,

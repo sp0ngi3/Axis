@@ -1,4 +1,5 @@
 import { ChangeEvent, FormEvent, Fragment, type CSSProperties, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from './api';
 import {
   activityStatuses,
@@ -62,6 +63,8 @@ export { parseWorkoutExercises } from './lib/workouts';
 import { LifeLessonsPage } from './pages/LifeLessonsPage';
 import { FocusNotesPage } from './pages/FocusNotesPage';
 import { MoneyPage } from './pages/MoneyPage';
+import { RoadmapsPage } from './pages/RoadmapsPage';
+import { usePwaInstall } from './pwa';
 import { buildDashboardTracks, getDayStatus } from './signals';
 import type { DashboardTrack } from './signals';
 import type {
@@ -107,6 +110,7 @@ import type {
   JobWorkMode,
   SavingsEntry,
   WishlistItem,
+  Roadmap,
   WikiPage
 } from './types';
 
@@ -156,6 +160,7 @@ export default function App() {
   const [jobApplications, setJobApplications] = useState<JobApplication[]>([]);
   const [savingsEntries, setSavingsEntries] = useState<SavingsEntry[]>([]);
   const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
+  const [roadmaps, setRoadmaps] = useState<Roadmap[]>([]);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [today, setToday] = useState<TodayDashboard | null>(null);
@@ -186,7 +191,7 @@ export default function App() {
       const health = await api.waitUntilReady<AppInfo>();
       setAppInfo(health);
       setConnectionState('loading');
-      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, lessonRows, focusRows, jobRows, savingsRows, wishlistRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
+      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, lessonRows, focusRows, jobRows, savingsRows, wishlistRows, roadmapRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
         api.get<LifeArea[]>('/api/life-areas'),
         api.get<Goal[]>('/api/goals'),
         api.get<GoalProgress[]>('/api/dashboard/progress'),
@@ -203,6 +208,7 @@ export default function App() {
         api.get<JobApplication[]>('/api/job-applications?includeArchived=true'),
         api.get<SavingsEntry[]>('/api/money/savings'),
         api.get<WishlistItem[]>('/api/money/wishlist'),
+        api.get<Roadmap[]>('/api/roadmaps?includeArchived=true'),
         api.get<WikiPage[]>('/api/wiki-pages'),
         api.get<Review[]>('/api/reviews'),
         api.get<TodayDashboard>('/api/dashboard/today'),
@@ -227,6 +233,7 @@ export default function App() {
       setJobApplications(jobRows);
       setSavingsEntries(savingsRows);
       setWishlistItems(wishlistRows);
+      setRoadmaps(roadmapRows);
       setWikiPages(wikiRows);
       setReviews(reviewRows);
       setToday(todayData);
@@ -409,6 +416,12 @@ export default function App() {
             ))}
           </div>
         </details>
+
+        <PwaInstallControl onNotice={(message) => {
+          setError('');
+          setNotice(message);
+          setFeedbackId((current) => current + 1);
+        }} />
 
         <button className="ghost-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
           {theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
@@ -593,6 +606,27 @@ export default function App() {
             onMilestoneDelete={(id) => runAction(() => api.delete(`/api/milestones/${id}`), 'Milestone deleted.')}
             onDelete={(id) => runAction(() => api.delete(`/api/goals/${id}`), 'Goal deleted.')}
             onLog={(goal) => openLog({ goalId: goal.id, lifeAreaId: goal.lifeAreaId })}
+          />
+        )}
+        {page === 'roadmaps' && (
+          <RoadmapsPage
+            roadmaps={roadmaps}
+            goals={goals}
+            busy={isBusy}
+            onSaveRoadmap={(body, id) => runAction(
+              () => id ? api.put(`/api/roadmaps/${id}`, body) : api.post('/api/roadmaps', body),
+              id ? 'Roadmap updated.' : 'Roadmap created.'
+            )}
+            onDeleteRoadmap={(id) => runAction(() => api.delete(`/api/roadmaps/${id}`), 'Roadmap deleted.')}
+            onSaveItem={(roadmapId, body, id) => runAction(
+              () => id ? api.put(`/api/roadmap-items/${id}`, body) : api.post(`/api/roadmaps/${roadmapId}/items`, body),
+              id ? 'Roadmap step updated.' : 'Roadmap step added.'
+            )}
+            onMoveItem={(id, direction) => runAction(
+              () => api.post(`/api/roadmap-items/${id}/move`, { direction }),
+              'Roadmap order updated.'
+            )}
+            onDeleteItem={(id) => runAction(() => api.delete(`/api/roadmap-items/${id}`), 'Roadmap step deleted.')}
           />
         )}
         {page === 'areas' && (
@@ -3931,6 +3965,78 @@ function ReviewForm(props: { review: Review | null; busy: boolean; onSave: (body
         <button disabled={props.busy}>Save review</button>
       </form>
     </EditorShell>
+  );
+}
+
+function PwaInstallControl({ onNotice }: { onNotice: (message: string) => void }) {
+  const { canInstall, isInstalled, isIos, isOnline, requestInstall } = usePwaInstall();
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  async function install() {
+    if (!canInstall) {
+      setHelpOpen(true);
+      return;
+    }
+
+    const outcome = await requestInstall();
+    if (outcome === 'accepted') onNotice('Axis was added as an app. Your data stays in the same local database.');
+    if (outcome === 'dismissed') onNotice('Installation was cancelled. You can install Axis later from this button.');
+  }
+
+  return (
+    <div className="pwa-install-control">
+      <button
+        type="button"
+        className={`pwa-install-button ${isInstalled ? 'installed' : ''}`}
+        onClick={() => isInstalled ? setHelpOpen(true) : void install()}
+        aria-label={isInstalled ? 'Axis installation and connection information' : 'Install Axis on this device'}
+      >
+        <span className="pwa-install-icon" aria-hidden="true">{isInstalled ? '✓' : '↓'}</span>
+        <span>
+          <strong>{isInstalled ? 'Axis installed' : 'Install Axis'}</strong>
+          <small><i className={isOnline ? 'online' : 'offline'} />{isOnline ? 'Device online' : 'Device offline'}</small>
+        </span>
+      </button>
+
+      {helpOpen && createPortal(<EditorDrawer open label="Install Axis" onClose={() => setHelpOpen(false)}>
+        <section className="pwa-help-panel">
+          <div className="collection-header flush-header">
+            <SectionTitle kicker="Installable app" title={isInstalled ? 'Axis is installed' : 'Put Axis on your home screen'} />
+            <button type="button" className="secondary-button" onClick={() => setHelpOpen(false)}>Close</button>
+          </div>
+
+          <div className="pwa-help-hero">
+            <span className="pwa-help-mark" aria-hidden="true">AX</span>
+            <div>
+              <strong>Same Axis. App-style launch.</strong>
+              <p>The installed version keeps the current vaporwave interface and connects to your existing Axis database. It never creates, replaces, or resets that database.</p>
+            </div>
+          </div>
+
+          <ol className="pwa-install-steps">
+            {isIos ? (
+              <>
+                <li><b>1</b><span>Open Axis in <strong>Safari</strong>.</span></li>
+                <li><b>2</b><span>Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</span></li>
+                <li><b>3</b><span>Confirm with <strong>Add</strong>. Launch Axis from its AX icon.</span></li>
+              </>
+            ) : (
+              <>
+                <li><b>1</b><span>Open Axis in Chrome or Edge on the phone, tablet, or computer.</span></li>
+                <li><b>2</b><span>Use the browser menu and choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</span></li>
+                <li><b>3</b><span>Confirm the installation and launch Axis from its AX icon.</span></li>
+              </>
+            )}
+          </ol>
+
+          <div className="pwa-safety-note">
+            <strong>Your data remains local and protected.</strong>
+            <span>The computer hosting Axis and its API must be running when another device connects. The app shell can open offline, but records are never cached or edited without the API.</span>
+          </div>
+          <p className="pwa-secure-note">Installation requires a secure HTTPS address. Localhost is the browser's development exception.</p>
+        </section>
+      </EditorDrawer>, document.body)}
+    </div>
   );
 }
 

@@ -46,6 +46,7 @@ public static class DatabaseStartupExtensions
         await NormalizeCheckInDurationsAsync(dbContext, cancellationToken);
         await RemoveDuplicateGeneratedActivitiesAsync(dbContext, cancellationToken);
         await SignalMetricBackfill.RunAsync(dbContext, cancellationToken);
+        await InitializeRoadmapGraphsAsync(dbContext, cancellationToken);
         await MigrateDailyMeasurementsOutOfActivitiesAsync(dbContext, cancellationToken);
         await GenerateRollingRecurringActivitiesAsync(dbContext, 56, cancellationToken);
         await RemoveDuplicateGeneratedActivitiesAsync(dbContext, cancellationToken);
@@ -296,7 +297,124 @@ public static class DatabaseStartupExtensions
         }
 
         await dbContext.Database.ExecuteSqlRawAsync("CREATE INDEX IF NOT EXISTS \"IX_ActivityTemplates_GoalId\" ON \"ActivityTemplates\" (\"GoalId\");", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "Roadmaps" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_Roadmaps" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL,
+                "UpdatedAt" TEXT NOT NULL,
+                "Title" TEXT NOT NULL,
+                "Description" TEXT NOT NULL,
+                "Color" TEXT NOT NULL,
+                "LayoutDirection" TEXT NOT NULL,
+                "IsArchived" INTEGER NOT NULL,
+                "GraphInitialized" INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_Roadmaps_IsArchived" ON "Roadmaps" ("IsArchived");
+            CREATE INDEX IF NOT EXISTS "IX_Roadmaps_UpdatedAt" ON "Roadmaps" ("UpdatedAt");
+
+            CREATE TABLE IF NOT EXISTS "RoadmapItems" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_RoadmapItems" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL,
+                "UpdatedAt" TEXT NOT NULL,
+                "RoadmapId" TEXT NOT NULL,
+                "GoalId" TEXT NULL,
+                "Title" TEXT NOT NULL,
+                "Description" TEXT NOT NULL,
+                "Status" TEXT NOT NULL,
+                "TargetDate" TEXT NULL,
+                "SortOrder" INTEGER NOT NULL,
+                CONSTRAINT "FK_RoadmapItems_Roadmaps_RoadmapId"
+                    FOREIGN KEY ("RoadmapId") REFERENCES "Roadmaps" ("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_RoadmapItems_Goals_GoalId"
+                    FOREIGN KEY ("GoalId") REFERENCES "Goals" ("Id") ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_RoadmapItems_RoadmapId_SortOrder"
+                ON "RoadmapItems" ("RoadmapId", "SortOrder");
+            CREATE INDEX IF NOT EXISTS "IX_RoadmapItems_GoalId" ON "RoadmapItems" ("GoalId");
+            """, cancellationToken);
+
+        var roadmapColumns = await ReadTableColumnsAsync(dbContext, "Roadmaps", cancellationToken);
+        if (!roadmapColumns.Contains("LayoutDirection"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"Roadmaps\" ADD COLUMN \"LayoutDirection\" TEXT NOT NULL DEFAULT 'Vertical';",
+                cancellationToken);
+        }
+        if (!roadmapColumns.Contains("GraphInitialized"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"Roadmaps\" ADD COLUMN \"GraphInitialized\" INTEGER NOT NULL DEFAULT 0;",
+                cancellationToken);
+        }
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "RoadmapConnections" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_RoadmapConnections" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL,
+                "UpdatedAt" TEXT NOT NULL,
+                "RoadmapId" TEXT NOT NULL,
+                "SourceItemId" TEXT NOT NULL,
+                "TargetItemId" TEXT NOT NULL,
+                CONSTRAINT "FK_RoadmapConnections_Roadmaps_RoadmapId"
+                    FOREIGN KEY ("RoadmapId") REFERENCES "Roadmaps" ("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_RoadmapConnections_RoadmapItems_SourceItemId"
+                    FOREIGN KEY ("SourceItemId") REFERENCES "RoadmapItems" ("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_RoadmapConnections_RoadmapItems_TargetItemId"
+                    FOREIGN KEY ("TargetItemId") REFERENCES "RoadmapItems" ("Id") ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS "IX_RoadmapConnections_RoadmapId"
+                ON "RoadmapConnections" ("RoadmapId");
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_RoadmapConnections_SourceItemId_TargetItemId"
+                ON "RoadmapConnections" ("SourceItemId", "TargetItemId");
+            """, cancellationToken);
         return addedTemplateGoalLink;
+    }
+
+    private static async Task InitializeRoadmapGraphsAsync(AxisDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var roadmaps = await dbContext.Roadmaps
+            .Include(roadmap => roadmap.Items)
+            .Include(roadmap => roadmap.Connections)
+            .AsSplitQuery()
+            .Where(roadmap => !roadmap.GraphInitialized)
+            .ToListAsync(cancellationToken);
+
+        foreach (var roadmap in roadmaps)
+        {
+            var orderedItems = roadmap.Items
+                .OrderBy(item => item.SortOrder)
+                .ThenBy(item => item.CreatedAt)
+                .ToList();
+
+            if (roadmap.Connections.Count == 0)
+            {
+                for (var index = 1; index < orderedItems.Count; index++)
+                {
+                    dbContext.RoadmapConnections.Add(new RoadmapConnection
+                    {
+                        RoadmapId = roadmap.Id,
+                        SourceItemId = orderedItems[index - 1].Id,
+                        TargetItemId = orderedItems[index].Id
+                    });
+                }
+            }
+
+            roadmap.GraphInitialized = true;
+            roadmap.LayoutDirection = NormalizeRoadmapDirection(roadmap.LayoutDirection);
+        }
+
+        if (roadmaps.Count > 0)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    private static string NormalizeRoadmapDirection(string? direction)
+    {
+        return string.Equals(direction, "Horizontal", StringComparison.OrdinalIgnoreCase)
+            ? "Horizontal"
+            : "Vertical";
     }
 
     private static async Task<HashSet<string>> ReadTableColumnsAsync(AxisDbContext dbContext, string tableName, CancellationToken cancellationToken)

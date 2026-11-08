@@ -365,6 +365,57 @@ public sealed class WishlistItem : Entity
     public DateTimeOffset? PurchasedAt { get; set; }
 }
 
+public sealed class Roadmap : Entity
+{
+    public string Title { get; set; } = string.Empty;
+
+    public string Description { get; set; } = string.Empty;
+
+    public string Color { get; set; } = "#7f6cff";
+
+    public string LayoutDirection { get; set; } = "Vertical";
+
+    public bool IsArchived { get; set; }
+
+    public bool GraphInitialized { get; set; } = true;
+
+    public List<RoadmapItem> Items { get; set; } = [];
+
+    public List<RoadmapConnection> Connections { get; set; } = [];
+}
+
+public sealed class RoadmapItem : Entity
+{
+    public Guid RoadmapId { get; set; }
+
+    public Roadmap? Roadmap { get; set; }
+
+    public Guid? GoalId { get; set; }
+
+    public Goal? Goal { get; set; }
+
+    public string Title { get; set; } = string.Empty;
+
+    public string Description { get; set; } = string.Empty;
+
+    public RoadmapItemStatus Status { get; set; } = RoadmapItemStatus.Planned;
+
+    public DateOnly? TargetDate { get; set; }
+
+    public int SortOrder { get; set; }
+}
+
+public sealed class RoadmapConnection : Entity
+{
+    public Guid RoadmapId { get; set; }
+
+    public Roadmap? Roadmap { get; set; }
+
+    public Guid SourceItemId { get; set; }
+
+    public Guid TargetItemId { get; set; }
+}
+
 public sealed class WikiPage : Entity
 {
     public string Slug { get; set; } = string.Empty;
@@ -518,6 +569,14 @@ public enum InsightSeverity
     Success,
     Warning,
     Critical
+}
+
+public enum RoadmapItemStatus
+{
+    Planned,
+    InProgress,
+    Completed,
+    Skipped
 }
 
 public enum RecurrenceFrequency

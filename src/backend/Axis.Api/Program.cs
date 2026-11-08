@@ -118,6 +118,7 @@ MapDiary(app);
 MapHistory(app);
 MapJobApplications(app);
 app.MapPersonalEndpoints();
+app.MapRoadmapEndpoints();
 MapWiki(app);
 MapReviews(app);
 MapDashboard(app);

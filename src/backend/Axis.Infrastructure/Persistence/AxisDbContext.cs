@@ -346,10 +346,20 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
             entity.Property(item => item.TechStack).HasMaxLength(2000);
             entity.Property(item => item.VisaSponsorship).HasMaxLength(40);
             entity.Property(item => item.VisaNotes).HasMaxLength(3000);
+            entity.Property(item => item.Tier).HasMaxLength(8);
+            entity.Property(item => item.TargetRole).HasMaxLength(200);
+            entity.Property(item => item.ScoutingStatus).HasMaxLength(40);
+            entity.Property(item => item.MainGap).HasMaxLength(2000);
+            entity.Property(item => item.CompensationNotes).HasMaxLength(3000);
+            entity.Property(item => item.StrategicValue).HasMaxLength(40);
+            entity.Property(item => item.UsaOpportunity).HasMaxLength(2000);
             entity.Property(item => item.Notes).HasMaxLength(6000);
             entity.HasIndex(item => item.Name);
             entity.HasIndex(item => item.IsArchived);
             entity.HasIndex(item => item.JobOffersChecked);
+            entity.HasIndex(item => item.MyFitRating);
+            entity.HasIndex(item => item.Tier);
+            entity.HasIndex(item => item.ScoutingStatus);
         });
 
         modelBuilder.Entity<CompanyLocation>(entity =>

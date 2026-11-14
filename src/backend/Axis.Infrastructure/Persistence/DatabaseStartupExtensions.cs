@@ -231,6 +231,10 @@ public static class DatabaseStartupExtensions
                 "Description" TEXT NOT NULL, "TechStack" TEXT NOT NULL,
                 "VisaSponsorship" TEXT NOT NULL, "VisaNotes" TEXT NOT NULL,
                 "RelocationSupport" INTEGER NOT NULL, "JobOffersChecked" INTEGER NOT NULL,
+                "JobOffersCheckedAt" TEXT NULL, "MyFitRating" INTEGER NOT NULL,
+                "Tier" TEXT NOT NULL, "TargetRole" TEXT NOT NULL, "ScoutingStatus" TEXT NOT NULL,
+                "MainGap" TEXT NOT NULL, "CompensationNotes" TEXT NOT NULL,
+                "StrategicValue" TEXT NOT NULL, "UsaOpportunity" TEXT NOT NULL,
                 "Notes" TEXT NOT NULL, "IsArchived" INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS "IX_Companies_Name" ON "Companies" ("Name");
@@ -258,8 +262,56 @@ public static class DatabaseStartupExtensions
                 "ALTER TABLE \"Companies\" ADD COLUMN \"JobOffersChecked\" INTEGER NOT NULL DEFAULT 0;",
                 cancellationToken);
         }
+        if (!companyColumns.Contains("MyFitRating"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"Companies\" ADD COLUMN \"MyFitRating\" INTEGER NOT NULL DEFAULT 5;",
+                cancellationToken);
+        }
+        if (!companyColumns.Contains("JobOffersCheckedAt"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"Companies\" ADD COLUMN \"JobOffersCheckedAt\" TEXT NULL;",
+                cancellationToken);
+        }
+        if (!companyColumns.Contains("Tier"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync("ALTER TABLE \"Companies\" ADD COLUMN \"Tier\" TEXT NOT NULL DEFAULT 'B';", cancellationToken);
+        }
+        if (!companyColumns.Contains("TargetRole"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync("ALTER TABLE \"Companies\" ADD COLUMN \"TargetRole\" TEXT NOT NULL DEFAULT '';", cancellationToken);
+        }
+        if (!companyColumns.Contains("ScoutingStatus"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync("ALTER TABLE \"Companies\" ADD COLUMN \"ScoutingStatus\" TEXT NOT NULL DEFAULT 'Researching';", cancellationToken);
+        }
+        if (!companyColumns.Contains("MainGap"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync("ALTER TABLE \"Companies\" ADD COLUMN \"MainGap\" TEXT NOT NULL DEFAULT '';", cancellationToken);
+        }
+        if (!companyColumns.Contains("CompensationNotes"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync("ALTER TABLE \"Companies\" ADD COLUMN \"CompensationNotes\" TEXT NOT NULL DEFAULT '';", cancellationToken);
+        }
+        if (!companyColumns.Contains("StrategicValue"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync("ALTER TABLE \"Companies\" ADD COLUMN \"StrategicValue\" TEXT NOT NULL DEFAULT 'Medium';", cancellationToken);
+        }
+        if (!companyColumns.Contains("UsaOpportunity"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync("ALTER TABLE \"Companies\" ADD COLUMN \"UsaOpportunity\" TEXT NOT NULL DEFAULT '';", cancellationToken);
+        }
         await dbContext.Database.ExecuteSqlRawAsync(
-            "CREATE INDEX IF NOT EXISTS \"IX_Companies_JobOffersChecked\" ON \"Companies\" (\"JobOffersChecked\");",
+            """
+            CREATE INDEX IF NOT EXISTS "IX_Companies_JobOffersChecked" ON "Companies" ("JobOffersChecked");
+            CREATE INDEX IF NOT EXISTS "IX_Companies_MyFitRating" ON "Companies" ("MyFitRating");
+            CREATE INDEX IF NOT EXISTS "IX_Companies_Tier" ON "Companies" ("Tier");
+            CREATE INDEX IF NOT EXISTS "IX_Companies_ScoutingStatus" ON "Companies" ("ScoutingStatus");
+            UPDATE "Companies"
+            SET "JobOffersCheckedAt" = "UpdatedAt"
+            WHERE "JobOffersChecked" = 1 AND "JobOffersCheckedAt" IS NULL;
+            """,
             cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""

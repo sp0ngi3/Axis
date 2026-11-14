@@ -162,7 +162,17 @@ public sealed record CompanyRequest(
     bool RelocationSupport,
     string? Notes,
     bool IsArchived,
-    bool JobOffersChecked = false);
+    bool JobOffersChecked = false,
+    int MyFitRating = 5,
+    IReadOnlyList<CompanyLocationRequest>? Locations = null,
+    DateTimeOffset? JobOffersCheckedAt = null,
+    string? Tier = null,
+    string? TargetRole = null,
+    string? ScoutingStatus = null,
+    string? MainGap = null,
+    string? CompensationNotes = null,
+    string? StrategicValue = null,
+    string? UsaOpportunity = null);
 
 public sealed record CompanyLocationRequest(
     string Name,

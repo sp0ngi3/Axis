@@ -418,11 +418,15 @@ describe('Axis app integration workflows', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add company' }));
     fireEvent.change(screen.getByLabelText('Company name'), { target: { value: 'Google' } });
     fireEvent.change(screen.getByLabelText('Industry'), { target: { value: 'Technology' } });
+    fireEvent.change(screen.getByLabelText('Target role'), { target: { value: 'SWE' } });
+    fireEvent.change(screen.getByLabelText('My fit with this company (1-10)'), { target: { value: '9' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'London' } });
+    fireEvent.change(screen.getByLabelText('Country'), { target: { value: 'United Kingdom' } });
     fireEvent.change(screen.getByLabelText('Visa sponsorship'), { target: { value: 'Yes' } });
     fireEvent.click(screen.getByLabelText('I checked the current job offers'));
     fireEvent.click(screen.getByRole('button', { name: 'Save company' }));
 
-    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/companies' && call.body?.includes('Google') && call.body?.includes('"jobOffersChecked":true'))).toBe(true));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/companies' && call.body?.includes('Google') && call.body?.includes('London') && call.body?.includes('"myFitRating":9') && call.body?.includes('"jobOffersChecked":true'))).toBe(true));
   });
 
   it('moves the countdown and its mirrored past date together as time advances', () => {

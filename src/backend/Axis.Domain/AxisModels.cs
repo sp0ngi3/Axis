@@ -304,6 +304,15 @@ public sealed class Company : Entity
     public string VisaNotes { get; set; } = string.Empty;
     public bool RelocationSupport { get; set; }
     public bool JobOffersChecked { get; set; }
+    public DateTimeOffset? JobOffersCheckedAt { get; set; }
+    public int MyFitRating { get; set; } = 5;
+    public string Tier { get; set; } = "B";
+    public string TargetRole { get; set; } = string.Empty;
+    public string ScoutingStatus { get; set; } = "Researching";
+    public string MainGap { get; set; } = string.Empty;
+    public string CompensationNotes { get; set; } = string.Empty;
+    public string StrategicValue { get; set; } = "Medium";
+    public string UsaOpportunity { get; set; } = string.Empty;
     public string Notes { get; set; } = string.Empty;
     public bool IsArchived { get; set; }
     public List<CompanyLocation> Locations { get; set; } = [];

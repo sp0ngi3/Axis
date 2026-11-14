@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { defaultPageSize } from '../../config';
 import { paginate } from '../../lib/format';
 import type { Company, CompanyLocation, LocationVisaSponsorship, VisaSponsorship } from '../../types';
-import { EditorDrawer, EmptyState, PaginationControls, SectionTitle, SelectField, TextArea, TextField } from '../common';
+import { EditorDrawer, EmptyState, NumberField, PaginationControls, SectionTitle, SelectField, TextArea, TextField } from '../common';
 
 type CompanyDirectoryProps = {
   companies: Company[];
@@ -20,6 +20,21 @@ const visaOptions: Array<{ value: VisaSponsorship; label: string }> = [
   { value: 'Yes', label: 'Yes' }
 ];
 
+const tierOptions = ['S', 'A', 'B', 'C', 'D'].map((value) => ({ value, label: `${value} tier` }));
+const scoutingStatusOptions = [
+  { value: 'Researching', label: 'Researching' },
+  { value: 'Monitoring', label: 'Monitoring' },
+  { value: 'OpenRoles', label: 'Open roles' },
+  { value: 'NoSuitableRoles', label: 'No suitable roles' },
+  { value: 'Priority', label: 'Priority target' }
+];
+const strategicValueOptions = [
+  { value: 'Low', label: 'Low' },
+  { value: 'Medium', label: 'Medium' },
+  { value: 'High', label: 'High' },
+  { value: 'VeryHigh', label: 'Very high' }
+];
+
 export function CompanyDirectory(props: CompanyDirectoryProps) {
   const [query, setQuery] = useState('');
   const [visaFilter, setVisaFilter] = useState('');
@@ -32,7 +47,7 @@ export function CompanyDirectory(props: CompanyDirectoryProps) {
 
   const filtered = useMemo(() => props.companies.filter((company) => {
     const locations = company.locations.map((location) => `${location.name} ${location.city} ${location.region} ${location.country}`).join(' ');
-    const haystack = `${company.name} ${company.industry} ${company.headquarters} ${company.techStack} ${company.description} ${company.notes} ${locations}`.toLowerCase();
+    const haystack = `${company.name} ${company.industry} ${company.headquarters} ${company.techStack} ${company.description} ${company.targetRole} ${company.mainGap} ${company.compensationNotes} ${company.usaOpportunity} ${company.notes} ${locations}`.toLowerCase();
     return (!query || haystack.includes(query.toLowerCase()))
       && (!visaFilter || company.visaSponsorship === visaFilter || company.locations.some((location) => location.visaSponsorship === visaFilter))
       && (!offersFilter || (offersFilter === 'checked' ? company.jobOffersChecked : !company.jobOffersChecked))
@@ -56,17 +71,20 @@ export function CompanyDirectory(props: CompanyDirectoryProps) {
         <select aria-label="Filter company visibility" value={visibility} onChange={(event) => setVisibility(event.target.value)}><option value="active">Active companies</option><option value="archived">Archived</option><option value="all">All companies</option></select>
       </div>
       <div className="company-card-grid">
-        {paged.items.map((company) => <article className={['company-card', company.jobOffersChecked ? 'offers-checked' : '', selectedId === company.id ? 'selected' : ''].filter(Boolean).join(' ')} key={company.id}>
+        {paged.items.map((company) => {
+          const checkState = companyOfferCheckState(company);
+          return <article className={['company-card', checkState, selectedId === company.id ? 'selected' : ''].filter(Boolean).join(' ')} key={company.id}>
           <button className="company-card-main" onClick={() => setSelectedId(company.id)}>
-            <span className="company-card-kicker">{company.industry || 'Industry not set'}</span>
+            <span className="company-card-heading"><b className={`company-tier tier-${company.tier.toLowerCase()}`}>{company.tier}</b><span className="company-card-kicker">{company.industry || 'Industry not set'}</span></span>
             <strong>{company.name}</strong>
-            <small>{company.headquarters || 'Headquarters not set'} · {company.locations.length} office{company.locations.length === 1 ? '' : 's'}</small>
-            <span className={`visa-chip visa-${company.visaSponsorship.toLowerCase()}`}>Visa: {company.visaSponsorship}</span>
-            <span className={company.jobOffersChecked ? 'offer-check-chip checked' : 'offer-check-chip'}>{company.jobOffersChecked ? 'Offers checked' : 'Offers not checked'}</span>
+            <div className="company-scouting-summary"><span><small>Target</small><b>{company.targetRole || 'Not set'}</b></span><span><small>My fit</small><b>{company.myFitRating}/10</b></span><span><small>Status</small><b>{humanize(company.scoutingStatus)}</b></span></div>
+            <div className="company-location-preview">{company.locations.slice(0, 3).map((location) => <span key={location.id}>{location.city || location.name}{location.country ? ` · ${location.country}` : ''}</span>)}{company.locations.length > 3 && <span>+{company.locations.length - 3} more</span>}{!company.locations.length && <span className="missing">No locations — add offices</span>}</div>
+            {company.mainGap && <small className="company-main-gap">Main gap: {company.mainGap}</small>}
+            <div className="company-card-chips"><span className={`visa-chip visa-${company.visaSponsorship.toLowerCase()}`}>Visa: {company.visaSponsorship}</span><span className={company.jobOffersChecked ? 'offer-check-chip checked' : 'offer-check-chip'}>{offerCheckLabel(company)}</span></div>
           </button>
           <label className="company-offer-toggle"><input aria-label={`Job offers checked for ${company.name}`} type="checkbox" checked={company.jobOffersChecked} disabled={props.busy} onChange={(event) => props.onCompanySave(companyRequest(company, event.target.checked), company.id)} /><span>Current offers checked</span></label>
-          <div className="row-actions"><button className="secondary-button" onClick={() => setSelectedId(company.id)}>Open</button><button className="secondary-button" onClick={() => setEditing(company)}>Edit</button><button className="danger-button" onClick={() => window.confirm(`Delete ${company.name}? Applications keep their company and location text.`) && props.onCompanyDelete(company.id)}>Delete</button></div>
-        </article>)}
+          <div className="row-actions"><button className="secondary-button" onClick={() => setSelectedId(company.id)}>Locations</button><button className="secondary-button" onClick={() => setEditing(company)}>Edit</button><button className="danger-button" onClick={() => window.confirm(`Delete ${company.name}? Applications keep their company and location text.`) && props.onCompanyDelete(company.id)}>Delete</button></div>
+        </article>})}
       </div>
       {!paged.items.length && <EmptyState text="No companies match these filters." />}
       <PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} />
@@ -90,13 +108,19 @@ function CompanyWorkspace(props: { company: Company; busy: boolean; onClose: () 
       <span><small>Visa sponsorship</small><strong>{company.visaSponsorship}</strong></span>
       <span><small>Relocation support</small><strong>{company.relocationSupport ? 'Available' : 'Not confirmed'}</strong></span>
       <span><small>Tracked offices</small><strong>{company.locations.length}</strong></span>
-      <span className={company.jobOffersChecked ? 'company-fact-checked' : ''}><small>Current job offers</small><strong>{company.jobOffersChecked ? 'Checked' : 'Still to check'}</strong></span>
+      <span><small>Tier / target</small><strong>{company.tier} · {company.targetRole || 'Not set'}</strong></span>
+      <span><small>My fit</small><strong>{company.myFitRating}/10</strong></span>
+      <span><small>Strategic value</small><strong>{humanize(company.strategicValue)}</strong></span>
+      <span className={company.jobOffersChecked ? 'company-fact-checked' : ''}><small>Current job offers</small><strong>{offerCheckLabel(company)}</strong></span>
       <span><small>Status</small><strong>{company.isArchived ? 'Archived' : 'Active'}</strong></span>
     </div>
     <div className="job-links">{externalLink(company.website, 'Website')}{externalLink(company.careersUrl, 'Careers')}</div>
     {company.description && <section className="company-note"><small>Company brief</small><p>{company.description}</p></section>}
     {company.techStack && <section className="company-note"><small>Technology / domains</small><p>{company.techStack}</p></section>}
     {company.visaNotes && <section className="company-note"><small>Visa notes</small><p>{company.visaNotes}</p></section>}
+    {company.mainGap && <section className="company-note"><small>Main preparation gap</small><p>{company.mainGap}</p></section>}
+    {company.compensationNotes && <section className="company-note"><small>Compensation intelligence</small><p>{company.compensationNotes}</p></section>}
+    {company.usaOpportunity && <section className="company-note"><small>USA opportunity / path</small><p>{company.usaOpportunity}</p></section>}
     {company.notes && <section className="company-note"><small>Research notes</small><p>{company.notes}</p></section>}
 
     <div className="collection-header company-location-heading"><SectionTitle kicker="Office network" title="Locations" /><button onClick={() => setCreatingLocation(true)}>Add location</button></div>
@@ -123,13 +147,20 @@ function CompanyForm(props: { company: Company | null; busy: boolean; onSave: (b
   const [draft, setDraft] = useState({
     name: company?.name ?? '', website: company?.website ?? '', careersUrl: company?.careersUrl ?? '', industry: company?.industry ?? '', companySize: company?.companySize ?? '', headquarters: company?.headquarters ?? '',
     description: company?.description ?? '', techStack: company?.techStack ?? '', visaSponsorship: company?.visaSponsorship ?? 'Unknown' as VisaSponsorship, visaNotes: company?.visaNotes ?? '', relocationSupport: company?.relocationSupport ?? false,
-    jobOffersChecked: company?.jobOffersChecked ?? false, notes: company?.notes ?? '', isArchived: company?.isArchived ?? false
+    jobOffersChecked: company?.jobOffersChecked ?? false, jobOffersCheckedAt: company?.jobOffersCheckedAt ?? null, myFitRating: company?.myFitRating ?? 5,
+    tier: company?.tier ?? 'B', targetRole: company?.targetRole ?? '', scoutingStatus: company?.scoutingStatus ?? 'Researching', mainGap: company?.mainGap ?? '', compensationNotes: company?.compensationNotes ?? '', strategicValue: company?.strategicValue ?? 'Medium', usaOpportunity: company?.usaOpportunity ?? '',
+    notes: company?.notes ?? '', isArchived: company?.isArchived ?? false
   });
+  const [locations, setLocations] = useState<CompanyLocationDraft[]>(company ? [] : [newLocationDraft()]);
   const update = <K extends keyof typeof draft>(key: K, value: typeof draft[K]) => setDraft((current) => ({ ...current, [key]: value }));
-  return <form className="editor-form company-form" onSubmit={(event) => { event.preventDefault(); props.onSave(draft); }}>
+  const updateLocation = (id: string, key: keyof Omit<CompanyLocationDraft, 'id'>, value: string) => setLocations((current) => current.map((location) => location.id === id ? { ...location, [key]: value } : location));
+  return <form className="editor-form company-form" onSubmit={(event) => { event.preventDefault(); props.onSave({ ...draft, locations: company ? null : locations.filter((location) => location.city.trim() || location.name.trim()).map(toLocationRequest) }); }}>
     <div className="form-grid two"><TextField label="Company name" value={draft.name} onChange={(value) => update('name', value)} required /><TextField label="Industry" value={draft.industry} onChange={(value) => update('industry', value)} /></div>
+    <section className="company-scouting-form"><div><p className="eyebrow">Scouting matrix</p><h4>Priority and fit</h4></div><div className="form-grid three"><SelectField label="Tier" value={draft.tier} onChange={(value) => update('tier', value)} options={tierOptions} /><TextField label="Target role" value={draft.targetRole} onChange={(value) => update('targetRole', value)} /><SelectField label="Scouting status" value={draft.scoutingStatus} onChange={(value) => update('scoutingStatus', value)} options={scoutingStatusOptions} /></div><div className="form-grid two"><NumberField label="My fit with this company (1-10)" value={draft.myFitRating} min={1} max={10} onChange={(value) => update('myFitRating', value)} /><SelectField label="Strategic value" value={draft.strategicValue} onChange={(value) => update('strategicValue', value)} options={strategicValueOptions} /></div><TextArea label="Main gap to close" value={draft.mainGap} onChange={(value) => update('mainGap', value)} /><TextArea label="Compensation intelligence" value={draft.compensationNotes} onChange={(value) => update('compensationNotes', value)} /><TextArea label="USA opportunity / long-term path" value={draft.usaOpportunity} onChange={(value) => update('usaOpportunity', value)} /></section>
     <div className="form-grid two"><TextField label="Headquarters" value={draft.headquarters} onChange={(value) => update('headquarters', value)} /><TextField label="Company size" value={draft.companySize} onChange={(value) => update('companySize', value)} /></div>
     <div className="form-grid two"><TextField label="Website" value={draft.website} onChange={(value) => update('website', value)} /><TextField label="Careers URL" value={draft.careersUrl} onChange={(value) => update('careersUrl', value)} /></div>
+    {!company && <section className="company-create-locations"><div className="collection-header"><div><p className="eyebrow">Office network</p><h4>Locations available to me</h4><p>Add London, Berlin, Krakow or every other office you may target.</p></div><button type="button" className="secondary-button" onClick={() => setLocations((current) => [...current, newLocationDraft()])}>Add another location</button></div><div className="company-create-location-list">{locations.map((location, index) => <div className="company-create-location" key={location.id}><strong>Location {index + 1}</strong><div className="form-grid three"><TextField label="City" value={location.city} onChange={(value) => updateLocation(location.id, 'city', value)} /><TextField label="Country" value={location.country} onChange={(value) => updateLocation(location.id, 'country', value)} /><TextField label="Office name (optional)" value={location.name} onChange={(value) => updateLocation(location.id, 'name', value)} /></div><button type="button" className="danger-button" onClick={() => setLocations((current) => current.filter((item) => item.id !== location.id))}>Remove</button></div>)}</div></section>}
+    {company && <p className="company-location-helper">Locations are preserved separately. Use the <strong>Locations</strong> action on the company card to add, edit or remove offices without overwriting the company profile.</p>}
     <div className="form-grid two"><SelectField label="Visa sponsorship" value={draft.visaSponsorship} onChange={(value) => update('visaSponsorship', value as VisaSponsorship)} options={visaOptions} /><label className="toggle-field company-toggle"><input type="checkbox" checked={draft.relocationSupport} onChange={(event) => update('relocationSupport', event.target.checked)} /><span>Relocation support is available</span></label></div>
     <label className="toggle-field company-offers-form-toggle"><input aria-label="I checked the current job offers" type="checkbox" checked={draft.jobOffersChecked} onChange={(event) => update('jobOffersChecked', event.target.checked)} /><span>I checked whether this company currently has suitable job offers</span></label>
     <TextArea label="Company brief" value={draft.description} onChange={(value) => update('description', value)} />
@@ -187,7 +218,53 @@ function companyRequest(company: Company, jobOffersChecked: boolean) {
     visaNotes: company.visaNotes,
     relocationSupport: company.relocationSupport,
     jobOffersChecked,
+    jobOffersCheckedAt: jobOffersChecked ? company.jobOffersCheckedAt : null,
+    myFitRating: company.myFitRating,
+    tier: company.tier,
+    targetRole: company.targetRole,
+    scoutingStatus: company.scoutingStatus,
+    mainGap: company.mainGap,
+    compensationNotes: company.compensationNotes,
+    strategicValue: company.strategicValue,
+    usaOpportunity: company.usaOpportunity,
     notes: company.notes,
     isArchived: company.isArchived
   };
+}
+
+type CompanyLocationDraft = { id: string; name: string; city: string; country: string };
+
+function newLocationDraft(): CompanyLocationDraft {
+  return { id: Math.random().toString(36).slice(2), name: '', city: '', country: '' };
+}
+
+function toLocationRequest(location: CompanyLocationDraft) {
+  return {
+    name: location.name.trim() || location.city.trim(),
+    city: location.city.trim(),
+    region: '',
+    country: location.country.trim(),
+    address: '',
+    careersUrl: '',
+    visaSponsorship: 'Inherit',
+    notes: '',
+    isActive: true
+  };
+}
+
+function companyOfferCheckState(company: Company) {
+  if (!company.jobOffersChecked) return '';
+  if (!company.jobOffersCheckedAt) return 'offers-stale';
+  const ageDays = (Date.now() - new Date(company.jobOffersCheckedAt).getTime()) / 86400000;
+  return ageDays <= 14 ? 'offers-recent' : 'offers-stale';
+}
+
+function offerCheckLabel(company: Company) {
+  if (!company.jobOffersChecked) return 'Offers not checked';
+  if (!company.jobOffersCheckedAt) return 'Checked — date unknown';
+  return `Checked ${new Date(company.jobOffersCheckedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+}
+
+function humanize(value: string) {
+  return value.replace(/([a-z])([A-Z])/g, '$1 $2');
 }

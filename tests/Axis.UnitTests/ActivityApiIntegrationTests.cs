@@ -534,15 +534,14 @@ public sealed class ActivityApiIntegrationTests
         await using var factory = new AxisApiFactory(seedData: false);
         using var client = factory.CreateClient();
 
-        var companyResponse = await client.PostAsJsonAsync("/api/companies", CompanyPayload());
+        var companyResponse = await client.PostAsJsonAsync("/api/companies", CompanyPayload(includeLocations: true));
         await AssertStatusAsync(companyResponse, HttpStatusCode.Created);
         using var companyJson = JsonDocument.Parse(await companyResponse.Content.ReadAsStringAsync());
         var companyId = companyJson.RootElement.GetProperty("id").GetGuid();
-
-        var locationResponse = await client.PostAsJsonAsync($"/api/companies/{companyId}/locations", CompanyLocationPayload());
-        await AssertStatusAsync(locationResponse, HttpStatusCode.Created);
-        using var locationJson = JsonDocument.Parse(await locationResponse.Content.ReadAsStringAsync());
-        var locationId = locationJson.RootElement.GetProperty("id").GetGuid();
+        var initialLocations = companyJson.RootElement.GetProperty("locations").EnumerateArray().ToList();
+        Assert.Single(initialLocations);
+        Assert.Equal("Berlin", initialLocations[0].GetProperty("city").GetString());
+        var locationId = initialLocations[0].GetProperty("id").GetGuid();
 
         var created = await client.PostAsJsonAsync("/api/job-applications", JobApplicationPayload("Scouted", companyId, locationId));
         await AssertStatusAsync(created, HttpStatusCode.Created);
@@ -613,12 +612,15 @@ public sealed class ActivityApiIntegrationTests
         var restoredCompany = restoredCompanies.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == companyId);
         Assert.Equal("Vapor Systems", restoredCompany.GetProperty("name").GetString());
         Assert.True(restoredCompany.GetProperty("jobOffersChecked").GetBoolean());
+        Assert.Equal(9, restoredCompany.GetProperty("myFitRating").GetInt32());
+        Assert.Equal("S", restoredCompany.GetProperty("tier").GetString());
+        Assert.Equal("Platform SWE", restoredCompany.GetProperty("targetRole").GetString());
         Assert.Contains(restoredCompany.GetProperty("locations").EnumerateArray(), item => item.GetProperty("id").GetGuid() == locationId);
         await factory.AssertDatabaseIntegrityAsync();
     }
 
     [Fact]
-    public async Task Backup_created_before_company_offer_check_is_upgraded_without_losing_company_data()
+    public async Task Backup_created_before_company_scouting_fields_is_upgraded_without_losing_company_data()
     {
         await using var factory = new AxisApiFactory(seedData: false);
         using var client = factory.CreateClient();
@@ -634,7 +636,19 @@ public sealed class ActivityApiIntegrationTests
             await using var command = connection.CreateCommand();
             command.CommandText = """
                 DROP INDEX "IX_Companies_JobOffersChecked";
+                DROP INDEX "IX_Companies_MyFitRating";
+                DROP INDEX "IX_Companies_Tier";
+                DROP INDEX "IX_Companies_ScoutingStatus";
                 ALTER TABLE "Companies" DROP COLUMN "JobOffersChecked";
+                ALTER TABLE "Companies" DROP COLUMN "JobOffersCheckedAt";
+                ALTER TABLE "Companies" DROP COLUMN "MyFitRating";
+                ALTER TABLE "Companies" DROP COLUMN "Tier";
+                ALTER TABLE "Companies" DROP COLUMN "TargetRole";
+                ALTER TABLE "Companies" DROP COLUMN "ScoutingStatus";
+                ALTER TABLE "Companies" DROP COLUMN "MainGap";
+                ALTER TABLE "Companies" DROP COLUMN "CompensationNotes";
+                ALTER TABLE "Companies" DROP COLUMN "StrategicValue";
+                ALTER TABLE "Companies" DROP COLUMN "UsaOpportunity";
                 """;
             await command.ExecuteNonQueryAsync();
         }
@@ -646,18 +660,22 @@ public sealed class ActivityApiIntegrationTests
         using var form = new MultipartFormDataContent();
         using var backupContent = new ByteArrayContent(oldBackupBytes);
         backupContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
-        form.Add(backupContent, "file", "axis-before-company-offer-check.zip");
+        form.Add(backupContent, "file", "axis-before-company-scouting.zip");
         await AssertStatusAsync(await client.PostAsync("/api/backup/import", form), HttpStatusCode.OK);
 
         using var companies = JsonDocument.Parse(await client.GetStringAsync("/api/companies?includeArchived=true"));
         var restored = companies.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == companyId);
         Assert.Equal("Vapor Systems", restored.GetProperty("name").GetString());
         Assert.False(restored.GetProperty("jobOffersChecked").GetBoolean());
+        Assert.Equal(5, restored.GetProperty("myFitRating").GetInt32());
+        Assert.Equal("B", restored.GetProperty("tier").GetString());
+        Assert.Equal("Researching", restored.GetProperty("scoutingStatus").GetString());
 
         var updated = await client.PutAsJsonAsync($"/api/companies/{companyId}", CompanyPayload());
         await AssertStatusAsync(updated, HttpStatusCode.OK);
         using var updatedJson = JsonDocument.Parse(await updated.Content.ReadAsStringAsync());
         Assert.True(updatedJson.RootElement.GetProperty("jobOffersChecked").GetBoolean());
+        Assert.Equal(9, updatedJson.RootElement.GetProperty("myFitRating").GetInt32());
         await factory.AssertDatabaseIntegrityAsync();
     }
 
@@ -781,7 +799,7 @@ public sealed class ActivityApiIntegrationTests
         isArchived = false
     };
 
-    private static object CompanyPayload() => new
+    private static object CompanyPayload(bool includeLocations = false) => new
     {
         name = "Vapor Systems",
         website = "https://example.com",
@@ -795,8 +813,17 @@ public sealed class ActivityApiIntegrationTests
         visaNotes = "US sponsorship depends on role and seniority.",
         relocationSupport = true,
         jobOffersChecked = true,
+        myFitRating = 9,
+        tier = "S",
+        targetRole = "Platform SWE",
+        scoutingStatus = "Priority",
+        mainGap = "DSA speed and large-scale system design.",
+        compensationNotes = "Berlin L3 approximately EUR 117k total compensation.",
+        strategicValue = "VeryHigh",
+        usaOpportunity = "Potential internal transfer path after strong performance.",
         notes = "Research before applying.",
-        isArchived = false
+        isArchived = false,
+        locations = includeLocations ? new[] { CompanyLocationPayload() } : null
     };
 
     private static object CompanyLocationPayload() => new

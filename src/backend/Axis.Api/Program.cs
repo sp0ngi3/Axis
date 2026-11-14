@@ -1199,8 +1199,18 @@ static void MapCompanies(WebApplication app)
     group.MapPost("/", async (CompanyRequest request, AxisDbContext db, CancellationToken ct) =>
     {
         if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest("Company name is required.");
+        if (request.Locations?.Any(location => string.IsNullOrWhiteSpace(location.Name)) == true)
+        {
+            return Results.BadRequest("Every company location needs a name.");
+        }
         var item = new Company();
         ApplyCompany(item, request);
+        foreach (var locationRequest in request.Locations ?? [])
+        {
+            var location = new CompanyLocation { CompanyId = item.Id };
+            ApplyCompanyLocation(location, locationRequest);
+            item.Locations.Add(location);
+        }
         db.Companies.Add(item);
         await db.SaveChangesAsync(ct);
         return Results.Created($"/api/companies/{item.Id}", ToCompanyResponse(item));
@@ -1275,7 +1285,19 @@ static void ApplyCompany(Company item, CompanyRequest request)
     item.VisaSponsorship = NormalizeVisaSponsorship(request.VisaSponsorship, false);
     item.VisaNotes = request.VisaNotes?.Trim() ?? string.Empty;
     item.RelocationSupport = request.RelocationSupport;
+    var wasChecked = item.JobOffersChecked;
     item.JobOffersChecked = request.JobOffersChecked;
+    item.JobOffersCheckedAt = request.JobOffersChecked
+        ? request.JobOffersCheckedAt ?? (wasChecked ? item.JobOffersCheckedAt : DateTimeOffset.UtcNow)
+        : null;
+    item.MyFitRating = Math.Clamp(request.MyFitRating, 1, 10);
+    item.Tier = NormalizeCompanyTier(request.Tier);
+    item.TargetRole = request.TargetRole?.Trim() ?? string.Empty;
+    item.ScoutingStatus = NormalizeScoutingStatus(request.ScoutingStatus);
+    item.MainGap = request.MainGap?.Trim() ?? string.Empty;
+    item.CompensationNotes = request.CompensationNotes?.Trim() ?? string.Empty;
+    item.StrategicValue = NormalizeStrategicValue(request.StrategicValue);
+    item.UsaOpportunity = request.UsaOpportunity?.Trim() ?? string.Empty;
     item.Notes = request.Notes?.Trim() ?? string.Empty;
     item.IsArchived = request.IsArchived;
 }
@@ -1301,11 +1323,31 @@ static string NormalizeVisaSponsorship(string? value, bool allowInherit)
     return allowed.FirstOrDefault(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase)) ?? allowed[0];
 }
 
+static string NormalizeCompanyTier(string? value)
+{
+    var allowed = new[] { "S", "A", "B", "C", "D" };
+    return allowed.FirstOrDefault(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase)) ?? "B";
+}
+
+static string NormalizeScoutingStatus(string? value)
+{
+    var allowed = new[] { "Researching", "Monitoring", "OpenRoles", "NoSuitableRoles", "Priority" };
+    return allowed.FirstOrDefault(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase)) ?? "Researching";
+}
+
+static string NormalizeStrategicValue(string? value)
+{
+    var allowed = new[] { "Low", "Medium", "High", "VeryHigh" };
+    return allowed.FirstOrDefault(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase)) ?? "Medium";
+}
+
 static object ToCompanyResponse(Company item) => new
 {
     item.Id, item.CreatedAt, item.UpdatedAt, item.Name, item.Website, item.CareersUrl,
     item.Industry, item.CompanySize, item.Headquarters, item.Description, item.TechStack,
-    item.VisaSponsorship, item.VisaNotes, item.RelocationSupport, item.JobOffersChecked, item.Notes, item.IsArchived,
+    item.VisaSponsorship, item.VisaNotes, item.RelocationSupport, item.JobOffersChecked, item.JobOffersCheckedAt,
+    item.MyFitRating, item.Tier, item.TargetRole, item.ScoutingStatus, item.MainGap,
+    item.CompensationNotes, item.StrategicValue, item.UsaOpportunity, item.Notes, item.IsArchived,
     Locations = item.Locations.OrderBy(location => location.Country).ThenBy(location => location.City).Select(ToCompanyLocationResponse)
 };
 

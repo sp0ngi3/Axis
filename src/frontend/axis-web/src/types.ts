@@ -249,6 +249,15 @@ export interface Company {
   visaNotes: string;
   relocationSupport: boolean;
   jobOffersChecked: boolean;
+  jobOffersCheckedAt?: string | null;
+  myFitRating: number;
+  tier: string;
+  targetRole: string;
+  scoutingStatus: string;
+  mainGap: string;
+  compensationNotes: string;
+  strategicValue: string;
+  usaOpportunity: string;
   notes: string;
   isArchived: boolean;
   locations: CompanyLocation[];

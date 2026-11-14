@@ -223,9 +223,50 @@ public static class DatabaseStartupExtensions
             """, cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "Companies" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_Companies" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL,
+                "Name" TEXT NOT NULL, "Website" TEXT NOT NULL, "CareersUrl" TEXT NOT NULL,
+                "Industry" TEXT NOT NULL, "CompanySize" TEXT NOT NULL, "Headquarters" TEXT NOT NULL,
+                "Description" TEXT NOT NULL, "TechStack" TEXT NOT NULL,
+                "VisaSponsorship" TEXT NOT NULL, "VisaNotes" TEXT NOT NULL,
+                "RelocationSupport" INTEGER NOT NULL, "JobOffersChecked" INTEGER NOT NULL,
+                "Notes" TEXT NOT NULL, "IsArchived" INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS "IX_Companies_Name" ON "Companies" ("Name");
+            CREATE INDEX IF NOT EXISTS "IX_Companies_IsArchived" ON "Companies" ("IsArchived");
+
+            CREATE TABLE IF NOT EXISTS "CompanyLocations" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_CompanyLocations" PRIMARY KEY,
+                "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL,
+                "CompanyId" TEXT NOT NULL, "Name" TEXT NOT NULL,
+                "City" TEXT NOT NULL, "Region" TEXT NOT NULL, "Country" TEXT NOT NULL,
+                "Address" TEXT NOT NULL, "CareersUrl" TEXT NOT NULL,
+                "VisaSponsorship" TEXT NOT NULL, "Notes" TEXT NOT NULL, "IsActive" INTEGER NOT NULL,
+                CONSTRAINT "FK_CompanyLocations_Companies_CompanyId"
+                    FOREIGN KEY ("CompanyId") REFERENCES "Companies" ("Id") ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS "IX_CompanyLocations_CompanyId_City_Country"
+                ON "CompanyLocations" ("CompanyId", "City", "Country");
+            CREATE INDEX IF NOT EXISTS "IX_CompanyLocations_IsActive" ON "CompanyLocations" ("IsActive");
+            """, cancellationToken);
+
+        var companyColumns = await ReadTableColumnsAsync(dbContext, "Companies", cancellationToken);
+        if (!companyColumns.Contains("JobOffersChecked"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"Companies\" ADD COLUMN \"JobOffersChecked\" INTEGER NOT NULL DEFAULT 0;",
+                cancellationToken);
+        }
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS \"IX_Companies_JobOffersChecked\" ON \"Companies\" (\"JobOffersChecked\");",
+            cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS "JobApplications" (
                 "Id" TEXT NOT NULL CONSTRAINT "PK_JobApplications" PRIMARY KEY,
                 "CreatedAt" TEXT NOT NULL, "UpdatedAt" TEXT NOT NULL,
+                "CompanyId" TEXT NULL, "CompanyLocationId" TEXT NULL,
                 "CompanyName" TEXT NOT NULL, "PositionTitle" TEXT NOT NULL,
                 "Status" TEXT NOT NULL, "WorkMode" TEXT NOT NULL,
                 "EmploymentType" TEXT NOT NULL, "Location" TEXT NOT NULL, "Country" TEXT NOT NULL,
@@ -233,7 +274,8 @@ public static class DatabaseStartupExtensions
                 "DesireRating" INTEGER NOT NULL, "FitRating" INTEGER NOT NULL, "Priority" INTEGER NOT NULL,
                 "CompanyUrl" TEXT NOT NULL, "PostingUrl" TEXT NOT NULL, "ApplicationUrl" TEXT NOT NULL,
                 "Source" TEXT NOT NULL, "ContactName" TEXT NOT NULL, "ContactEmail" TEXT NOT NULL,
-                "JobDescription" TEXT NOT NULL, "Notes" TEXT NOT NULL,
+                "JobDescription" TEXT NOT NULL, "RoleRequirements" TEXT NOT NULL,
+                "PreparationTopics" TEXT NOT NULL, "Notes" TEXT NOT NULL,
                 "DiscoveredAt" TEXT NOT NULL, "AppliedAt" TEXT NULL, "LastContactAt" TEXT NULL,
                 "FollowUpAt" TEXT NULL, "DeadlineAt" TEXT NULL, "DecisionAt" TEXT NULL,
                 "IsArchived" INTEGER NOT NULL
@@ -266,6 +308,36 @@ public static class DatabaseStartupExtensions
             );
             CREATE INDEX IF NOT EXISTS "IX_JobPreparationItems_JobApplicationStageId_SortOrder"
                 ON "JobPreparationItems" ("JobApplicationStageId", "SortOrder");
+            """, cancellationToken);
+
+        var jobApplicationColumns = await ReadTableColumnsAsync(dbContext, "JobApplications", cancellationToken);
+        if (!jobApplicationColumns.Contains("CompanyId"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"JobApplications\" ADD COLUMN \"CompanyId\" TEXT NULL;",
+                cancellationToken);
+        }
+        if (!jobApplicationColumns.Contains("CompanyLocationId"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"JobApplications\" ADD COLUMN \"CompanyLocationId\" TEXT NULL;",
+                cancellationToken);
+        }
+        if (!jobApplicationColumns.Contains("RoleRequirements"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"JobApplications\" ADD COLUMN \"RoleRequirements\" TEXT NOT NULL DEFAULT '';",
+                cancellationToken);
+        }
+        if (!jobApplicationColumns.Contains("PreparationTopics"))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"JobApplications\" ADD COLUMN \"PreparationTopics\" TEXT NOT NULL DEFAULT '';",
+                cancellationToken);
+        }
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS "IX_JobApplications_CompanyId" ON "JobApplications" ("CompanyId");
+            CREATE INDEX IF NOT EXISTS "IX_JobApplications_CompanyLocationId" ON "JobApplications" ("CompanyLocationId");
             """, cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""

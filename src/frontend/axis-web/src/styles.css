@@ -6861,6 +6861,10 @@ button,
 .page-jobs .page-ambient { clip-path: polygon(5% 20%, 70% 20%, 70% 5%, 98% 50%, 70% 95%, 70% 80%, 5% 80%); background: color-mix(in srgb, var(--cyan) 12%, var(--surface)); animation: job-route 5.4s ease-in-out infinite; }
 .page-jobs .page-ambient i { inset: 24px 18px; border-block: 1px dashed var(--accent); animation: job-scan 4s linear infinite; }
 .page-jobs .app-editor-drawer { width: min(820px, calc(100vw - 36px)); }
+.career-view-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 7px; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--surface) 84%, transparent); }
+.career-view-switch button { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 46px; border-color: transparent; background: transparent; color: var(--muted); }
+.career-view-switch button strong { display: grid; min-width: 25px; height: 25px; place-items: center; padding-inline: 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--text); font-size: 10px; }
+.career-view-switch button.active { border-color: color-mix(in srgb, var(--cyan) 55%, var(--line)); background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), color-mix(in srgb, var(--cyan) 10%, var(--surface))); color: var(--text); box-shadow: inset 0 0 24px color-mix(in srgb, var(--cyan) 5%, transparent); }
 .job-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .job-stats .summary-card { position: relative; display: grid; gap: 6px; min-height: 82px; overflow: hidden; padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--cyan); border-radius: 5px; background: linear-gradient(135deg, color-mix(in srgb, var(--cyan) 6%, var(--surface-raised)), var(--surface-raised)); box-shadow: var(--shadow); }
 .job-stats .summary-card::after { position: absolute; right: -16px; bottom: -24px; width: 70px; height: 70px; border: 1px dashed color-mix(in srgb, var(--accent) 28%, transparent); border-radius: 50%; content: ''; animation: slow-spin 11s linear infinite; }
@@ -6901,6 +6905,17 @@ button,
 .job-process-summary span:last-child { border-right: 0; }
 .job-process-summary small { color: var(--muted); font-size: 9px; font-weight: 850; text-transform: uppercase; }
 .job-process-summary strong { overflow-wrap: anywhere; }
+.job-company-context { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 14px 0; border: 1px solid color-mix(in srgb, var(--cyan) 34%, var(--line)); background: linear-gradient(110deg, color-mix(in srgb, var(--cyan) 6%, var(--surface)), color-mix(in srgb, var(--accent) 5%, var(--surface))); }
+.job-company-context span { display: grid; gap: 4px; min-width: 0; padding: 11px 12px; border-right: 1px solid var(--line); }
+.job-company-context span:last-child { border-right: 0; }
+.job-company-context small { color: var(--muted); font-size: 9px; font-weight: 850; text-transform: uppercase; }
+.job-company-context strong { overflow-wrap: anywhere; font-size: 12px; }
+.job-role-intelligence { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0 18px; }
+.job-role-intelligence section { min-width: 0; padding: 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--surface-raised) 78%, transparent); }
+.job-role-intelligence section:last-child { border-left-color: var(--cyan); }
+.job-role-intelligence section > p:not(.eyebrow) { margin: 7px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.55; }
+.job-topic-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.job-topic-list span { padding: 6px 9px; border: 1px solid color-mix(in srgb, var(--cyan) 46%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--cyan) 8%, var(--surface)); color: var(--text); font-size: 10px; font-weight: 800; }
 .job-links { display: flex; flex-wrap: wrap; gap: 9px; margin: 14px 0; }
 .job-links a { padding: 7px 10px; border: 1px solid var(--line); border-radius: 4px; color: var(--cyan); font-size: 11px; font-weight: 800; text-decoration: none; }
 .job-links a:hover { border-color: var(--cyan); background: color-mix(in srgb, var(--cyan) 8%, transparent); }
@@ -6928,6 +6943,119 @@ button,
 .job-checklist-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 9px; }
 .job-stage-form { display: grid; gap: 11px; margin: 14px 0; padding: 14px; border: 1px solid var(--line-strong); background: var(--surface); }
 .job-application-form .form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.job-form-section { display: grid; gap: 11px; padding: 14px; border: 1px solid color-mix(in srgb, var(--cyan) 40%, var(--line)); border-left: 3px solid var(--cyan); background: linear-gradient(110deg, color-mix(in srgb, var(--cyan) 6%, var(--surface)), color-mix(in srgb, var(--accent) 4%, var(--surface))); }
+.job-form-section h4 { margin: 0; }
+.job-form-section .helper-copy { margin: -2px 0 0; font-size: 10px; }
+
+/* Accessible vaporwave check controls. Checkbox inputs must not inherit the
+   full-width text-field treatment used by the rest of the editor. */
+.toggle-field {
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 10px 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--cyan) 30%, var(--line));
+  border-radius: 8px;
+  background: linear-gradient(110deg, color-mix(in srgb, var(--cyan) 5%, var(--surface)), color-mix(in srgb, var(--accent) 4%, var(--surface)));
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1.35;
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+.toggle-field:hover { border-color: color-mix(in srgb, var(--cyan) 65%, var(--line)); color: var(--text); }
+.toggle-field:has(input:checked) { border-color: color-mix(in srgb, var(--accent) 65%, var(--line)); background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), color-mix(in srgb, var(--cyan) 7%, var(--surface))); color: var(--text); box-shadow: inset 3px 0 var(--accent); }
+.toggle-field > span { min-width: 0; overflow-wrap: anywhere; font-size: 11px; font-weight: 800; }
+.toggle-field input[type="checkbox"],
+.company-offer-toggle input[type="checkbox"] {
+  appearance: none;
+  display: grid;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+  place-content: center;
+  border: 1px solid color-mix(in srgb, var(--cyan) 72%, var(--line));
+  border-radius: 7px;
+  outline: 0;
+  background: color-mix(in srgb, var(--bg-alt) 86%, transparent);
+  box-shadow: inset 0 0 12px color-mix(in srgb, var(--cyan) 8%, transparent);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+.toggle-field input[type="checkbox"]::before,
+.company-offer-toggle input[type="checkbox"]::before {
+  width: 10px;
+  height: 6px;
+  border-bottom: 2px solid #fff;
+  border-left: 2px solid #fff;
+  content: '';
+  transform: translateY(-1px) rotate(-45deg) scale(0);
+  transform-origin: center;
+  transition: transform 130ms ease;
+}
+.toggle-field input[type="checkbox"]:checked,
+.company-offer-toggle input[type="checkbox"]:checked {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--sun));
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--sun) 76%, var(--accent)));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent), 0 0 16px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.toggle-field input[type="checkbox"]:checked::before,
+.company-offer-toggle input[type="checkbox"]:checked::before { transform: translateY(-1px) rotate(-45deg) scale(1); }
+.toggle-field input[type="checkbox"]:focus-visible,
+.company-offer-toggle input[type="checkbox"]:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+.toggle-field input[type="checkbox"]:disabled,
+.company-offer-toggle input[type="checkbox"]:disabled { cursor: wait; opacity: .55; }
+
+.company-filter-bar { grid-template-columns: minmax(260px, 1fr) repeat(2, minmax(170px, .5fr)) minmax(150px, .4fr); }
+.company-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.company-card { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 8px; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 7%, var(--surface-raised)), color-mix(in srgb, var(--cyan) 4%, var(--surface-raised))); box-shadow: var(--shadow); transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease; }
+.company-card.offers-checked { border-color: color-mix(in srgb, var(--sun) 62%, var(--line)); border-top-color: var(--sun); background: linear-gradient(135deg, color-mix(in srgb, var(--sun) 17%, var(--surface-raised)), color-mix(in srgb, var(--accent) 12%, var(--surface-raised)) 55%, color-mix(in srgb, var(--danger) 7%, var(--surface-raised))); box-shadow: 0 0 0 1px color-mix(in srgb, var(--sun) 10%, transparent), 0 10px 28px color-mix(in srgb, var(--accent) 10%, transparent), var(--shadow); }
+.company-card.selected { border-color: var(--cyan); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cyan) 15%, transparent), var(--shadow); }
+.company-card-main { display: grid; align-content: start; gap: 7px; min-height: 150px; padding: 16px; border: 0; border-radius: 0; background: transparent; color: var(--text); text-align: left; }
+.company-card-main:hover:not(:disabled) { background: color-mix(in srgb, var(--cyan) 5%, transparent); transform: none; }
+.company-card-main > strong { overflow-wrap: anywhere; font-size: 20px; }
+.company-card-main > small { color: var(--muted); line-height: 1.45; }
+.company-card-kicker { color: var(--muted); font-size: 9px; font-weight: 850; text-transform: uppercase; }
+.offer-check-chip { display: inline-flex; width: fit-content; align-items: center; min-height: 23px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 9px; font-weight: 850; text-transform: uppercase; }
+.offer-check-chip.checked { border-color: color-mix(in srgb, var(--sun) 68%, var(--line)); background: linear-gradient(100deg, color-mix(in srgb, var(--sun) 13%, transparent), color-mix(in srgb, var(--accent) 10%, transparent)); color: var(--sun); }
+.company-offer-toggle { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 9px 12px; border-top: 1px solid color-mix(in srgb, var(--line) 68%, transparent); background: color-mix(in srgb, var(--bg-alt) 58%, transparent); color: var(--muted); cursor: pointer; font-size: 10px; font-weight: 800; }
+.company-offer-toggle input { flex: 0 0 auto; }
+.company-card.offers-checked .company-offer-toggle { border-top-color: color-mix(in srgb, var(--sun) 32%, var(--line)); background: linear-gradient(100deg, color-mix(in srgb, var(--sun) 9%, var(--bg-alt)), color-mix(in srgb, var(--accent) 7%, var(--bg-alt))); color: var(--text); }
+.company-card > .row-actions { padding: 10px; border-top: 1px solid var(--line); }
+.company-card > .row-actions button { flex: 1 1 70px; min-height: 34px; padding-inline: 8px; font-size: 9px; }
+.visa-chip { display: inline-flex; width: fit-content; align-items: center; min-height: 24px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--secondary); color: var(--muted); font-size: 9px; font-weight: 850; text-transform: uppercase; }
+.visa-chip.visa-yes { border-color: color-mix(in srgb, var(--success) 64%, var(--line)); color: var(--success); }
+.visa-chip.visa-limited { border-color: color-mix(in srgb, var(--sun) 64%, var(--line)); color: var(--sun); }
+.visa-chip.visa-no { border-color: color-mix(in srgb, var(--danger) 58%, var(--line)); color: var(--danger); }
+.company-workspace { overflow: hidden; }
+.company-workspace::before { position: absolute; inset: 0; background: radial-gradient(circle at 90% 4%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 25%); content: ''; pointer-events: none; }
+.company-workspace > * { position: relative; }
+.company-fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); border: 1px solid var(--line); }
+.company-fact-grid span { display: grid; gap: 5px; padding: 12px; border-right: 1px solid var(--line); }
+.company-fact-grid span:last-child { border-right: 0; }
+.company-fact-grid small { color: var(--muted); font-size: 9px; font-weight: 850; text-transform: uppercase; }
+.company-fact-grid .company-fact-checked { background: linear-gradient(110deg, color-mix(in srgb, var(--sun) 10%, transparent), color-mix(in srgb, var(--accent) 7%, transparent)); }
+.company-fact-grid .company-fact-checked strong { color: var(--sun); }
+.company-note { margin-top: 9px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--line) 65%, transparent); background: color-mix(in srgb, var(--bg-alt) 68%, transparent); }
+.company-note small { color: var(--muted); font-size: 9px; font-weight: 850; text-transform: uppercase; }
+.company-note p { margin: 6px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.55; }
+.company-location-heading { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.company-location-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.company-location-card { display: grid; align-content: start; gap: 9px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-left: 3px solid var(--cyan); background: color-mix(in srgb, var(--surface-raised) 80%, transparent); }
+.company-location-card.inactive { opacity: .64; border-left-color: var(--muted); }
+.company-location-card h4 { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 17px; }
+.company-location-card p { margin: 0; overflow-wrap: anywhere; color: var(--muted); line-height: 1.45; }
+.company-location-card > small { color: var(--muted); }
+.company-location-card .job-links { margin: 0; }
+.company-toggle { align-self: end; min-height: 44px; }
+.company-offers-form-toggle { min-height: 52px; padding: 11px 12px; border-color: color-mix(in srgb, var(--sun) 38%, var(--line)); background: linear-gradient(110deg, color-mix(in srgb, var(--sun) 6%, var(--surface)), color-mix(in srgb, var(--accent) 5%, var(--surface))); }
+.company-offers-form-toggle:has(input:checked) { border-color: color-mix(in srgb, var(--sun) 72%, var(--line)); background: linear-gradient(110deg, color-mix(in srgb, var(--sun) 14%, var(--surface)), color-mix(in srgb, var(--accent) 10%, var(--surface))); box-shadow: inset 3px 0 var(--sun); }
 
 /* Installable app controls. API responses and the local database deliberately
    stay outside the service worker caches. */
@@ -7030,17 +7158,64 @@ button,
 @media (max-width: 1180px) {
   .job-filter-bar { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
   .job-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .company-filter-bar { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
+  .company-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .job-table-wrap { overflow: visible; border: 0; background: transparent; }
+  .job-table { display: block; min-width: 0; background: transparent; }
+  .job-table thead { display: none; }
+  .job-table tbody { display: grid; gap: 12px; }
+  .job-table tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-left: 3px solid var(--cyan); border-radius: 8px; background: color-mix(in srgb, var(--surface-raised) 88%, transparent); box-shadow: var(--shadow); }
+  .job-table tbody tr:hover,
+  .job-table tbody tr.selected { background: color-mix(in srgb, var(--cyan) 6%, var(--surface-raised)); box-shadow: inset 3px 0 var(--cyan), var(--shadow); }
+  .job-table td { position: relative; display: block; min-width: 0; padding: 29px 12px 12px; border-right: 1px solid color-mix(in srgb, var(--line) 60%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+  .job-table td:nth-child(even) { border-right: 0; }
+  .job-table td:first-child,
+  .job-table td:last-child { grid-column: 1 / -1; border-right: 0; }
+  .job-table td::before { position: absolute; top: 9px; left: 12px; color: var(--muted); content: attr(data-label); font-size: 8px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; }
+  .job-table .job-name-button { width: 100%; }
+  .job-table .row-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+  .job-table .row-actions button { width: 100%; min-height: 40px; }
 }
 @media (max-width: 720px) {
   .readable-chart-tooltip { position: static; margin: 8px 0 0 48px; }
   .readable-chart-legend { padding-left: 48px; }
   .job-filter-bar,
   .job-process-summary,
+  .job-company-context,
+  .job-role-intelligence,
+  .company-filter-bar,
+  .company-card-grid,
+  .company-fact-grid,
+  .company-location-grid,
   .job-application-form .form-grid.three { grid-template-columns: 1fr; }
   .job-process-summary span { border-right: 0; border-bottom: 1px solid var(--line); }
+  .job-company-context span,
+  .company-fact-grid span { border-right: 0; border-bottom: 1px solid var(--line); }
+  .job-company-context span:last-child,
+  .company-fact-grid span:last-child { border-bottom: 0; }
   .job-stage { grid-template-columns: 34px minmax(0, 1fr); }
   .job-stage-header { flex-direction: column; }
   .job-stage-header .row-actions { justify-content: flex-start; }
+}
+
+@media (max-width: 640px) {
+  .career-view-switch { position: sticky; z-index: 12; top: calc(62px + env(safe-area-inset-top)); padding: 5px; backdrop-filter: blur(18px); }
+  .career-view-switch button { min-height: 44px; padding-inline: 8px; }
+  .job-stats { gap: 8px; }
+  .job-stats .summary-card { min-height: 76px; padding: 12px; }
+  .job-table tbody tr { grid-template-columns: minmax(0, 1fr); }
+  .job-table td,
+  .job-table td:first-child,
+  .job-table td:last-child { grid-column: auto; border-right: 0; }
+  .job-table .row-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .job-table .row-actions .danger-button { grid-column: 1 / -1; }
+  .company-card-main { min-height: 0; padding: 14px; }
+  .company-card > .row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .company-card > .row-actions .danger-button { grid-column: 1 / -1; }
+  .company-location-heading > button { width: 100%; }
+  .company-location-card .row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

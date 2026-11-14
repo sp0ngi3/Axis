@@ -117,6 +117,7 @@ MapPhysique(app);
 MapMood(app);
 MapDiary(app);
 MapHistory(app);
+MapCompanies(app);
 MapJobApplications(app);
 app.MapPersonalEndpoints();
 app.MapRoadmapEndpoints();
@@ -1181,6 +1182,140 @@ static void MapPhysique(WebApplication app)
     }
 }
 
+static void MapCompanies(WebApplication app)
+{
+    var group = app.MapGroup("/api/companies");
+
+    group.MapGet("/", async (bool? includeArchived, AxisDbContext db, CancellationToken ct) =>
+    {
+        var query = db.Companies.AsNoTracking()
+            .Include(item => item.Locations.OrderBy(location => location.Country).ThenBy(location => location.City))
+            .AsQueryable();
+        if (includeArchived != true) query = query.Where(item => !item.IsArchived);
+        var rows = await query.OrderBy(item => item.Name).ToListAsync(ct);
+        return Results.Ok(rows.Select(ToCompanyResponse));
+    });
+
+    group.MapPost("/", async (CompanyRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest("Company name is required.");
+        var item = new Company();
+        ApplyCompany(item, request);
+        db.Companies.Add(item);
+        await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/companies/{item.Id}", ToCompanyResponse(item));
+    });
+
+    group.MapPut("/{id:guid}", async (Guid id, CompanyRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.Companies.Include(company => company.Locations).SingleOrDefaultAsync(company => company.Id == id, ct);
+        if (item is null) return Results.NotFound();
+        if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest("Company name is required.");
+        ApplyCompany(item, request);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ToCompanyResponse(item));
+    });
+
+    group.MapDelete("/{id:guid}", async (Guid id, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.Companies.FindAsync([id], ct);
+        if (item is null) return Results.NotFound();
+        await db.JobApplications.Where(application => application.CompanyId == id).ExecuteUpdateAsync(
+            setters => setters
+                .SetProperty(application => application.CompanyId, (Guid?)null)
+                .SetProperty(application => application.CompanyLocationId, (Guid?)null), ct);
+        db.Companies.Remove(item);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+
+    group.MapPost("/{companyId:guid}/locations", async (Guid companyId, CompanyLocationRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        if (!await db.Companies.AnyAsync(company => company.Id == companyId, ct)) return Results.NotFound();
+        if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest("Location name is required.");
+        var item = new CompanyLocation { CompanyId = companyId };
+        ApplyCompanyLocation(item, request);
+        db.CompanyLocations.Add(item);
+        await db.SaveChangesAsync(ct);
+        return Results.Created($"/api/companies/{companyId}/locations/{item.Id}", ToCompanyLocationResponse(item));
+    });
+
+    group.MapPut("/locations/{locationId:guid}", async (Guid locationId, CompanyLocationRequest request, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.CompanyLocations.FindAsync([locationId], ct);
+        if (item is null) return Results.NotFound();
+        if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest("Location name is required.");
+        ApplyCompanyLocation(item, request);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ToCompanyLocationResponse(item));
+    });
+
+    group.MapDelete("/locations/{locationId:guid}", async (Guid locationId, AxisDbContext db, CancellationToken ct) =>
+    {
+        var item = await db.CompanyLocations.FindAsync([locationId], ct);
+        if (item is null) return Results.NotFound();
+        await db.JobApplications.Where(application => application.CompanyLocationId == locationId).ExecuteUpdateAsync(
+            setters => setters.SetProperty(application => application.CompanyLocationId, (Guid?)null), ct);
+        db.CompanyLocations.Remove(item);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    });
+}
+
+static void ApplyCompany(Company item, CompanyRequest request)
+{
+    item.Name = request.Name.Trim();
+    item.Website = request.Website?.Trim() ?? string.Empty;
+    item.CareersUrl = request.CareersUrl?.Trim() ?? string.Empty;
+    item.Industry = request.Industry?.Trim() ?? string.Empty;
+    item.CompanySize = request.CompanySize?.Trim() ?? string.Empty;
+    item.Headquarters = request.Headquarters?.Trim() ?? string.Empty;
+    item.Description = request.Description?.Trim() ?? string.Empty;
+    item.TechStack = request.TechStack?.Trim() ?? string.Empty;
+    item.VisaSponsorship = NormalizeVisaSponsorship(request.VisaSponsorship, false);
+    item.VisaNotes = request.VisaNotes?.Trim() ?? string.Empty;
+    item.RelocationSupport = request.RelocationSupport;
+    item.JobOffersChecked = request.JobOffersChecked;
+    item.Notes = request.Notes?.Trim() ?? string.Empty;
+    item.IsArchived = request.IsArchived;
+}
+
+static void ApplyCompanyLocation(CompanyLocation item, CompanyLocationRequest request)
+{
+    item.Name = request.Name.Trim();
+    item.City = request.City?.Trim() ?? string.Empty;
+    item.Region = request.Region?.Trim() ?? string.Empty;
+    item.Country = request.Country?.Trim() ?? string.Empty;
+    item.Address = request.Address?.Trim() ?? string.Empty;
+    item.CareersUrl = request.CareersUrl?.Trim() ?? string.Empty;
+    item.VisaSponsorship = NormalizeVisaSponsorship(request.VisaSponsorship, true);
+    item.Notes = request.Notes?.Trim() ?? string.Empty;
+    item.IsActive = request.IsActive;
+}
+
+static string NormalizeVisaSponsorship(string? value, bool allowInherit)
+{
+    var allowed = allowInherit
+        ? new[] { "Inherit", "Unknown", "No", "Limited", "Yes" }
+        : new[] { "Unknown", "No", "Limited", "Yes" };
+    return allowed.FirstOrDefault(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase)) ?? allowed[0];
+}
+
+static object ToCompanyResponse(Company item) => new
+{
+    item.Id, item.CreatedAt, item.UpdatedAt, item.Name, item.Website, item.CareersUrl,
+    item.Industry, item.CompanySize, item.Headquarters, item.Description, item.TechStack,
+    item.VisaSponsorship, item.VisaNotes, item.RelocationSupport, item.JobOffersChecked, item.Notes, item.IsArchived,
+    Locations = item.Locations.OrderBy(location => location.Country).ThenBy(location => location.City).Select(ToCompanyLocationResponse)
+};
+
+static object ToCompanyLocationResponse(CompanyLocation item) => new
+{
+    item.Id, item.CompanyId, item.CreatedAt, item.UpdatedAt, item.Name, item.City,
+    item.Region, item.Country, item.Address, item.CareersUrl, item.VisaSponsorship,
+    item.Notes, item.IsActive
+};
+
 static void MapJobApplications(WebApplication app)
 {
     var group = app.MapGroup("/api/job-applications");
@@ -1200,6 +1335,8 @@ static void MapJobApplications(WebApplication app)
     {
         if (string.IsNullOrWhiteSpace(request.CompanyName) || string.IsNullOrWhiteSpace(request.PositionTitle))
             return Results.BadRequest("Company and position are required.");
+        var selectionError = await ValidateCompanySelectionAsync(request, db, ct);
+        if (selectionError is not null) return Results.BadRequest(selectionError);
         var item = new JobApplication();
         ApplyJobApplication(item, request);
         AddDefaultJobStages(item);
@@ -1214,6 +1351,8 @@ static void MapJobApplications(WebApplication app)
         if (item is null) return Results.NotFound();
         if (string.IsNullOrWhiteSpace(request.CompanyName) || string.IsNullOrWhiteSpace(request.PositionTitle))
             return Results.BadRequest("Company and position are required.");
+        var selectionError = await ValidateCompanySelectionAsync(request, db, ct);
+        if (selectionError is not null) return Results.BadRequest(selectionError);
         ApplyJobApplication(item, request);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToJobApplicationResponse(item));
@@ -1291,8 +1430,22 @@ static void MapJobApplications(WebApplication app)
     });
 }
 
+static async Task<string?> ValidateCompanySelectionAsync(JobApplicationRequest request, AxisDbContext db, CancellationToken ct)
+{
+    if (request.CompanyId is null && request.CompanyLocationId is not null)
+        return "A company location cannot be selected without its company.";
+    if (request.CompanyId is not null && !await db.Companies.AnyAsync(item => item.Id == request.CompanyId, ct))
+        return "The selected company no longer exists.";
+    if (request.CompanyLocationId is not null && !await db.CompanyLocations.AnyAsync(
+            item => item.Id == request.CompanyLocationId && item.CompanyId == request.CompanyId, ct))
+        return "The selected location does not belong to the selected company.";
+    return null;
+}
+
 static void ApplyJobApplication(JobApplication item, JobApplicationRequest request)
 {
+    item.CompanyId = request.CompanyId;
+    item.CompanyLocationId = request.CompanyLocationId;
     item.CompanyName = request.CompanyName.Trim();
     item.PositionTitle = request.PositionTitle.Trim();
     item.Status = request.Status;
@@ -1313,6 +1466,8 @@ static void ApplyJobApplication(JobApplication item, JobApplicationRequest reque
     item.ContactName = request.ContactName?.Trim() ?? string.Empty;
     item.ContactEmail = request.ContactEmail?.Trim() ?? string.Empty;
     item.JobDescription = request.JobDescription?.Trim() ?? string.Empty;
+    item.RoleRequirements = request.RoleRequirements?.Trim() ?? string.Empty;
+    item.PreparationTopics = request.PreparationTopics?.Trim() ?? string.Empty;
     item.Notes = request.Notes?.Trim() ?? string.Empty;
     item.DiscoveredAt = request.DiscoveredAt;
     item.AppliedAt = request.AppliedAt;
@@ -1393,11 +1548,11 @@ static void AddDefaultJobStages(JobApplication application)
 
 static object ToJobApplicationResponse(JobApplication item) => new
 {
-    item.Id, item.CreatedAt, item.UpdatedAt, item.CompanyName, item.PositionTitle,
+    item.Id, item.CreatedAt, item.UpdatedAt, item.CompanyId, item.CompanyLocationId, item.CompanyName, item.PositionTitle,
     item.Status, item.WorkMode, item.EmploymentType, item.Location, item.Country,
     item.SalaryMin, item.SalaryMax, item.Currency, item.DesireRating, item.FitRating, item.Priority,
     item.CompanyUrl, item.PostingUrl, item.ApplicationUrl, item.Source, item.ContactName, item.ContactEmail,
-    item.JobDescription, item.Notes, item.DiscoveredAt, item.AppliedAt, item.LastContactAt,
+    item.JobDescription, item.RoleRequirements, item.PreparationTopics, item.Notes, item.DiscoveredAt, item.AppliedAt, item.LastContactAt,
     item.FollowUpAt, item.DeadlineAt, item.DecisionAt, item.IsArchived,
     Stages = item.Stages.OrderBy(stage => stage.SortOrder).Select(stage => new
     {

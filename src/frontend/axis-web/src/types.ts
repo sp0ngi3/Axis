@@ -216,6 +216,45 @@ export interface FocusNote {
 export type JobApplicationStatus = 'Scouted' | 'Shortlisted' | 'Preparing' | 'Applied' | 'Interviewing' | 'Offer' | 'Accepted' | 'Rejected' | 'Withdrawn' | 'Archived';
 export type JobWorkMode = 'OnSite' | 'Hybrid' | 'Remote';
 export type JobStageStatus = 'Planned' | 'Preparing' | 'Scheduled' | 'Completed' | 'Cancelled';
+export type VisaSponsorship = 'Unknown' | 'No' | 'Limited' | 'Yes';
+export type LocationVisaSponsorship = 'Inherit' | VisaSponsorship;
+
+export interface CompanyLocation {
+  id: string;
+  companyId: string;
+  name: string;
+  city: string;
+  region: string;
+  country: string;
+  address: string;
+  careersUrl: string;
+  visaSponsorship: LocationVisaSponsorship;
+  notes: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Company {
+  id: string;
+  name: string;
+  website: string;
+  careersUrl: string;
+  industry: string;
+  companySize: string;
+  headquarters: string;
+  description: string;
+  techStack: string;
+  visaSponsorship: VisaSponsorship;
+  visaNotes: string;
+  relocationSupport: boolean;
+  jobOffersChecked: boolean;
+  notes: string;
+  isArchived: boolean;
+  locations: CompanyLocation[];
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface JobPreparationItem {
   id: string;
@@ -244,6 +283,8 @@ export interface JobApplicationStage {
 
 export interface JobApplication {
   id: string;
+  companyId?: string | null;
+  companyLocationId?: string | null;
   companyName: string;
   positionTitle: string;
   status: JobApplicationStatus;
@@ -264,6 +305,8 @@ export interface JobApplication {
   contactName: string;
   contactEmail: string;
   jobDescription: string;
+  roleRequirements: string;
+  preparationTopics: string;
   notes: string;
   discoveredAt: string;
   appliedAt?: string | null;

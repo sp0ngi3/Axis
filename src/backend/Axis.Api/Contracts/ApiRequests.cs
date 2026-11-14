@@ -148,6 +148,33 @@ public sealed record FocusNoteRequest(
     bool IsPinned,
     bool IsArchived);
 
+public sealed record CompanyRequest(
+    string Name,
+    string? Website,
+    string? CareersUrl,
+    string? Industry,
+    string? CompanySize,
+    string? Headquarters,
+    string? Description,
+    string? TechStack,
+    string? VisaSponsorship,
+    string? VisaNotes,
+    bool RelocationSupport,
+    string? Notes,
+    bool IsArchived,
+    bool JobOffersChecked = false);
+
+public sealed record CompanyLocationRequest(
+    string Name,
+    string? City,
+    string? Region,
+    string? Country,
+    string? Address,
+    string? CareersUrl,
+    string? VisaSponsorship,
+    string? Notes,
+    bool IsActive);
+
 public sealed record JobApplicationRequest(
     string CompanyName,
     string PositionTitle,
@@ -176,7 +203,11 @@ public sealed record JobApplicationRequest(
     DateTimeOffset? FollowUpAt,
     DateTimeOffset? DeadlineAt,
     DateTimeOffset? DecisionAt,
-    bool IsArchived);
+    bool IsArchived,
+    Guid? CompanyId = null,
+    Guid? CompanyLocationId = null,
+    string? RoleRequirements = null,
+    string? PreparationTopics = null);
 
 public sealed record JobStageRequest(
     string Title,

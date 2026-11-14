@@ -278,6 +278,8 @@ function installFetchMock() {
         return jsonResponse([review]);
       case '/api/focus-notes':
         return jsonResponse([focusNote]);
+      case '/api/companies':
+        return jsonResponse([]);
       case '/api/job-applications':
         return jsonResponse([]);
       case '/api/roadmaps':
@@ -404,6 +406,23 @@ describe('Axis app integration workflows', () => {
       && item.path === '/api/roadmap-items/roadmap-item-1'
       && item.body?.includes('Completed')
     ))).toBe(true));
+  });
+
+  it('creates reusable company intelligence from the Career Pipeline', async () => {
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Today' });
+
+    await openPage(/career pipeline/i);
+    fireEvent.click(screen.getByRole('tab', { name: /companies/i }));
+    expect(await screen.findByRole('heading', { name: 'Companies and offices' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add company' }));
+    fireEvent.change(screen.getByLabelText('Company name'), { target: { value: 'Google' } });
+    fireEvent.change(screen.getByLabelText('Industry'), { target: { value: 'Technology' } });
+    fireEvent.change(screen.getByLabelText('Visa sponsorship'), { target: { value: 'Yes' } });
+    fireEvent.click(screen.getByLabelText('I checked the current job offers'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save company' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST' && call.path === '/api/companies' && call.body?.includes('Google') && call.body?.includes('"jobOffersChecked":true'))).toBe(true));
   });
 
   it('moves the countdown and its mirrored past date together as time advances', () => {

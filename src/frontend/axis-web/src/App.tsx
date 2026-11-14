@@ -39,6 +39,7 @@ import {
   TextField
 } from './components/common';
 import { AppNavigation } from './components/AppNavigation';
+import { CompanyDirectory } from './components/jobs/CompanyDirectory';
 import { formatDateTime, formatMoney, formatShortDate, paginate, roundNumber } from './lib/format';
 import {
   assessSleepDuration,
@@ -101,6 +102,7 @@ import type {
   HistoryDay,
   LifeLesson,
   FocusNote,
+  Company,
   JobApplication,
   JobApplicationStage,
   JobApplicationStatus,
@@ -156,6 +158,7 @@ export default function App() {
   const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
   const [lifeLessons, setLifeLessons] = useState<LifeLesson[]>([]);
   const [focusNotes, setFocusNotes] = useState<FocusNote[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [jobApplications, setJobApplications] = useState<JobApplication[]>([]);
   const [savingsEntries, setSavingsEntries] = useState<SavingsEntry[]>([]);
   const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
@@ -191,7 +194,7 @@ export default function App() {
       const health = await api.waitUntilReady<AppInfo>();
       setAppInfo(health);
       setConnectionState('loading');
-      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, lessonRows, focusRows, jobRows, savingsRows, wishlistRows, roadmapRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
+      const [lifeAreas, activeGoals, progressRows, recentActivities, templateRows, recurrenceRows, metricRows, countdownRows, physiqueRows, moodRows, diaryRows, lessonRows, focusRows, companyRows, jobRows, savingsRows, wishlistRows, roadmapRows, wikiRows, reviewRows, todayData, suggestionRows, overviewData, balanceRows] = await Promise.all([
         api.get<LifeArea[]>('/api/life-areas'),
         api.get<Goal[]>('/api/goals'),
         api.get<GoalProgress[]>('/api/dashboard/progress'),
@@ -205,6 +208,7 @@ export default function App() {
         api.get<DiaryEntry[]>('/api/diary'),
         api.get<LifeLesson[]>('/api/life-lessons'),
         api.get<FocusNote[]>('/api/focus-notes?includeArchived=true'),
+        api.get<Company[]>('/api/companies?includeArchived=true'),
         api.get<JobApplication[]>('/api/job-applications?includeArchived=true'),
         api.get<SavingsEntry[]>('/api/money/savings'),
         api.get<WishlistItem[]>('/api/money/wishlist'),
@@ -230,6 +234,7 @@ export default function App() {
       setDiaryEntries(diaryRows);
       setLifeLessons(lessonRows);
       setFocusNotes(focusRows);
+      setCompanies(companyRows);
       setJobApplications(jobRows);
       setSavingsEntries(savingsRows);
       setWishlistItems(wishlistRows);
@@ -492,12 +497,23 @@ export default function App() {
         {page === 'jobs' && (
           <JobApplicationsPage
             applications={jobApplications}
+            companies={companies}
             busy={isBusy}
             onSave={(body, id) => runAction(
               () => id ? api.put(`/api/job-applications/${id}`, body) : api.post('/api/job-applications', body),
               id ? 'Job application updated.' : 'Job opportunity added.'
             )}
             onDelete={(id) => runAction(() => api.delete(`/api/job-applications/${id}`), 'Job application deleted.')}
+            onCompanySave={(body, id) => runAction(
+              () => id ? api.put(`/api/companies/${id}`, body) : api.post('/api/companies', body),
+              id ? 'Company updated.' : 'Company added.'
+            )}
+            onCompanyDelete={(id) => runAction(() => api.delete(`/api/companies/${id}`), 'Company deleted. Application snapshots were preserved.')}
+            onLocationSave={(companyId, body, id) => runAction(
+              () => id ? api.put(`/api/companies/locations/${id}`, body) : api.post(`/api/companies/${companyId}/locations`, body),
+              id ? 'Company location updated.' : 'Company location added.'
+            )}
+            onLocationDelete={(id) => runAction(() => api.delete(`/api/companies/locations/${id}`), 'Company location deleted. Application snapshots were preserved.')}
             onStageSave={(applicationId, body, id) => runAction(
               () => id ? api.put(`/api/job-applications/stages/${id}`, body) : api.post(`/api/job-applications/${applicationId}/stages`, body),
               id ? 'Recruitment stage updated.' : 'Recruitment stage added.'
@@ -2263,14 +2279,20 @@ function TodayFocusNotes(props: { notes: FocusNote[]; onOpen: () => void }) {
 
 function JobApplicationsPage(props: {
   applications: JobApplication[];
+  companies: Company[];
   busy: boolean;
   onSave: (body: unknown, id?: string) => void;
   onDelete: (id: string) => void;
+  onCompanySave: (body: unknown, id?: string) => void;
+  onCompanyDelete: (id: string) => void;
+  onLocationSave: (companyId: string, body: unknown, id?: string) => void;
+  onLocationDelete: (id: string) => void;
   onStageSave: (applicationId: string, body: unknown, id?: string) => void;
   onStageDelete: (id: string) => void;
   onChecklistSave: (stageId: string, body: unknown, id?: string) => void;
   onChecklistDelete: (id: string) => void;
 }) {
+  const [view, setView] = useState<'applications' | 'companies'>('applications');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('active');
   const [workMode, setWorkMode] = useState('');
@@ -2322,7 +2344,13 @@ function JobApplicationsPage(props: {
 
   useEffect(() => setPage(1), [query, status, workMode, location, minimumSalary, minimumDesire, sort]);
 
+  if (view === 'companies') return <section className="stack jobs-page">
+    <CareerViewSwitch view={view} onChange={setView} applications={props.applications.length} companies={props.companies.length} />
+    <CompanyDirectory companies={props.companies} busy={props.busy} onCompanySave={props.onCompanySave} onCompanyDelete={props.onCompanyDelete} onLocationSave={props.onLocationSave} onLocationDelete={props.onLocationDelete} />
+  </section>;
+
   return <section className="stack jobs-page">
+    <CareerViewSwitch view={view} onChange={setView} applications={props.applications.length} companies={props.companies.length} />
     <div className="stats-grid four job-stats">
       <StatCard label="Active pipeline" value={props.applications.filter((item) => !item.isArchived && !terminalStatuses.includes(item.status)).length} />
       <StatCard label="Interviews" value={props.applications.filter((item) => item.status === 'Interviewing').length} />
@@ -2353,13 +2381,13 @@ function JobApplicationsPage(props: {
             const checklist = item.stages.flatMap((stage) => stage.checklist);
             const nextStage = item.stages.find((stage) => stage.status !== 'Completed' && stage.status !== 'Cancelled');
             return <tr key={item.id} className={selectedId === item.id ? 'selected' : ''}>
-              <td><button className="job-name-button" onClick={() => setSelectedId(item.id)}><strong>{item.companyName}</strong><span>{item.positionTitle}</span></button></td>
-              <td><span className={`status-chip status-${item.status.toLowerCase()}`}>{splitPascalCase(item.status)}</span></td>
-              <td><strong>{item.location || 'Not set'}</strong><span>{splitPascalCase(item.workMode)}{item.country ? ` · ${item.country}` : ''}</span></td>
-              <td>{formatSalaryRange(item)}</td>
-              <td><strong>{item.desireRating}/10 want</strong><span>{item.fitRating}/10 fit</span></td>
-              <td><strong>{nextStage?.title ?? 'Process complete'}</strong><span>{formatJobDate(item.followUpAt ?? nextStage?.scheduledAt ?? item.deadlineAt)}</span><div className="mini-progress"><i style={{ width: `${checklist.length ? checklist.filter((check) => check.isCompleted).length / checklist.length * 100 : 0}%` }} /></div></td>
-              <td><div className="row-actions"><button className="secondary-button" onClick={() => setSelectedId(item.id)}>Process</button><button className="secondary-button" onClick={() => setEditing(item)}>Edit</button><button className="danger-button" onClick={() => window.confirm(`Delete ${item.companyName} application and its stages?`) && props.onDelete(item.id)}>Delete</button></div></td>
+              <td data-label="Opportunity"><button className="job-name-button" onClick={() => setSelectedId(item.id)}><strong>{item.companyName}</strong><span>{item.positionTitle}</span></button></td>
+              <td data-label="Status"><span className={`status-chip status-${item.status.toLowerCase()}`}>{splitPascalCase(item.status)}</span></td>
+              <td data-label="Location"><strong>{item.location || 'Not set'}</strong><span>{splitPascalCase(item.workMode)}{item.country ? ` · ${item.country}` : ''}</span></td>
+              <td data-label="Compensation">{formatSalaryRange(item)}</td>
+              <td data-label="Fit"><strong>{item.desireRating}/10 want</strong><span>{item.fitRating}/10 fit</span></td>
+              <td data-label="Next action"><strong>{nextStage?.title ?? 'Process complete'}</strong><span>{formatJobDate(item.followUpAt ?? nextStage?.scheduledAt ?? item.deadlineAt)}</span><div className="mini-progress"><i style={{ width: `${checklist.length ? checklist.filter((check) => check.isCompleted).length / checklist.length * 100 : 0}%` }} /></div></td>
+              <td data-label="Actions"><div className="row-actions"><button className="secondary-button" onClick={() => setSelectedId(item.id)}>Process</button><button className="secondary-button" onClick={() => setEditing(item)}>Edit</button><button className="danger-button" onClick={() => window.confirm(`Delete ${item.companyName} application and its stages?`) && props.onDelete(item.id)}>Delete</button></div></td>
             </tr>;
           })}</tbody>
         </table>
@@ -2368,28 +2396,47 @@ function JobApplicationsPage(props: {
       <PaginationControls page={page} totalPages={paged.totalPages} totalItems={filtered.length} onPage={setPage} />
     </section>
 
-    {selected && <JobProcessWorkspace application={selected} busy={props.busy} onClose={() => setSelectedId(null)} onEdit={() => setEditing(selected)} onStageSave={props.onStageSave} onStageDelete={props.onStageDelete} onChecklistSave={props.onChecklistSave} onChecklistDelete={props.onChecklistDelete} />}
+    {selected && <JobProcessWorkspace application={selected} company={props.companies.find((company) => company.id === selected.companyId) ?? null} busy={props.busy} onClose={() => setSelectedId(null)} onEdit={() => setEditing(selected)} onStageSave={props.onStageSave} onStageDelete={props.onStageDelete} onChecklistSave={props.onChecklistSave} onChecklistDelete={props.onChecklistDelete} />}
 
     <EditorDrawer open={creating || editing !== null} label={editing ? `Edit ${editing.companyName}` : 'New opportunity'} onClose={() => { setCreating(false); setEditing(null); }}>
-      <JobApplicationForm application={editing} busy={props.busy} onSave={(body) => { props.onSave(body, editing?.id); setCreating(false); setEditing(null); }} />
+      <JobApplicationForm application={editing} companies={props.companies} busy={props.busy} onSave={(body) => { props.onSave(body, editing?.id); setCreating(false); setEditing(null); }} />
     </EditorDrawer>
   </section>;
 }
 
-function JobApplicationForm(props: { application: JobApplication | null; busy: boolean; onSave: (body: unknown) => void }) {
+function CareerViewSwitch(props: { view: 'applications' | 'companies'; applications: number; companies: number; onChange: (view: 'applications' | 'companies') => void }) {
+  return <div className="career-view-switch" role="tablist" aria-label="Career pipeline view">
+    <button type="button" role="tab" aria-selected={props.view === 'applications'} className={props.view === 'applications' ? 'active' : ''} onClick={() => props.onChange('applications')}><span>Applications</span><strong>{props.applications}</strong></button>
+    <button type="button" role="tab" aria-selected={props.view === 'companies'} className={props.view === 'companies' ? 'active' : ''} onClick={() => props.onChange('companies')}><span>Companies</span><strong>{props.companies}</strong></button>
+  </div>;
+}
+
+function JobApplicationForm(props: { application: JobApplication | null; companies: Company[]; busy: boolean; onSave: (body: unknown) => void }) {
   const item = props.application;
   const [draft, setDraft] = useState({
+    companyId: item?.companyId ?? '', companyLocationId: item?.companyLocationId ?? '',
     companyName: item?.companyName ?? '', positionTitle: item?.positionTitle ?? '', status: item?.status ?? 'Scouted' as JobApplicationStatus,
     workMode: item?.workMode ?? 'Hybrid' as JobWorkMode, employmentType: item?.employmentType ?? 'Full-time', location: item?.location ?? '', country: item?.country ?? '',
     salaryMin: item?.salaryMin?.toString() ?? '', salaryMax: item?.salaryMax?.toString() ?? '', currency: item?.currency ?? 'EUR', desireRating: item?.desireRating ?? 7,
     fitRating: item?.fitRating ?? 7, priority: item?.priority ?? 3, companyUrl: item?.companyUrl ?? '', postingUrl: item?.postingUrl ?? '', applicationUrl: item?.applicationUrl ?? '',
-    source: item?.source ?? '', contactName: item?.contactName ?? '', contactEmail: item?.contactEmail ?? '', jobDescription: item?.jobDescription ?? '', notes: item?.notes ?? '',
+    source: item?.source ?? '', contactName: item?.contactName ?? '', contactEmail: item?.contactEmail ?? '', jobDescription: item?.jobDescription ?? '', roleRequirements: item?.roleRequirements ?? '', preparationTopics: item?.preparationTopics ?? '', notes: item?.notes ?? '',
     discoveredAt: toLocalInput(new Date(item?.discoveredAt ?? Date.now())), appliedAt: item?.appliedAt ? toLocalInput(new Date(item.appliedAt)) : '',
     lastContactAt: item?.lastContactAt ? toLocalInput(new Date(item.lastContactAt)) : '', followUpAt: item?.followUpAt ? toLocalInput(new Date(item.followUpAt)) : '',
     deadlineAt: item?.deadlineAt ? toLocalInput(new Date(item.deadlineAt)) : '', decisionAt: item?.decisionAt ? toLocalInput(new Date(item.decisionAt)) : '', isArchived: item?.isArchived ?? false
   });
   const update = <K extends keyof typeof draft>(key: K, value: typeof draft[K]) => setDraft((current) => ({ ...current, [key]: value }));
-  return <form className="editor-form job-application-form" onSubmit={(event) => { event.preventDefault(); props.onSave({ ...draft, salaryMin: optionalNumeric(draft.salaryMin), salaryMax: optionalNumeric(draft.salaryMax), discoveredAt: new Date(draft.discoveredAt).toISOString(), appliedAt: optionalDateIso(draft.appliedAt), lastContactAt: optionalDateIso(draft.lastContactAt), followUpAt: optionalDateIso(draft.followUpAt), deadlineAt: optionalDateIso(draft.deadlineAt), decisionAt: optionalDateIso(draft.decisionAt) }); }}>
+  const selectedCompany = props.companies.find((company) => company.id === draft.companyId) ?? null;
+  const companyLocations = selectedCompany?.locations.filter((location) => location.isActive || location.id === draft.companyLocationId) ?? [];
+  function selectCompany(companyId: string) {
+    const company = props.companies.find((candidate) => candidate.id === companyId);
+    setDraft((current) => ({ ...current, companyId, companyLocationId: '', companyName: company?.name ?? current.companyName, companyUrl: company?.website || current.companyUrl, location: companyId ? '' : current.location, country: companyId ? '' : current.country }));
+  }
+  function selectCompanyLocation(companyLocationId: string) {
+    const office = companyLocations.find((candidate) => candidate.id === companyLocationId);
+    setDraft((current) => ({ ...current, companyLocationId, location: office ? office.city || office.name : '', country: office?.country ?? '' }));
+  }
+  return <form className="editor-form job-application-form" onSubmit={(event) => { event.preventDefault(); props.onSave({ ...draft, companyId: draft.companyId || null, companyLocationId: draft.companyLocationId || null, salaryMin: optionalNumeric(draft.salaryMin), salaryMax: optionalNumeric(draft.salaryMax), discoveredAt: new Date(draft.discoveredAt).toISOString(), appliedAt: optionalDateIso(draft.appliedAt), lastContactAt: optionalDateIso(draft.lastContactAt), followUpAt: optionalDateIso(draft.followUpAt), deadlineAt: optionalDateIso(draft.deadlineAt), decisionAt: optionalDateIso(draft.decisionAt) }); }}>
+    <section className="job-form-section"><div><p className="eyebrow">Company intelligence</p><h4>Link this opportunity</h4></div><div className="form-grid two"><label className="field"><span>Tracked company</span><select value={draft.companyId} onChange={(event) => selectCompany(event.target.value)}><option value="">Manual / not in company directory</option>{props.companies.filter((company) => !company.isArchived || company.id === draft.companyId).map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label><label className="field"><span>Company location</span><select value={draft.companyLocationId} disabled={!selectedCompany} onChange={(event) => selectCompanyLocation(event.target.value)}><option value="">No specific office</option>{companyLocations.map((office) => <option key={office.id} value={office.id}>{office.name} · {[office.city, office.country].filter(Boolean).join(', ') || 'details not set'}</option>)}</select></label></div></section>
     <div className="form-grid two"><TextField label="Company" value={draft.companyName} onChange={(value) => update('companyName', value)} required /><TextField label="Position" value={draft.positionTitle} onChange={(value) => update('positionTitle', value)} required /></div>
     <div className="form-grid three"><SelectField label="Status" value={draft.status} onChange={(value) => update('status', value as JobApplicationStatus)} options={jobStatuses.map((value) => ({ value, label: splitPascalCase(value) }))} /><SelectField label="Work mode" value={draft.workMode} onChange={(value) => update('workMode', value as JobWorkMode)} options={jobWorkModes.map((value) => ({ value, label: splitPascalCase(value) }))} /><TextField label="Employment type" value={draft.employmentType} onChange={(value) => update('employmentType', value)} /></div>
     <div className="form-grid two"><TextField label="Location" value={draft.location} onChange={(value) => update('location', value)} /><TextField label="Country" value={draft.country} onChange={(value) => update('country', value)} /></div>
@@ -2401,13 +2448,15 @@ function JobApplicationForm(props: { application: JobApplication | null; busy: b
     <div className="form-grid two"><JobDateField label="Discovered" value={draft.discoveredAt} onChange={(value) => update('discoveredAt', value)} /><JobDateField label="Applied" value={draft.appliedAt} onChange={(value) => update('appliedAt', value)} /></div>
     <div className="form-grid two"><JobDateField label="Last contact" value={draft.lastContactAt} onChange={(value) => update('lastContactAt', value)} /><JobDateField label="Follow up" value={draft.followUpAt} onChange={(value) => update('followUpAt', value)} /></div>
     <div className="form-grid two"><JobDateField label="Application deadline" value={draft.deadlineAt} onChange={(value) => update('deadlineAt', value)} /><JobDateField label="Decision" value={draft.decisionAt} onChange={(value) => update('decisionAt', value)} /></div>
-    <TextArea label="Job description / saved offer" value={draft.jobDescription} onChange={(value) => update('jobDescription', value)} /><TextArea label="Private notes" value={draft.notes} onChange={(value) => update('notes', value)} />
+    <TextArea label="Job description / saved offer" value={draft.jobDescription} onChange={(value) => update('jobDescription', value)} />
+    <section className="job-form-section"><div><p className="eyebrow">Role intelligence</p><h4>What the role expects</h4></div><TextArea label="Role requirements" value={draft.roleRequirements} onChange={(value) => update('roleRequirements', value)} /><TextArea label="Preparation topics" value={draft.preparationTopics} onChange={(value) => update('preparationTopics', value)} /><p className="helper-copy">Use commas or new lines, for example: DSA, System Design, distributed systems, behavioural stories.</p></section>
+    <TextArea label="Private notes" value={draft.notes} onChange={(value) => update('notes', value)} />
     <label className="toggle-field"><input type="checkbox" checked={draft.isArchived} onChange={(event) => update('isArchived', event.target.checked)} /><span>Archive this opportunity</span></label>
     <button disabled={props.busy}>Save opportunity</button>
   </form>;
 }
 
-function JobProcessWorkspace(props: { application: JobApplication; busy: boolean; onClose: () => void; onEdit: () => void; onStageSave: (applicationId: string, body: unknown, id?: string) => void; onStageDelete: (id: string) => void; onChecklistSave: (stageId: string, body: unknown, id?: string) => void; onChecklistDelete: (id: string) => void }) {
+function JobProcessWorkspace(props: { application: JobApplication; company: Company | null; busy: boolean; onClose: () => void; onEdit: () => void; onStageSave: (applicationId: string, body: unknown, id?: string) => void; onStageDelete: (id: string) => void; onChecklistSave: (stageId: string, body: unknown, id?: string) => void; onChecklistDelete: (id: string) => void }) {
   const [newStage, setNewStage] = useState(false);
   const completed = props.application.stages.flatMap((stage) => stage.checklist).filter((item) => item.isCompleted).length;
   const total = props.application.stages.flatMap((stage) => stage.checklist).length;
@@ -2415,6 +2464,11 @@ function JobProcessWorkspace(props: { application: JobApplication; busy: boolean
     <div className="collection-header"><div><p className="eyebrow">Recruitment process</p><h3>{props.application.companyName} · {props.application.positionTitle}</h3><p>{props.application.location || 'Location not set'} · {splitPascalCase(props.application.workMode)} · {formatSalaryRange(props.application)}</p></div><div className="button-row"><button className="secondary-button" onClick={props.onEdit}>Edit opportunity</button><button className="secondary-button" onClick={props.onClose}>Close</button></div></div>
     <div className="job-process-summary"><span><small>Status</small><strong>{splitPascalCase(props.application.status)}</strong></span><span><small>Preparation</small><strong>{completed}/{total}</strong></span><span><small>Follow-up</small><strong>{formatJobDate(props.application.followUpAt)}</strong></span><span><small>Deadline</small><strong>{formatJobDate(props.application.deadlineAt)}</strong></span></div>
     <div className="job-links">{safeExternalLink(props.application.companyUrl, 'Company')}{safeExternalLink(props.application.postingUrl, 'Job posting')}{safeExternalLink(props.application.applicationUrl, 'Application')}</div>
+    {props.company && <div className="job-company-context"><span><small>Company profile</small><strong>{props.company.name}</strong></span><span><small>Visa sponsorship</small><strong>{props.company.visaSponsorship}</strong></span><span><small>Relocation</small><strong>{props.company.relocationSupport ? 'Available' : 'Not confirmed'}</strong></span><span><small>Tracked offices</small><strong>{props.company.locations.length}</strong></span></div>}
+    {(props.application.roleRequirements || props.application.preparationTopics) && <div className="job-role-intelligence">
+      <section><p className="eyebrow">Role requirements</p>{props.application.roleRequirements ? <p>{props.application.roleRequirements}</p> : <p className="muted-copy">No requirements saved.</p>}</section>
+      <section><p className="eyebrow">Refresh before interviews</p><div className="job-topic-list">{splitJobTopics(props.application.preparationTopics).map((topic) => <span key={topic}>{topic}</span>)}</div>{!props.application.preparationTopics && <p className="muted-copy">No preparation topics saved.</p>}</section>
+    </div>}
     <div className="job-stage-list">{props.application.stages.map((stage, index) => <JobStagePanel key={stage.id} applicationId={props.application.id} stage={stage} index={index} busy={props.busy} onSave={props.onStageSave} onDelete={props.onStageDelete} onChecklistSave={props.onChecklistSave} onChecklistDelete={props.onChecklistDelete} />)}</div>
     {newStage ? <JobStageForm applicationId={props.application.id} stage={null} order={props.application.stages.length} busy={props.busy} onSave={(body) => { props.onStageSave(props.application.id, body); setNewStage(false); }} onCancel={() => setNewStage(false)} /> : <button className="secondary-button" onClick={() => setNewStage(true)}>Add interview or stage</button>}
   </section>;
@@ -2470,6 +2524,9 @@ function formatSalaryRange(item: JobApplication) {
   const format = (value: number) => `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)} ${item.currency}`;
   if (item.salaryMin != null && item.salaryMax != null) return `${format(item.salaryMin)}–${format(item.salaryMax)}`;
   return format((item.salaryMax ?? item.salaryMin)!);
+}
+function splitJobTopics(value: string) {
+  return Array.from(new Set(value.split(/[\n,;]+/).map((item) => item.trim()).filter(Boolean)));
 }
 function safeExternalLink(value: string, label: string) {
   if (!/^https?:\/\//i.test(value)) return null;

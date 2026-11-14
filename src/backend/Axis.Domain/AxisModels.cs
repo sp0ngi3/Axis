@@ -290,8 +290,44 @@ public sealed class FocusNote : Entity
     public bool IsArchived { get; set; }
 }
 
+public sealed class Company : Entity
+{
+    public string Name { get; set; } = string.Empty;
+    public string Website { get; set; } = string.Empty;
+    public string CareersUrl { get; set; } = string.Empty;
+    public string Industry { get; set; } = string.Empty;
+    public string CompanySize { get; set; } = string.Empty;
+    public string Headquarters { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string TechStack { get; set; } = string.Empty;
+    public string VisaSponsorship { get; set; } = "Unknown";
+    public string VisaNotes { get; set; } = string.Empty;
+    public bool RelocationSupport { get; set; }
+    public bool JobOffersChecked { get; set; }
+    public string Notes { get; set; } = string.Empty;
+    public bool IsArchived { get; set; }
+    public List<CompanyLocation> Locations { get; set; } = [];
+}
+
+public sealed class CompanyLocation : Entity
+{
+    public Guid CompanyId { get; set; }
+    public Company? Company { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string City { get; set; } = string.Empty;
+    public string Region { get; set; } = string.Empty;
+    public string Country { get; set; } = string.Empty;
+    public string Address { get; set; } = string.Empty;
+    public string CareersUrl { get; set; } = string.Empty;
+    public string VisaSponsorship { get; set; } = "Inherit";
+    public string Notes { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
 public sealed class JobApplication : Entity
 {
+    public Guid? CompanyId { get; set; }
+    public Guid? CompanyLocationId { get; set; }
     public string CompanyName { get; set; } = string.Empty;
     public string PositionTitle { get; set; } = string.Empty;
     public JobApplicationStatus Status { get; set; } = JobApplicationStatus.Scouted;
@@ -312,6 +348,8 @@ public sealed class JobApplication : Entity
     public string ContactName { get; set; } = string.Empty;
     public string ContactEmail { get; set; } = string.Empty;
     public string JobDescription { get; set; } = string.Empty;
+    public string RoleRequirements { get; set; } = string.Empty;
+    public string PreparationTopics { get; set; } = string.Empty;
     public string Notes { get; set; } = string.Empty;
     public DateTimeOffset DiscoveredAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? AppliedAt { get; set; }

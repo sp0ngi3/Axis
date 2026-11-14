@@ -31,6 +31,10 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
 
     public DbSet<FocusNote> FocusNotes => Set<FocusNote>();
 
+    public DbSet<Company> Companies => Set<Company>();
+
+    public DbSet<CompanyLocation> CompanyLocations => Set<CompanyLocation>();
+
     public DbSet<JobApplication> JobApplications => Set<JobApplication>();
 
     public DbSet<JobApplicationStage> JobApplicationStages => Set<JobApplicationStage>();
@@ -330,6 +334,42 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
 
     private static void ConfigureJobApplications(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<Company>(entity =>
+        {
+            entity.Property(item => item.Name).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.Website).HasMaxLength(1000);
+            entity.Property(item => item.CareersUrl).HasMaxLength(1000);
+            entity.Property(item => item.Industry).HasMaxLength(160);
+            entity.Property(item => item.CompanySize).HasMaxLength(80);
+            entity.Property(item => item.Headquarters).HasMaxLength(200);
+            entity.Property(item => item.Description).HasMaxLength(6000);
+            entity.Property(item => item.TechStack).HasMaxLength(2000);
+            entity.Property(item => item.VisaSponsorship).HasMaxLength(40);
+            entity.Property(item => item.VisaNotes).HasMaxLength(3000);
+            entity.Property(item => item.Notes).HasMaxLength(6000);
+            entity.HasIndex(item => item.Name);
+            entity.HasIndex(item => item.IsArchived);
+            entity.HasIndex(item => item.JobOffersChecked);
+        });
+
+        modelBuilder.Entity<CompanyLocation>(entity =>
+        {
+            entity.Property(item => item.Name).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.City).HasMaxLength(160);
+            entity.Property(item => item.Region).HasMaxLength(160);
+            entity.Property(item => item.Country).HasMaxLength(120);
+            entity.Property(item => item.Address).HasMaxLength(500);
+            entity.Property(item => item.CareersUrl).HasMaxLength(1000);
+            entity.Property(item => item.VisaSponsorship).HasMaxLength(40);
+            entity.Property(item => item.Notes).HasMaxLength(3000);
+            entity.HasIndex(item => new { item.CompanyId, item.City, item.Country });
+            entity.HasIndex(item => item.IsActive);
+            entity.HasOne(item => item.Company)
+                .WithMany(item => item.Locations)
+                .HasForeignKey(item => item.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         modelBuilder.Entity<JobApplication>(entity =>
         {
             entity.Property(item => item.CompanyName).HasMaxLength(200).IsRequired();
@@ -347,7 +387,11 @@ public sealed class AxisDbContext(DbContextOptions<AxisDbContext> options) : DbC
             entity.Property(item => item.ContactName).HasMaxLength(200);
             entity.Property(item => item.ContactEmail).HasMaxLength(320);
             entity.Property(item => item.JobDescription).HasMaxLength(12000);
+            entity.Property(item => item.RoleRequirements).HasMaxLength(8000);
+            entity.Property(item => item.PreparationTopics).HasMaxLength(4000);
             entity.Property(item => item.Notes).HasMaxLength(8000);
+            entity.HasIndex(item => item.CompanyId);
+            entity.HasIndex(item => item.CompanyLocationId);
             entity.HasIndex(item => item.Status);
             entity.HasIndex(item => item.Location);
             entity.HasIndex(item => item.DiscoveredAt);

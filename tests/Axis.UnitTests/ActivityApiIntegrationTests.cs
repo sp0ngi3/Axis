@@ -534,7 +534,17 @@ public sealed class ActivityApiIntegrationTests
         await using var factory = new AxisApiFactory(seedData: false);
         using var client = factory.CreateClient();
 
-        var created = await client.PostAsJsonAsync("/api/job-applications", JobApplicationPayload("Scouted"));
+        var companyResponse = await client.PostAsJsonAsync("/api/companies", CompanyPayload());
+        await AssertStatusAsync(companyResponse, HttpStatusCode.Created);
+        using var companyJson = JsonDocument.Parse(await companyResponse.Content.ReadAsStringAsync());
+        var companyId = companyJson.RootElement.GetProperty("id").GetGuid();
+
+        var locationResponse = await client.PostAsJsonAsync($"/api/companies/{companyId}/locations", CompanyLocationPayload());
+        await AssertStatusAsync(locationResponse, HttpStatusCode.Created);
+        using var locationJson = JsonDocument.Parse(await locationResponse.Content.ReadAsStringAsync());
+        var locationId = locationJson.RootElement.GetProperty("id").GetGuid();
+
+        var created = await client.PostAsJsonAsync("/api/job-applications", JobApplicationPayload("Scouted", companyId, locationId));
         await AssertStatusAsync(created, HttpStatusCode.Created);
         using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
         var applicationId = createdJson.RootElement.GetProperty("id").GetGuid();
@@ -576,7 +586,7 @@ public sealed class ActivityApiIntegrationTests
             completedAt = DateTimeOffset.UtcNow,
             sortOrder = 0
         }), HttpStatusCode.OK);
-        await AssertStatusAsync(await client.PutAsJsonAsync($"/api/job-applications/{applicationId}", JobApplicationPayload("Interviewing")), HttpStatusCode.OK);
+        await AssertStatusAsync(await client.PutAsJsonAsync($"/api/job-applications/{applicationId}", JobApplicationPayload("Interviewing", companyId, locationId)), HttpStatusCode.OK);
 
         var backupResponse = await client.GetAsync("/api/backup/export");
         await AssertStatusAsync(backupResponse, HttpStatusCode.OK);
@@ -592,10 +602,110 @@ public sealed class ActivityApiIntegrationTests
         using var restored = JsonDocument.Parse(await client.GetStringAsync("/api/job-applications?includeArchived=true"));
         var application = restored.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == applicationId);
         Assert.Equal("Interviewing", application.GetProperty("status").GetString());
+        Assert.Equal(companyId, application.GetProperty("companyId").GetGuid());
+        Assert.Equal(locationId, application.GetProperty("companyLocationId").GetGuid());
+        Assert.Equal("DSA, System Design, distributed systems", application.GetProperty("preparationTopics").GetString());
         var restoredStage = application.GetProperty("stages").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == stageId);
         var restoredCheck = restoredStage.GetProperty("checklist").EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == checklistId);
         Assert.True(restoredCheck.GetProperty("isCompleted").GetBoolean());
         Assert.Equal("Completed in 18 minutes.", restoredCheck.GetProperty("notes").GetString());
+        using var restoredCompanies = JsonDocument.Parse(await client.GetStringAsync("/api/companies?includeArchived=true"));
+        var restoredCompany = restoredCompanies.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == companyId);
+        Assert.Equal("Vapor Systems", restoredCompany.GetProperty("name").GetString());
+        Assert.True(restoredCompany.GetProperty("jobOffersChecked").GetBoolean());
+        Assert.Contains(restoredCompany.GetProperty("locations").EnumerateArray(), item => item.GetProperty("id").GetGuid() == locationId);
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task Backup_created_before_company_offer_check_is_upgraded_without_losing_company_data()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+
+        var created = await client.PostAsJsonAsync("/api/companies", CompanyPayload());
+        await AssertStatusAsync(created, HttpStatusCode.Created);
+        using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var companyId = createdJson.RootElement.GetProperty("id").GetGuid();
+
+        await using (var connection = new SqliteConnection($"Data Source={factory.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                DROP INDEX "IX_Companies_JobOffersChecked";
+                ALTER TABLE "Companies" DROP COLUMN "JobOffersChecked";
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var oldBackupResponse = await client.GetAsync("/api/backup/export");
+        await AssertStatusAsync(oldBackupResponse, HttpStatusCode.OK);
+        var oldBackupBytes = await oldBackupResponse.Content.ReadAsByteArrayAsync();
+
+        using var form = new MultipartFormDataContent();
+        using var backupContent = new ByteArrayContent(oldBackupBytes);
+        backupContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        form.Add(backupContent, "file", "axis-before-company-offer-check.zip");
+        await AssertStatusAsync(await client.PostAsync("/api/backup/import", form), HttpStatusCode.OK);
+
+        using var companies = JsonDocument.Parse(await client.GetStringAsync("/api/companies?includeArchived=true"));
+        var restored = companies.RootElement.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == companyId);
+        Assert.Equal("Vapor Systems", restored.GetProperty("name").GetString());
+        Assert.False(restored.GetProperty("jobOffersChecked").GetBoolean());
+
+        var updated = await client.PutAsJsonAsync($"/api/companies/{companyId}", CompanyPayload());
+        await AssertStatusAsync(updated, HttpStatusCode.OK);
+        using var updatedJson = JsonDocument.Parse(await updated.Content.ReadAsStringAsync());
+        Assert.True(updatedJson.RootElement.GetProperty("jobOffersChecked").GetBoolean());
+        await factory.AssertDatabaseIntegrityAsync();
+    }
+
+    [Fact]
+    public async Task Backup_created_before_company_directory_is_upgraded_without_losing_job_pipeline_data()
+    {
+        await using var factory = new AxisApiFactory(seedData: false);
+        using var client = factory.CreateClient();
+
+        var original = await client.PostAsJsonAsync("/api/job-applications", JobApplicationPayload("Scouted"));
+        await AssertStatusAsync(original, HttpStatusCode.Created);
+
+        await using (var connection = new SqliteConnection($"Data Source={factory.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                PRAGMA foreign_keys=OFF;
+                DROP TABLE "CompanyLocations";
+                DROP TABLE "Companies";
+                DROP INDEX "IX_JobApplications_CompanyId";
+                DROP INDEX "IX_JobApplications_CompanyLocationId";
+                ALTER TABLE "JobApplications" DROP COLUMN "CompanyId";
+                ALTER TABLE "JobApplications" DROP COLUMN "CompanyLocationId";
+                ALTER TABLE "JobApplications" DROP COLUMN "RoleRequirements";
+                ALTER TABLE "JobApplications" DROP COLUMN "PreparationTopics";
+                PRAGMA foreign_keys=ON;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var oldBackupResponse = await client.GetAsync("/api/backup/export");
+        await AssertStatusAsync(oldBackupResponse, HttpStatusCode.OK);
+        var oldBackupBytes = await oldBackupResponse.Content.ReadAsByteArrayAsync();
+
+        using var form = new MultipartFormDataContent();
+        using var backupContent = new ByteArrayContent(oldBackupBytes);
+        backupContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        form.Add(backupContent, "file", "axis-before-company-directory.zip");
+        await AssertStatusAsync(await client.PostAsync("/api/backup/import", form), HttpStatusCode.OK);
+
+        using var applications = JsonDocument.Parse(await client.GetStringAsync("/api/job-applications?includeArchived=true"));
+        var restoredApplication = applications.RootElement.EnumerateArray().Single();
+        Assert.Equal("Vapor Systems", restoredApplication.GetProperty("companyName").GetString());
+        Assert.Equal(string.Empty, restoredApplication.GetProperty("roleRequirements").GetString());
+
+        var company = await client.PostAsJsonAsync("/api/companies", CompanyPayload());
+        await AssertStatusAsync(company, HttpStatusCode.Created);
         await factory.AssertDatabaseIntegrityAsync();
     }
 
@@ -635,8 +745,10 @@ public sealed class ActivityApiIntegrationTests
         await factory.AssertDatabaseIntegrityAsync();
     }
 
-    private static object JobApplicationPayload(string status) => new
+    private static object JobApplicationPayload(string status, Guid? companyId = null, Guid? companyLocationId = null) => new
     {
+        companyId,
+        companyLocationId,
         companyName = "Vapor Systems",
         positionTitle = "Senior Software Engineer",
         status,
@@ -657,6 +769,8 @@ public sealed class ActivityApiIntegrationTests
         contactName = "Recruiter",
         contactEmail = "recruiter@example.com",
         jobDescription = "Build reliable systems.",
+        roleRequirements = "Strong algorithms, data structures and distributed systems experience.",
+        preparationTopics = "DSA, System Design, distributed systems",
         notes = "High-priority role.",
         discoveredAt = DateTimeOffset.UtcNow.AddDays(-2),
         appliedAt = (DateTimeOffset?)null,
@@ -665,6 +779,37 @@ public sealed class ActivityApiIntegrationTests
         deadlineAt = DateTimeOffset.UtcNow.AddDays(10),
         decisionAt = (DateTimeOffset?)null,
         isArchived = false
+    };
+
+    private static object CompanyPayload() => new
+    {
+        name = "Vapor Systems",
+        website = "https://example.com",
+        careersUrl = "https://example.com/careers",
+        industry = "Developer infrastructure",
+        companySize = "1000-5000",
+        headquarters = "San Francisco, USA",
+        description = "Builds reliable developer systems.",
+        techStack = "C#, Kubernetes, distributed systems",
+        visaSponsorship = "Yes",
+        visaNotes = "US sponsorship depends on role and seniority.",
+        relocationSupport = true,
+        jobOffersChecked = true,
+        notes = "Research before applying.",
+        isArchived = false
+    };
+
+    private static object CompanyLocationPayload() => new
+    {
+        name = "Berlin Engineering Hub",
+        city = "Berlin",
+        region = "Berlin",
+        country = "Germany",
+        address = "Alexanderplatz",
+        careersUrl = "https://example.com/careers/berlin",
+        visaSponsorship = "Inherit",
+        notes = "Platform engineering teams are based here.",
+        isActive = true
     };
 
     [Fact]
